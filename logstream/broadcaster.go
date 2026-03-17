@@ -24,7 +24,7 @@ type subscriber struct {
 }
 
 type Broadcaster struct {
-	mu          sync.RWMutex
+	mu          sync.Mutex
 	subscribers map[*subscriber]struct{}
 	ring        *RingBuffer[LogEntry]
 	ctx         context.Context
@@ -39,9 +39,11 @@ func NewBroadcaster(ctx context.Context, ringSize int) *Broadcaster {
 }
 
 // Publish sends an entry to all subscribers and stores it in the ring buffer.
-// Slow subscribers whose channel is full are evicted.
+// If the lock is contended (e.g. during subscribe backfill), the entry is dropped.
 func (b *Broadcaster) Publish(entry LogEntry) {
-	b.mu.Lock()
+	if !b.mu.TryLock() {
+		return
+	}
 	defer b.mu.Unlock()
 
 	b.ring.Add(entry)
@@ -50,7 +52,6 @@ func (b *Broadcaster) Publish(entry LogEntry) {
 		select {
 		case sub.ch <- entry:
 		default:
-			// Slow client — evict
 			close(sub.ch)
 			delete(b.subscribers, sub)
 		}
@@ -58,19 +59,14 @@ func (b *Broadcaster) Publish(entry LogEntry) {
 }
 
 // Subscribe returns a channel of log entries and a cancel function.
-// The channel receives backfill from the ring buffer, then live entries.
 func (b *Broadcaster) Subscribe() (<-chan LogEntry, func()) {
 	ch := make(chan LogEntry, subscriberBufSize)
 
 	b.mu.Lock()
-
-	// Backfill from ring buffer
-	for _, entry := range b.ring.Entries() {
-		ch <- entry
-	}
+	backfill := b.ring.Entries()
 
 	sub := &subscriber{ch: ch}
-	sub.cancel = func() {
+	sub.cancel = sync.OnceFunc(func() {
 		b.mu.Lock()
 		defer b.mu.Unlock()
 
@@ -78,10 +74,18 @@ func (b *Broadcaster) Subscribe() (<-chan LogEntry, func()) {
 			close(sub.ch)
 			delete(b.subscribers, sub)
 		}
-	}
+	})
 
 	b.subscribers[sub] = struct{}{}
 	b.mu.Unlock()
+
+	// Backfill outside the lock
+	for _, entry := range backfill {
+		select {
+		case ch <- entry:
+		default:
+		}
+	}
 
 	return ch, sub.cancel
 }
@@ -118,10 +122,13 @@ func (r *RingBuffer[T]) Add(item T) {
 	}
 }
 
-// Entries returns buffered items in chronological order.
+// Entries returns a copy of buffered items in chronological order.
 func (r *RingBuffer[T]) Entries() []T {
 	if !r.full {
-		return r.buf[:r.pos]
+		result := make([]T, r.pos)
+		copy(result, r.buf[:r.pos])
+
+		return result
 	}
 
 	result := make([]T, len(r.buf))

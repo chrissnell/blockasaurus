@@ -24,13 +24,14 @@ func Handler(broadcaster *Broadcaster) http.HandlerFunc {
 		ch, cancel := broadcaster.Subscribe()
 		defer cancel()
 
-		ctx := r.Context()
+		// Derive a context that cancels when the client disconnects.
+		// The read loop in CloseRead detects close frames and broken connections.
+		ctx := conn.CloseRead(r.Context())
 
 		for {
 			select {
 			case entry, ok := <-ch:
 				if !ok {
-					// Broadcaster shut down
 					conn.Close(websocket.StatusGoingAway, "server shutting down") //nolint:errcheck
 
 					return

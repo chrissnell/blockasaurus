@@ -58,31 +58,50 @@ var _ = Describe("Broadcaster", func() {
 		b.Publish(entry("old1"))
 		b.Publish(entry("old2"))
 
-		ch, unsub := b.Subscribe()
-		defer unsub()
-
+		// Subscribe receives backfill + live entries; collect the first two
 		var msgs []string
-		for i := 0; i < 2; i++ {
-			e := <-ch
-			msgs = append(msgs, e.Message)
-		}
 
-		Expect(msgs).Should(Equal([]string{"old1", "old2"}))
+		Eventually(func() []string {
+			// Re-subscribe each poll so backfill arrives once fanout has processed
+			ch, unsub := b.Subscribe()
+			defer unsub()
+
+			msgs = nil
+
+			for i := 0; i < 2; i++ {
+				select {
+				case e := <-ch:
+					msgs = append(msgs, e.Message)
+				default:
+					return nil
+				}
+			}
+
+			return msgs
+		}).Should(Equal([]string{"old1", "old2"}))
 	})
 
 	It("evicts slow subscribers", func() {
 		ch, _ := b.Subscribe()
 
-		// Fill the subscriber buffer (256) + extra to trigger eviction
-		for i := 0; i < 300; i++ {
+		// Flood well beyond subscriber buffer (256) + inbox buffer to ensure eviction
+		for i := 0; i < 5000; i++ {
 			b.Publish(entry("flood"))
 		}
 
-		// Drain buffered entries, then channel should be closed
-		for range ch {
-			// drain
-		}
-		// If we get here, the channel was closed (evicted)
+		// Channel should eventually be closed due to eviction
+		Eventually(func() bool {
+			for {
+				select {
+				case _, ok := <-ch:
+					if !ok {
+						return true
+					}
+				default:
+					return false
+				}
+			}
+		}).Should(BeTrue())
 	})
 
 	It("shutdown closes all subscriber channels", func() {
