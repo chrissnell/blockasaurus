@@ -44,7 +44,10 @@
 
 <div class="shell">
   <div class="header">
-    <h1>blockasaurus</h1>
+    <a href="#/" class="logo-link">
+      <img src="/ui/blockasaurus-logo-face.svg" alt="" class="logo" />
+      <h1>blockasaurus</h1>
+    </a>
     <nav class="nav">
       {#each nav as item}
         <a
@@ -77,6 +80,19 @@
     margin-bottom: 1.5rem;
     border-bottom: 1px solid var(--color-border);
     padding-bottom: 0.75rem;
+  }
+
+  .logo-link {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    text-decoration: none;
+    color: inherit;
+  }
+
+  .logo {
+    width: 1.75rem;
+    height: 1.75rem;
   }
 
   h1 {
