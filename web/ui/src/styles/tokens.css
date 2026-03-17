@@ -35,6 +35,7 @@
   --color-info: #1a6f96;
   --color-info-muted: rgba(26, 111, 150, 0.1);
   --color-info-fg: #fff;
+  --color-blocked: #9333ea;
 
   /* Buttons */
   --color-btn-bg: #e5e5e5;
@@ -81,6 +82,7 @@
   --color-info: #2386b0;
   --color-info-muted: rgba(35, 134, 176, 0.15);
   --color-info-fg: #fff;
+  --color-blocked: #a855f7;
 
   /* Buttons */
   --color-btn-bg: #1a1a1a;

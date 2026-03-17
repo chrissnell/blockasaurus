@@ -11,9 +11,10 @@
     }
   })
 
-  function levelClass(level) {
+  function entryClass(entry) {
+    if (entry.fields?.response_type === 'BLOCKED') return 'blocked'
     const map = { error: 'err', warn: 'warn', warning: 'warn', info: 'ok', debug: 'dim' }
-    return map[level?.toLowerCase()] || 'dim'
+    return map[entry.level?.toLowerCase()] || 'dim'
   }
 
   function formatTime(ts) {
@@ -26,10 +27,11 @@
     const f = entry.fields
     if (f && f.question_name) {
       const qtype = (f.question_type || '').padEnd(5)
-      const rcode = f.response_code || ''
-      const reason = f.response_reason ? ` (${f.response_reason})` : ''
+      const name = (f.question_name || '').padEnd(30)
+      const rcode = (f.response_code || '').padEnd(10)
+      const reason = f.response_reason || ''
       const dur = f.duration_ms != null ? `  ${f.duration_ms}ms` : ''
-      return `${qtype}  ${f.question_name}  ${rcode}${reason}${dur}`
+      return `${qtype}  ${name}  ${rcode}  ${reason}${dur}`
     }
     return entry.message
   }
@@ -42,7 +44,8 @@
     <span class="count">{entries.length} entries</span>
   </div>
   <div class="log-body" bind:this={container}>
-{#each entries as entry}<div class="log-{levelClass(entry.level)}">{formatTime(entry.timestamp)}  {(entry.level || '').padEnd(5)}  {formatMessage(entry)}</div>{:else}<span class="log-dim">waiting for data...</span>{/each}
+<div class="log-hdr">{"Time".padEnd(12)}  {"Level".padEnd(5)}  {"Type".padEnd(5)}  {"Name".padEnd(30)}  {"Code".padEnd(10)}  {"Reason"}</div>
+{#each entries as entry}<div class="log-{entryClass(entry)}">{formatTime(entry.timestamp)}  {(entry.level || '').padEnd(5)}  {formatMessage(entry)}</div>{:else}<span class="log-dim">waiting for data...</span>{/each}
   </div>
 </div>
 
@@ -97,5 +100,7 @@
   .log-ok { color: var(--color-accent); }
   .log-err { color: var(--color-danger); }
   .log-warn { color: var(--color-warning); }
+  .log-blocked { color: var(--color-blocked); }
   .log-dim { color: var(--color-text-dim); }
+  .log-hdr { color: var(--color-text); font-weight: 700; border-bottom: 1px solid var(--color-border-subtle); margin-bottom: 2px; }
 </style>
