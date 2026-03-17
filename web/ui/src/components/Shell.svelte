@@ -60,7 +60,7 @@
   <main class="content">
     {@render children()}
   </main>
-  <StatusBar connected={true} {version} pendingChanges={pendingCount} />
+  <StatusBar {version} pendingChanges={pendingCount} />
 </div>
 
 <style>

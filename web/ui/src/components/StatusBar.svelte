@@ -2,15 +2,12 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
 <script>
-  let { connected = false, version = '', pendingChanges = 0 } = $props()
+  let { version = '', pendingChanges = 0 } = $props()
 </script>
 
 <footer class="status">
-  <span class="dot" class:connected></span>
-  <span>{connected ? 'connected' : 'disconnected'}</span>
   {#if version}
-    <span class="sep">/</span>
-    <span>Blockasaurus v{version}</span>
+    <a href="https://github.com/chrissnell/blockasaurus" target="_blank" rel="noopener">Blockasaurus v{version}</a>
   {/if}
   {#if pendingChanges > 0}
     <span class="pending">{pendingChanges} unsaved</span>
@@ -22,25 +19,22 @@
     display: flex;
     align-items: center;
     gap: var(--space-2);
-    padding: 0.25rem 1rem;
+    padding: 0.5rem 1rem;
     border-top: 1px dotted var(--color-border);
-    font-size: var(--text-xs);
+    font-size: var(--text-sm);
     color: var(--color-text-dim);
   }
 
-  .dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--color-danger);
+  a {
+    color: var(--color-text-dim);
+    text-decoration: none;
+    border-bottom: 1px dotted var(--color-border);
+    transition: color var(--transition);
   }
 
-  .dot.connected {
-    background: var(--color-accent);
-    box-shadow: 0 0 4px var(--color-accent);
+  a:hover {
+    color: var(--color-text);
   }
-
-  .sep { color: var(--color-border); }
 
   .pending {
     margin-left: auto;
