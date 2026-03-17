@@ -278,7 +278,7 @@ var _ = Describe("Integration tests", func() {
 					// Verify metrics contain expected data
 					Eventually(http.Get).WithArguments(url).Should(
 						HaveHTTPBody(And(
-							ContainSubstring("blocky_"),
+							ContainSubstring("blockasaurus_"),
 							ContainSubstring("query_total"),
 						)),
 					)

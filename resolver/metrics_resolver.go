@@ -89,7 +89,7 @@ func (r *MetricsResolver) registerMetrics() {
 func totalQueriesMetric() *prometheus.CounterVec {
 	return prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "blocky_query_total",
+			Name: "blockasaurus_query_total",
 			Help: "Number of total queries",
 		}, []string{"client", "type"},
 	)
@@ -98,7 +98,7 @@ func totalQueriesMetric() *prometheus.CounterVec {
 func totalErrorMetric() prometheus.Counter {
 	return prometheus.NewCounter(
 		prometheus.CounterOpts{
-			Name: "blocky_error_total",
+			Name: "blockasaurus_error_total",
 			Help: "Number of total errors",
 		},
 	)
@@ -107,7 +107,7 @@ func totalErrorMetric() prometheus.Counter {
 func durationHistogram() *prometheus.HistogramVec {
 	return prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:                        "blocky_request_duration_seconds",
+			Name:                        "blockasaurus_request_duration_seconds",
 			Help:                        "Request duration distribution",
 			Buckets:                     []float64{0.005, 0.01, 0.02, 0.03, 0.05, 0.075, 0.1, 0.2, 0.5, 1.0, 2.0},
 			NativeHistogramBucketFactor: nativeHistogramBucketFactor,
@@ -119,7 +119,7 @@ func durationHistogram() *prometheus.HistogramVec {
 func totalResponseMetric() *prometheus.CounterVec {
 	return prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "blocky_response_total",
+			Name: "blockasaurus_response_total",
 			Help: "Number of total responses",
 		}, []string{"reason", "response_code", "response_type"},
 	)

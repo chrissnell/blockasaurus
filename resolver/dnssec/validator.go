@@ -99,7 +99,7 @@ type Validator struct {
 func (v *Validator) initializeMetrics() {
 	v.validationMetrics = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "blocky_dnssec_validation_total",
+			Name: "blockasaurus_dnssec_validation_total",
 			Help: "Number of DNSSEC validations by result",
 		},
 		[]string{"result"},
@@ -107,14 +107,14 @@ func (v *Validator) initializeMetrics() {
 
 	v.cacheHitMetrics = prometheus.NewCounter(
 		prometheus.CounterOpts{
-			Name: "blocky_dnssec_cache_hits_total",
+			Name: "blockasaurus_dnssec_cache_hits_total",
 			Help: "Number of DNSSEC validation cache hits",
 		},
 	)
 
 	v.validationDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:    "blocky_dnssec_validation_duration_seconds",
+			Name:    "blockasaurus_dnssec_validation_duration_seconds",
 			Help:    "Duration of DNSSEC validation operations",
 			Buckets: prometheus.DefBuckets,
 		},

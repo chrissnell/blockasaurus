@@ -30,7 +30,7 @@ func registerApplicationEventListeners() {
 func versionNumberGauge() *prometheus.GaugeVec {
 	denylistCnt := prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "blocky_build_info",
+			Name: "blockasaurus_build_info",
 			Help: "Version number and build info",
 		}, []string{"version", "build_time"},
 	)
@@ -75,7 +75,7 @@ func registerBlockingEventListeners() {
 
 func enabledGauge() prometheus.Gauge {
 	enabledGauge := prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "blocky_blocking_enabled",
+		Name: "blockasaurus_blocking_enabled",
 		Help: "Blocking status",
 	})
 	enabledGauge.Set(1)
@@ -86,7 +86,7 @@ func enabledGauge() prometheus.Gauge {
 func denylistGauge() *prometheus.GaugeVec {
 	denylistCnt := prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "blocky_denylist_cache_entries",
+			Name: "blockasaurus_denylist_cache_entries",
 			Help: "Number of entries in the denylist cache",
 		}, []string{"group"},
 	)
@@ -97,7 +97,7 @@ func denylistGauge() *prometheus.GaugeVec {
 func allowlistGauge() *prometheus.GaugeVec {
 	allowlistCnt := prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "blocky_allowlist_cache_entries",
+			Name: "blockasaurus_allowlist_cache_entries",
 			Help: "Number of entries in the allowlist cache",
 		}, []string{"group"},
 	)
@@ -108,7 +108,7 @@ func allowlistGauge() *prometheus.GaugeVec {
 func lastListGroupRefresh() prometheus.Gauge {
 	return prometheus.NewGauge(
 		prometheus.GaugeOpts{
-			Name: "blocky_last_list_group_refresh_timestamp_seconds",
+			Name: "blockasaurus_last_list_group_refresh_timestamp_seconds",
 			Help: "Timestamp of last list refresh",
 		},
 	)
@@ -150,7 +150,7 @@ func registerCachingEventListeners() {
 
 func failedDownloadCount() prometheus.Counter {
 	return prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "blocky_failed_downloads_total",
+		Name: "blockasaurus_failed_downloads_total",
 		Help: "Failed download counter",
 	})
 }
@@ -158,7 +158,7 @@ func failedDownloadCount() prometheus.Counter {
 func domainPrefetchCount() prometheus.Counter {
 	return prometheus.NewCounter(
 		prometheus.CounterOpts{
-			Name: "blocky_prefetches_total",
+			Name: "blockasaurus_prefetches_total",
 			Help: "Prefetch counter",
 		},
 	)
@@ -167,7 +167,7 @@ func domainPrefetchCount() prometheus.Counter {
 func domainPrefetchHitCount() prometheus.Counter {
 	return prometheus.NewCounter(
 		prometheus.CounterOpts{
-			Name: "blocky_prefetch_hits_total",
+			Name: "blockasaurus_prefetch_hits_total",
 			Help: "Prefetch hit counter",
 		},
 	)
@@ -176,7 +176,7 @@ func domainPrefetchHitCount() prometheus.Counter {
 func cacheEntryCount() prometheus.Gauge {
 	return prometheus.NewGauge(
 		prometheus.GaugeOpts{
-			Name: "blocky_cache_entries",
+			Name: "blockasaurus_cache_entries",
 			Help: "Number of entries in cache",
 		},
 	)
@@ -185,7 +185,7 @@ func cacheEntryCount() prometheus.Gauge {
 func prefetchDomainCacheCount() prometheus.Gauge {
 	return prometheus.NewGauge(
 		prometheus.GaugeOpts{
-			Name: "blocky_prefetch_domain_name_cache_entries",
+			Name: "blockasaurus_prefetch_domain_name_cache_entries",
 			Help: "Number of entries in domain cache",
 		},
 	)

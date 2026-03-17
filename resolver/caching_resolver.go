@@ -31,13 +31,13 @@ const defaultCachingCleanUpInterval = 5 * time.Second
 var (
 	cacheHits = promauto.With(metrics.Reg).NewCounter(
 		prometheus.CounterOpts{
-			Name: "blocky_cache_hits_total",
+			Name: "blockasaurus_cache_hits_total",
 			Help: "Cache hit counter",
 		},
 	)
 	cacheMisses = promauto.With(metrics.Reg).NewCounter(
 		prometheus.CounterOpts{
-			Name: "blocky_cache_misses_total",
+			Name: "blockasaurus_cache_misses_total",
 			Help: "Cache miss counter",
 		},
 	)

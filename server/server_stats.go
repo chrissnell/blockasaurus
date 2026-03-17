@@ -29,9 +29,9 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 
 	for _, f := range families {
 		switch f.GetName() {
-		case "blocky_query_total":
+		case "blockasaurus_query_total":
 			total = sumCounter(f.GetMetric())
-		case "blocky_response_total":
+		case "blockasaurus_response_total":
 			for _, m := range f.GetMetric() {
 				if labelValue(m.GetLabel(), "response_type") == "BLOCKED" {
 					blocked += m.GetCounter().GetValue()

@@ -49,23 +49,23 @@ func AssertRegistryComplete(t *testing.T, reg *prometheus.Registry) {
 
 	expected := []string{
 		// these require a BlockingCacheGroupChanged event
-		"blocky_denylist_cache_entries",
-		"blocky_allowlist_cache_entries",
+		"blockasaurus_denylist_cache_entries",
+		"blockasaurus_allowlist_cache_entries",
 		// these require a request
-		"blocky_query_total",
-		"blocky_request_duration_seconds",
-		"blocky_response_total",
+		"blockasaurus_query_total",
+		"blockasaurus_request_duration_seconds",
+		"blockasaurus_response_total",
 		// these should be default
-		"blocky_error_total",
-		"blocky_blocking_enabled",
-		"blocky_cache_entries",
-		"blocky_cache_hits_total",
-		"blocky_cache_misses_total",
-		"blocky_last_list_group_refresh_timestamp_seconds",
-		"blocky_prefetches_total",
-		"blocky_prefetch_hits_total",
-		"blocky_prefetch_domain_name_cache_entries",
-		"blocky_failed_downloads_total",
+		"blockasaurus_error_total",
+		"blockasaurus_blocking_enabled",
+		"blockasaurus_cache_entries",
+		"blockasaurus_cache_hits_total",
+		"blockasaurus_cache_misses_total",
+		"blockasaurus_last_list_group_refresh_timestamp_seconds",
+		"blockasaurus_prefetches_total",
+		"blockasaurus_prefetch_hits_total",
+		"blockasaurus_prefetch_domain_name_cache_entries",
+		"blockasaurus_failed_downloads_total",
 	}
 
 	if len(found) != len(expected) {

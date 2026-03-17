@@ -69,12 +69,12 @@ var _ = Describe("Metrics functional tests", func() {
 		When("Blocky is started", func() {
 			It("Should provide 'blocky_build_info' prometheus metrics", func(ctx context.Context) {
 				Eventually(fetchBlockyMetrics).WithArguments(ctx, metricsURL).
-					Should(ContainElement(ContainSubstring("blocky_build_info")))
+					Should(ContainElement(ContainSubstring("blockasaurus_build_info")))
 			})
 
 			It("Should provide 'blocky_blocking_enabled' prometheus metrics", func(ctx context.Context) {
 				Eventually(fetchBlockyMetrics, "30s", "2ms").WithArguments(ctx, metricsURL).
-					Should(ContainElement("blocky_blocking_enabled 1"))
+					Should(ContainElement("blockasaurus_blocking_enabled 1"))
 			})
 		})
 
@@ -82,9 +82,9 @@ var _ = Describe("Metrics functional tests", func() {
 			BeforeEach(func(ctx context.Context) {
 				Eventually(fetchBlockyMetrics).WithArguments(ctx, metricsURL).
 					Should(ContainElements(
-						"blocky_cache_entries 0",
-						"blocky_cache_hits_total 0",
-						"blocky_cache_misses_total 0",
+						"blockasaurus_cache_entries 0",
+						"blockasaurus_cache_hits_total 0",
+						"blockasaurus_cache_misses_total 0",
 					))
 			})
 
@@ -101,9 +101,9 @@ var _ = Describe("Metrics functional tests", func() {
 
 					Eventually(fetchBlockyMetrics).WithArguments(ctx, metricsURL).
 						Should(ContainElements(
-							"blocky_cache_entries 1",
-							"blocky_cache_hits_total 0",
-							"blocky_cache_misses_total 1",
+							"blockasaurus_cache_entries 1",
+							"blockasaurus_cache_hits_total 0",
+							"blockasaurus_cache_misses_total 1",
 						))
 				})
 
@@ -117,9 +117,9 @@ var _ = Describe("Metrics functional tests", func() {
 
 					Eventually(fetchBlockyMetrics).WithArguments(ctx, metricsURL).
 						Should(ContainElements(
-							"blocky_cache_entries 1",
-							"blocky_cache_hits_total 1",
-							"blocky_cache_misses_total 1",
+							"blockasaurus_cache_entries 1",
+							"blockasaurus_cache_hits_total 1",
+							"blockasaurus_cache_misses_total 1",
 						))
 				})
 			})
@@ -129,8 +129,8 @@ var _ = Describe("Metrics functional tests", func() {
 			It("Should expose list cache sizes per group as metrics", func(ctx context.Context) {
 				Eventually(fetchBlockyMetrics).WithArguments(ctx, metricsURL).
 					Should(ContainElements(
-						"blocky_denylist_cache_entries{group=\"group1\"} 1",
-						"blocky_denylist_cache_entries{group=\"group2\"} 3",
+						"blockasaurus_denylist_cache_entries{group=\"group1\"} 1",
+						"blockasaurus_denylist_cache_entries{group=\"group2\"} 3",
 					))
 			})
 		})
@@ -155,7 +155,7 @@ func fetchBlockyMetrics(ctx context.Context, url string) ([]string, error) {
 	scanner := bufio.NewScanner(r.Body)
 	for scanner.Scan() {
 		line := scanner.Text()
-		if strings.HasPrefix(line, "blocky_") {
+		if strings.HasPrefix(line, "blockasaurus_") {
 			metrics = append(metrics, line)
 		}
 	}
