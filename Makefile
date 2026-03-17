@@ -13,7 +13,7 @@ GIT_REMOTE:=chrissnell
 HELM_CHART:=packaging/helm/blockasaurus
 HELM_RELEASE:=blockasaurus
 HELM_NAMESPACE:=blockasaurus
-HELM_VALUES:=/Users/cjs/kube/apps/blocky/values.yaml
+HELM_VALUES?=values.yaml
 
 BINARY_NAME:=blockasaurus
 BIN_OUT_DIR?=bin
