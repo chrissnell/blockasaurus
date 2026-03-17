@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/blockasaurus-title.svg" alt="Blockasaurus" width="300">
+  <img src="assets/blockasaurus-logo.svg" alt="Blockasaurus" width="300">
 </p>
 
 Blockasaurus is a blocking DNS server with a modern web UI for blocklist and user management. It aims to deliver Pi-Hole-style functionality with first-class support for non-Pi platforms, including Kubernetes. Based on [Blocky](https://github.com/0xERR0R/blocky) by Dmitri Herzog.
