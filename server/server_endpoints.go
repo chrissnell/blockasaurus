@@ -251,6 +251,7 @@ func createHTTPRouter(cfg *config.Config, openAPIImpl api.StrictServerInterface,
 
 	router.Get("/api/discovered-clients", handleDiscoveredClients)
 	router.Get("/api/stats", handleStats)
+	router.Get("/api/version", handleVersion)
 
 	if broadcaster != nil {
 		router.Get("/api/ws/logs", logstream.Handler(broadcaster))

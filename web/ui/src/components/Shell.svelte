@@ -3,13 +3,19 @@
 
 <script>
   import ApplyButton from './ApplyButton.svelte'
+  import StatusBar from './StatusBar.svelte'
   import ThemeToggle from './ThemeToggle.svelte'
   import { getDirtyCount, clearDirty, onDirtyChange } from '../lib/dirty.svelte.js'
-  import { apply } from '../lib/api.js'
+  import { apply, getVersion } from '../lib/api.js'
 
   let { currentPath = '/', children } = $props()
   let pendingCount = $state(getDirtyCount())
   let applying = $state(false)
+  let version = $state('')
+
+  $effect(() => {
+    getVersion().then(v => { version = v })
+  })
 
   $effect(() => {
     return onDirtyChange((n) => { pendingCount = n })
@@ -54,6 +60,7 @@
   <main class="content">
     {@render children()}
   </main>
+  <StatusBar connected={true} {version} pendingChanges={pendingCount} />
 </div>
 
 <style>

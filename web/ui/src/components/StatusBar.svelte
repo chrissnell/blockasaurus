@@ -10,7 +10,7 @@
   <span>{connected ? 'connected' : 'disconnected'}</span>
   {#if version}
     <span class="sep">/</span>
-    <span>v{version}</span>
+    <span>Blockasaurus v{version}</span>
   {/if}
   {#if pendingChanges > 0}
     <span class="pending">{pendingChanges} unsaved</span>

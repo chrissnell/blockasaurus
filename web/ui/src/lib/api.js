@@ -81,3 +81,11 @@ export async function getStats() {
   if (!resp.ok) return null
   return resp.json()
 }
+
+// Version
+export async function getVersion() {
+  const resp = await fetch('/api/version')
+  if (!resp.ok) return ''
+  const data = await resp.json()
+  return data.version || ''
+}

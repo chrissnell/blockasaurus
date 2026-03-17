@@ -101,7 +101,7 @@ jobs:
         shell: bash
         run: |
           archs=(["aarch64"]="arm64" ["armv6"]="arm_6" ["armv7"]="arm_7" ["amd64"]="amd64_v1")
-          BINPATH="${{steps.download.outputs.download-path}}/blocky_${{ matrix.os }}_${archs[ ${{ matrix.arch }} ]}/blocky"
+          BINPATH="${{steps.download.outputs.download-path}}/blockasaurus_${{ matrix.os }}_${archs[ ${{ matrix.arch }} ]}/blockasaurus"
           echo "bin=${BINPATH}" >> "$GITHUB_OUTPUT"
           echo "Binary path: ${BINPATH}"
 
@@ -133,4 +133,4 @@ jobs:
         if: matrix.os == 'windows'
         shell: cmd
         run: |
-          ${{steps.download.outputs.download-path}}\blocky_windows_amd64_v1\blocky.exe version
+          ${{steps.download.outputs.download-path}}\blockasaurus_windows_amd64_v1\blockasaurus.exe version
