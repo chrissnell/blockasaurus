@@ -48,12 +48,6 @@ type BlockSettings struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// DBMetadata tracks one-time operations like seeding.
-type DBMetadata struct {
-	Key   string `gorm:"primaryKey"`
-	Value string
-}
-
 // StringList is a []string that serializes to/from JSON text in SQLite.
 type StringList []string
 

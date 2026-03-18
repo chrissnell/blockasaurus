@@ -77,10 +77,6 @@ func startServer(_ *cobra.Command, _ []string) error {
 
 		defer store.Close()
 
-		if err := store.SeedFromConfig(cfg); err != nil {
-			return fmt.Errorf("seed config database: %w", err)
-		}
-
 		// DB replaces dynamic sections
 		cfg.Blocking, err = store.BuildBlockingConfig(cfg.Blocking)
 		if err != nil {

@@ -47,7 +47,6 @@ func Open(path string) (*ConfigStore, error) {
 		&CustomDNSEntry{},
 		&DomainEntry{},
 		&BlockSettings{},
-		&DBMetadata{},
 	); err != nil {
 		return nil, fmt.Errorf("auto-migrate config tables: %w", err)
 	}

@@ -20,13 +20,6 @@ config:
       default:
         - https://dns.cloudflare.com/dns-query
         - https://dns.google/dns-query
-  blocking:
-    denylists:
-      ads:
-        - https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
-    clientGroupsBlock:
-      default:
-        - ads
   # Persistent config store for the web UI
   databasePath: /data/blocky.db
 
