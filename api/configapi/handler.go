@@ -473,6 +473,7 @@ func clientGroupToAPI(g configstore.ClientGroup) ClientGroup {
 	return ClientGroup{
 		Id:      int(g.ID),
 		Name:    g.Name,
+		Slug:    g.Slug,
 		Clients: clients,
 		Groups:  groups,
 	}

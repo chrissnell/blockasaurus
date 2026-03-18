@@ -422,11 +422,13 @@ components:
   schemas:
     ClientGroup:
       type: object
-      required: [id, name, clients, groups]
+      required: [id, name, slug, clients, groups]
       properties:
         id:
           type: integer
         name:
+          type: string
+        slug:
           type: string
         clients:
           type: array

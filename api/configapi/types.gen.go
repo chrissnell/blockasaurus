@@ -138,6 +138,7 @@ type ClientGroup struct {
 	Groups  []string `json:"groups"`
 	Id      int      `json:"id"`
 	Name    string   `json:"name"`
+	Slug    string   `json:"slug"`
 }
 
 // ClientGroupInput defines model for ClientGroupInput.
