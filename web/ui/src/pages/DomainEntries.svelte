@@ -21,7 +21,7 @@
   // Add form
   let addDomain = $state('')
   let addComment = $state('')
-  let addListType = $state('deny')
+  let addEntryType = $state('exact_deny')
   let addWildcard = $state(false)
 
   // Edit modal
@@ -68,30 +68,31 @@
     loading = false
   }
 
+  function onWildcardToggle() {
+    if (addWildcard) {
+      const val = addDomain.trim()
+      if (val) {
+        const escaped = val.replace(/\./g, '\\.')
+        addDomain = `(\\.|^)${escaped}$`
+      }
+      if (addEntryType === 'exact_deny') addEntryType = 'regex_deny'
+      else if (addEntryType === 'exact_allow') addEntryType = 'regex_allow'
+    }
+  }
+
   async function addEntry() {
     if (!addDomain.trim()) return
 
-    let domain = addDomain.trim()
-    let entryType
-
-    if (addWildcard) {
-      // Convert to regex like Pi-hole: example.com -> (\.|^)example\.com$
-      const escaped = domain.replace(/\./g, '\\.')
-      domain = `(\\.|^)${escaped}$`
-      entryType = addListType === 'deny' ? 'regex_deny' : 'regex_allow'
-    } else {
-      entryType = addListType === 'deny' ? 'exact_deny' : 'exact_allow'
-    }
-
     await domainEntries.create({
-      domain,
-      entry_type: entryType,
+      domain: addDomain.trim(),
+      entry_type: addEntryType,
       comment: addComment,
       enabled: true,
     })
 
     addDomain = ''
     addComment = ''
+    addEntryType = 'exact_deny'
     addWildcard = false
     markDirty()
     await load()
@@ -192,10 +193,12 @@
       <FormField label="Comment">
         <TextInput bind:value={addComment} placeholder="optional" />
       </FormField>
-      <FormField label="Action">
-        <Select bind:value={addListType} options={[
-          { value: 'deny', label: 'Block' },
-          { value: 'allow', label: 'Allow' },
+      <FormField label="Type">
+        <Select bind:value={addEntryType} options={[
+          { value: 'exact_deny', label: 'Exact block' },
+          { value: 'regex_deny', label: 'Regex block' },
+          { value: 'exact_allow', label: 'Exact allow' },
+          { value: 'regex_allow', label: 'Regex allow' },
         ]} />
       </FormField>
       <div class="add-btn-wrap">
@@ -203,7 +206,7 @@
       </div>
     </div>
     <label class="wildcard-check">
-      <input type="checkbox" bind:checked={addWildcard} />
+      <input type="checkbox" bind:checked={addWildcard} onchange={onWildcardToggle} />
       <span>Add as wildcard</span>
     </label>
   </Card>
