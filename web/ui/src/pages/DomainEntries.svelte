@@ -198,16 +198,12 @@
           { value: 'allow', label: 'Allow' },
         ]} />
       </FormField>
-      <div class="add-btn-wrap">
-        <Button onclick={addEntry}>Add</Button>
-      </div>
+      <Button onclick={addEntry}>Add</Button>
     </div>
-    <div class="add-form-row2">
-      <label class="wildcard-check">
-        <input type="checkbox" bind:checked={addWildcard} />
-        <span>Add as wildcard</span>
-      </label>
-    </div>
+    <label class="wildcard-check">
+      <input type="checkbox" bind:checked={addWildcard} />
+      <span>Add as wildcard</span>
+    </label>
   </Card>
 
   <!-- List -->
@@ -297,21 +293,11 @@
     flex-wrap: wrap;
   }
 
-  .add-btn-wrap {
-    align-self: flex-end;
-  }
-
-  .add-form-row2 {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    margin-top: 0.35rem;
-  }
-
   .wildcard-check {
     display: flex;
     align-items: center;
     gap: 0.4rem;
+    margin-top: 0.25rem;
     font-size: var(--text-sm);
     cursor: pointer;
   }
