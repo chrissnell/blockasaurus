@@ -60,6 +60,30 @@ func GetEdns0Option[T EDNS0Option](msg *dns.Msg) T {
 	return nil
 }
 
+// EDNSCpeIDOption is the EDNS0 option code used by dnsmasq's add-cpe-id.
+const EDNSCpeIDOption = 65074
+
+// ExtractCpeID reads the EDNS CPE-ID (option 65074) from a DNS message.
+// Returns the ID string, or empty if not present.
+func ExtractCpeID(msg *dns.Msg) string {
+	if msg == nil {
+		return ""
+	}
+
+	opt := msg.IsEdns0()
+	if opt == nil {
+		return ""
+	}
+
+	for _, o := range opt.Option {
+		if local, ok := o.(*dns.EDNS0_LOCAL); ok && local.Code == EDNSCpeIDOption {
+			return string(local.Data)
+		}
+	}
+
+	return ""
+}
+
 // RemoveEdns0Option removes the option according to the given type from the OPT record
 // in the Extra section of the given message.
 // If there are no more options in the OPT record, the OPT record will be removed.

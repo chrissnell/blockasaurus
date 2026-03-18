@@ -533,10 +533,20 @@ func (s *Server) Reconfigure(ctx context.Context) error {
 	return nil
 }
 
-func extractClientIDFromHost(hostName string) string {
-	const clientIDPrefix = "id-"
-	if strings.HasPrefix(hostName, clientIDPrefix) && strings.Contains(hostName, ".") {
-		return hostName[len(clientIDPrefix):strings.Index(hostName, ".")]
+// extractClientIDFromHost extracts a client group slug from a hostname
+// by matching against configured base domains.
+// e.g., "kids-devices.dns.example.com" with base "dns.example.com" → "kids-devices"
+func extractClientIDFromHost(hostName string, baseDomains []string) string {
+	host := strings.ToLower(strings.TrimSuffix(hostName, "."))
+
+	for _, base := range baseDomains {
+		suffix := "." + strings.ToLower(base)
+		if strings.HasSuffix(host, suffix) {
+			label := strings.TrimSuffix(host, suffix)
+			if !strings.Contains(label, ".") && label != "" {
+				return label
+			}
+		}
 	}
 
 	return ""
@@ -570,7 +580,7 @@ func newRequest(
 	return ctx, &req
 }
 
-func newRequestFromDNS(ctx context.Context, rw dns.ResponseWriter, msg *dns.Msg) (context.Context, *model.Request) {
+func (s *Server) newRequestFromDNS(ctx context.Context, rw dns.ResponseWriter, msg *dns.Msg) (context.Context, *model.Request) {
 	var (
 		clientIP net.IP
 		protocol model.RequestProtocol
@@ -580,21 +590,28 @@ func newRequestFromDNS(ctx context.Context, rw dns.ResponseWriter, msg *dns.Msg)
 		clientIP, protocol = resolveClientIPAndProtocol(rw.RemoteAddr())
 	}
 
+	domains := s.cfg.ClientGroupEndpoints.Domains
+
 	var clientID string
 	if con, ok := rw.(dns.ConnectionStater); ok && con.ConnectionState() != nil {
-		clientID = extractClientIDFromHost(con.ConnectionState().ServerName)
+		clientID = extractClientIDFromHost(con.ConnectionState().ServerName, domains)
+	}
+
+	// Fall back to EDNS CPE-ID for plain DNS
+	if clientID == "" && s.cfg.ClientGroupEndpoints.CpeID {
+		clientID = util.ExtractCpeID(msg)
 	}
 
 	return newRequest(ctx, clientIP, clientID, protocol, msg)
 }
 
-func newRequestFromHTTP(ctx context.Context, req *http.Request, msg *dns.Msg) (context.Context, *model.Request) {
+func (s *Server) newRequestFromHTTP(ctx context.Context, req *http.Request, msg *dns.Msg) (context.Context, *model.Request) {
 	protocol := model.RequestProtocolTCP
 	clientIP := util.HTTPClientIP(req)
 
 	clientID := chi.URLParam(req, "clientID")
 	if clientID == "" {
-		clientID = extractClientIDFromHost(req.Host)
+		clientID = extractClientIDFromHost(req.Host, s.cfg.ClientGroupEndpoints.Domains)
 	}
 
 	return newRequest(ctx, clientIP, clientID, protocol, msg)
@@ -602,7 +619,7 @@ func newRequestFromHTTP(ctx context.Context, req *http.Request, msg *dns.Msg) (c
 
 // OnRequest will be executed if a new DNS request is received
 func (s *Server) OnRequest(ctx context.Context, w dns.ResponseWriter, msg *dns.Msg) {
-	ctx, request := newRequestFromDNS(ctx, w, msg)
+	ctx, request := s.newRequestFromDNS(ctx, w, msg)
 
 	s.handleReq(ctx, request, w)
 }

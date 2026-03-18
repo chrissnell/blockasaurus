@@ -52,6 +52,14 @@ spec:
             - name: http
               containerPort: {{ .Values.service.http.port }}
               protocol: TCP
+            {{- if .Values.tls.enabled }}
+            - name: dot
+              containerPort: 853
+              protocol: TCP
+            - name: doq
+              containerPort: 853
+              protocol: UDP
+            {{- end }}
           livenessProbe:
             exec:
               command:
@@ -81,6 +89,11 @@ spec:
             - name: data
               mountPath: /data
             {{- end }}
+            {{- if .Values.tls.enabled }}
+            - name: tls-certs
+              mountPath: {{ .Values.tls.mountPath }}
+              readOnly: true
+            {{- end }}
             - name: tmp
               mountPath: /tmp
       volumes:
@@ -91,6 +104,11 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: {{ include "blockasaurus.fullname" . }}
+        {{- end }}
+        {{- if .Values.tls.enabled }}
+        - name: tls-certs
+          secret:
+            secretName: {{ .Values.tls.secretName }}
         {{- end }}
         - name: tmp
           emptyDir: {}

@@ -167,6 +167,50 @@ var _ = Describe("EDNS0 utils", func() {
 		})
 	})
 
+	Describe("ExtractCpeID", func() {
+		When("CPE-ID option is present", func() {
+			BeforeEach(func() {
+				opt := new(dns.OPT)
+				opt.Hdr.Name = "."
+				opt.Hdr.Rrtype = dns.TypeOPT
+				local := &dns.EDNS0_LOCAL{Code: EDNSCpeIDOption, Data: []byte("kids-devices")}
+				opt.Option = append(opt.Option, local)
+				baseMsg.Extra = append(baseMsg.Extra, opt)
+			})
+
+			It("should return the CPE-ID string", func() {
+				Expect(ExtractCpeID(baseMsg)).Should(Equal("kids-devices"))
+			})
+		})
+
+		When("EDNS0_LOCAL with different code is present", func() {
+			BeforeEach(func() {
+				opt := new(dns.OPT)
+				opt.Hdr.Name = "."
+				opt.Hdr.Rrtype = dns.TypeOPT
+				local := &dns.EDNS0_LOCAL{Code: 65001, Data: []byte("other")}
+				opt.Option = append(opt.Option, local)
+				baseMsg.Extra = append(baseMsg.Extra, opt)
+			})
+
+			It("should return empty string", func() {
+				Expect(ExtractCpeID(baseMsg)).Should(BeEmpty())
+			})
+		})
+
+		When("no OPT record exists", func() {
+			It("should return empty string", func() {
+				Expect(ExtractCpeID(baseMsg)).Should(BeEmpty())
+			})
+		})
+
+		When("message is nil", func() {
+			It("should return empty string", func() {
+				Expect(ExtractCpeID(nil)).Should(BeEmpty())
+			})
+		})
+	})
+
 	Describe("SetEdns0Option", func() {
 		When("Option is not present", func() {
 			var eso *dns.EDNS0_SUBNET

@@ -26,6 +26,18 @@ spec:
       port: {{ .Values.service.dns.port }}
       targetPort: dns-tcp
       protocol: TCP
+    {{- if .Values.service.dns.dot }}
+    - name: dot
+      port: 853
+      targetPort: dot
+      protocol: TCP
+    {{- end }}
+    {{- if .Values.service.dns.doq }}
+    - name: doq
+      port: 853
+      targetPort: doq
+      protocol: UDP
+    {{- end }}
   selector:
     {{- include "blockasaurus.selectorLabels" . | nindent 4 }}
 {{- end }}

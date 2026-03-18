@@ -94,6 +94,13 @@ export async function getStats() {
   return resp.json()
 }
 
+// Endpoint Info (client group endpoint configuration)
+export async function getEndpointInfo() {
+  const resp = await fetch('/api/endpoint-info')
+  if (!resp.ok) return null
+  return resp.json()
+}
+
 // Version
 export async function getVersion() {
   const resp = await fetch('/api/version')

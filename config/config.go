@@ -275,8 +275,9 @@ type Config struct {
 	ECS              ECS                 `yaml:"ecs"`
 	SUDN             SUDN                `yaml:"specialUseDomains"`
 	DNS64            DNS64               `yaml:"dns64"`
-	DNSSEC           DNSSEC              `yaml:"dnssec"`
-	DatabasePath     string              `yaml:"databasePath"`
+	DNSSEC               DNSSEC               `yaml:"dnssec"`
+	ClientGroupEndpoints ClientGroupEndpoints `yaml:"clientGroupEndpoints"`
+	DatabasePath         string               `yaml:"databasePath"`
 
 	// Deprecated options
 	Deprecated struct {

@@ -147,7 +147,7 @@ func (s *Server) processDohMessage(rawMsg []byte, rw http.ResponseWriter, httpRe
 		return
 	}
 
-	ctx, dnsReq := newRequestFromHTTP(httpReq.Context(), httpReq, msg)
+	ctx, dnsReq := s.newRequestFromHTTP(httpReq.Context(), httpReq, msg)
 
 	s.handleReq(ctx, dnsReq, httpMsgWriter{rw})
 }
@@ -194,7 +194,7 @@ func (s *Server) Query(
 	ctx context.Context, serverHost string, clientIP net.IP, question string, qType dns.Type,
 ) (*model.Response, error) {
 	msg := util.NewMsgWithQuestion(question, qType)
-	clientID := extractClientIDFromHost(serverHost)
+	clientID := extractClientIDFromHost(serverHost, s.cfg.ClientGroupEndpoints.Domains)
 
 	ctx, req := newRequest(ctx, clientIP, clientID, model.RequestProtocolTCP, msg)
 
@@ -250,6 +250,7 @@ func createHTTPRouter(cfg *config.Config, openAPIImpl api.StrictServerInterface,
 	}
 
 	router.Get("/api/discovered-clients", handleDiscoveredClients)
+	router.Get("/api/endpoint-info", handleEndpointInfo(cfg))
 	router.Get("/api/stats", handleStats)
 	router.Get("/api/version", handleVersion)
 

@@ -10,7 +10,7 @@
   import TextInput from '../components/TextInput.svelte'
   import EmptyState from '../components/EmptyState.svelte'
   import Autocomplete from '../components/Autocomplete.svelte'
-  import { clientGroups, getDiscoveredClients } from '../lib/api.js'
+  import { clientGroups, getDiscoveredClients, getEndpointInfo } from '../lib/api.js'
   import { markDirty } from '../lib/dirty.svelte.js'
 
   // --- State ---
@@ -28,9 +28,13 @@
   // Discovered clients from ARP
   let discovered = $state([])
 
+  // Endpoint configuration (loaded once)
+  let endpointInfo = $state(null)
+
   // --- List view ---
   const columns = [
     { key: 'name', label: 'Name', sortable: true },
+    { key: 'slug', label: 'Slug', sortable: true },
     { key: 'clients', label: 'Clients', render: (r) => `${r.clients?.length || 0}` },
     { key: 'groups', label: 'Blocklist Groups', render: (r) => `${r.groups?.length || 0}` },
   ]
@@ -67,9 +71,44 @@
     detailLoading = true
     selected = row
 
-    discovered = await getDiscoveredClients().catch(() => []) ?? []
+    const [disc, epInfo] = await Promise.all([
+      getDiscoveredClients().catch(() => []),
+      endpointInfo ? Promise.resolve(endpointInfo) : getEndpointInfo().catch(() => null),
+    ])
+    discovered = disc ?? []
+    if (epInfo) endpointInfo = epInfo
 
     detailLoading = false
+  }
+
+  // Build endpoint URLs for a group slug
+  function getEndpoints(slug, info) {
+    if (!info || !slug) return []
+    const eps = []
+    const dohPath = info.dohPath || '/dns-query'
+
+    // Path-based DoH is always available when HTTP is configured
+    if (info.hasHttp) {
+      eps.push({ label: 'DoH (path)', value: `http://<server>${dohPath}/${slug}`, proto: 'http' })
+    }
+
+    // CPE-ID for dnsmasq
+    if (info.cpeId) {
+      eps.push({ label: 'dnsmasq CPE-ID', value: `add-cpe-id=${slug}`, proto: 'dns' })
+    }
+
+    // Subdomain-based endpoints (one set per configured domain)
+    for (const domain of info.domains) {
+      const fqdn = `${slug}.${domain}`
+      if (info.hasTls) {
+        eps.push({ label: `DoH (subdomain)`, value: `https://${fqdn}${dohPath}`, proto: 'https' })
+        eps.push({ label: `DoT / Private DNS`, value: fqdn, proto: 'tls' })
+      } else if (info.hasHttp) {
+        eps.push({ label: `DoH (subdomain)`, value: `http://${fqdn}${dohPath}`, proto: 'http' })
+      }
+    }
+
+    return eps
   }
 
   function backToList() {
@@ -134,6 +173,27 @@
           {/if}
         </div>
       </Card>
+
+      <!-- Endpoints Card -->
+      {#if endpointInfo && selected.slug}
+        {@const endpoints = getEndpoints(selected.slug, endpointInfo)}
+        {#if endpoints.length > 0}
+          <Card title="Endpoints">
+            <p class="endpoint-hint">
+              Use these addresses to direct devices in this group to blockasaurus.
+              The slug for this group is <code class="slug">{selected.slug}</code>.
+            </p>
+            <div class="endpoint-list">
+              {#each endpoints as ep}
+                <div class="endpoint-row">
+                  <span class="endpoint-label">{ep.label}</span>
+                  <code class="endpoint-value">{ep.value}</code>
+                </div>
+              {/each}
+            </div>
+          </Card>
+        {/if}
+      {/if}
 
     {/if}
   {:else}
@@ -255,5 +315,49 @@
     font-size: var(--text-sm);
     color: var(--color-text-dim);
     margin-top: 0.5rem;
+  }
+
+  .endpoint-hint {
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+    margin-bottom: 0.75rem;
+  }
+
+  .slug {
+    font-size: var(--text-sm);
+    background: var(--color-btn-bg);
+    border: 1px solid var(--color-btn-border);
+    border-radius: var(--radius);
+    padding: 0.1rem 0.35rem;
+  }
+
+  .endpoint-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  .endpoint-row {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    font-size: var(--text-sm);
+  }
+
+  .endpoint-label {
+    flex-shrink: 0;
+    color: var(--color-text-muted);
+    min-width: 10rem;
+  }
+
+  .endpoint-value {
+    font-family: var(--font-mono, monospace);
+    font-size: var(--text-xs);
+    background: var(--color-btn-bg);
+    border: 1px solid var(--color-btn-border);
+    border-radius: var(--radius);
+    padding: 0.15rem 0.4rem;
+    word-break: break-all;
+    user-select: all;
   }
 </style>
