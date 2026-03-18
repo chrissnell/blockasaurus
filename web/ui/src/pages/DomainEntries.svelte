@@ -198,7 +198,9 @@
           { value: 'allow', label: 'Allow' },
         ]} />
       </FormField>
-      <Button onclick={addEntry}>Add</Button>
+      <div class="add-btn-wrap">
+        <Button onclick={addEntry}>Add</Button>
+      </div>
     </div>
     <label class="wildcard-check">
       <input type="checkbox" bind:checked={addWildcard} />
@@ -291,6 +293,10 @@
     align-items: flex-end;
     gap: 1rem;
     flex-wrap: wrap;
+  }
+
+  .add-btn-wrap {
+    margin-bottom: 1rem;
   }
 
   .wildcard-check {
