@@ -52,7 +52,19 @@ func Open(path string) (*ConfigStore, error) {
 		return nil, fmt.Errorf("auto-migrate config tables: %w", err)
 	}
 
-	return &ConfigStore{db: db}, nil
+	// Backfill group_name for domain entries migrated from the old Groups column
+	if err := db.Exec(
+		`UPDATE domain_entries SET group_name = '_d_' || id WHERE group_name = '' OR group_name IS NULL`,
+	).Error; err != nil {
+		return nil, fmt.Errorf("backfill domain entry group names: %w", err)
+	}
+
+	store := &ConfigStore{db: db}
+	if err := store.ensureDomainEntriesInDefaultGroup(); err != nil {
+		return nil, fmt.Errorf("wire domain entries to default group: %w", err)
+	}
+
+	return store, nil
 }
 
 func (s *ConfigStore) Close() error {
@@ -115,6 +127,92 @@ func (s *ConfigStore) DeleteClientGroup(name string) error {
 
 	if result.RowsAffected == 0 {
 		return gorm.ErrRecordNotFound
+	}
+
+	return nil
+}
+
+// AddGroupToClientGroup appends groupName to a client group's Groups list if not already present.
+func (s *ConfigStore) AddGroupToClientGroup(clientGroupName, groupName string) error {
+	g, err := s.GetClientGroup(clientGroupName)
+	if err != nil {
+		return err
+	}
+
+	for _, existing := range g.Groups {
+		if existing == groupName {
+			return nil
+		}
+	}
+
+	g.Groups = append(g.Groups, groupName)
+
+	return s.PutClientGroup(g)
+}
+
+// RemoveGroupFromAllClientGroups removes groupName from every client group's Groups list.
+func (s *ConfigStore) RemoveGroupFromAllClientGroups(groupName string) error {
+	groups, err := s.ListClientGroups()
+	if err != nil {
+		return err
+	}
+
+	for i := range groups {
+		g := &groups[i]
+		filtered := make(StringList, 0, len(g.Groups))
+
+		for _, name := range g.Groups {
+			if name != groupName {
+				filtered = append(filtered, name)
+			}
+		}
+
+		if len(filtered) != len(g.Groups) {
+			g.Groups = filtered
+			if err := s.PutClientGroup(g); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// ensureDomainEntriesInDefaultGroup adds any domain entry group_names
+// missing from the default client group. Runs on startup to handle
+// entries migrated from the old Groups-based model.
+func (s *ConfigStore) ensureDomainEntriesInDefaultGroup() error {
+	entries, err := s.ListDomainEntries("")
+	if err != nil {
+		return err
+	}
+
+	if len(entries) == 0 {
+		return nil
+	}
+
+	defGroup, err := s.GetClientGroup("default")
+	if err != nil {
+		return nil // no default group — nothing to wire
+	}
+
+	existing := make(map[string]bool, len(defGroup.Groups))
+	for _, g := range defGroup.Groups {
+		existing[g] = true
+	}
+
+	changed := false
+
+	for _, e := range entries {
+		if e.GroupName != "" && !existing[e.GroupName] {
+			defGroup.Groups = append(defGroup.Groups, e.GroupName)
+			existing[e.GroupName] = true
+			changed = true
+		}
+	}
+
+	if changed {
+		return s.PutClientGroup(defGroup)
 	}
 
 	return nil

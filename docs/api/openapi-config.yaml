@@ -523,7 +523,7 @@ components:
 
     DomainEntry:
       type: object
-      required: [id, domain, entry_type, comment, enabled, groups]
+      required: [id, domain, entry_type, comment, enabled, group_name]
       properties:
         id:
           type: integer
@@ -536,14 +536,12 @@ components:
           type: string
         enabled:
           type: boolean
-        groups:
-          type: array
-          items:
-            type: string
+        group_name:
+          type: string
 
     DomainEntryInput:
       type: object
-      required: [domain, entry_type, enabled, groups]
+      required: [domain, entry_type, enabled]
       properties:
         domain:
           type: string
@@ -554,10 +552,6 @@ components:
           type: string
         enabled:
           type: boolean
-        groups:
-          type: array
-          items:
-            type: string
 
     BlockSettings:
       type: object

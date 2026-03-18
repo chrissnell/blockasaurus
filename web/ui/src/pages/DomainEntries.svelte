@@ -10,7 +10,6 @@
   import TextInput from '../components/TextInput.svelte'
   import Select from '../components/Select.svelte'
   import Toggle from '../components/Toggle.svelte'
-  import Badge from '../components/Badge.svelte'
   import EmptyState from '../components/EmptyState.svelte'
   import { domainEntries, clientGroups } from '../lib/api.js'
   import { markDirty } from '../lib/dirty.svelte.js'
@@ -28,7 +27,7 @@
   // Edit modal
   let editOpen = $state(false)
   let editId = $state(null)
-  let editForm = $state({ domain: '', entry_type: 'exact_deny', comment: '', enabled: true, groups: ['default'] })
+  let editForm = $state({ domain: '', entry_type: 'exact_deny', comment: '', enabled: true })
 
   // Group assignment modal
   let assignOpen = $state(false)
@@ -42,11 +41,9 @@
     regex_allow: 'Regex allow',
   }
 
-  const typeVariants = {
-    exact_deny: 'danger',
-    regex_deny: 'danger',
-    exact_allow: 'success',
-    regex_allow: 'success',
+  // Count how many client groups reference a given group_name
+  function groupCount(groupName) {
+    return groups.filter(g => g.groups?.includes(groupName)).length
   }
 
   const columns = [
@@ -54,7 +51,7 @@
     { key: 'entry_type', label: 'Type', render: (r) => typeLabels[r.entry_type] ?? r.entry_type },
     { key: 'enabled', label: 'Status', render: (r) => r.enabled ? '✓' : '—' },
     { key: 'comment', label: 'Comment' },
-    { key: 'groups', label: 'Groups', render: (r) => (r.groups ?? []).length },
+    { key: 'group_name', label: 'Client Groups', render: (r) => `${groupCount(r.group_name)}` },
   ]
 
   async function load() {
@@ -91,7 +88,6 @@
       entry_type: entryType,
       comment: addComment,
       enabled: true,
-      groups: ['default'],
     })
 
     addDomain = ''
@@ -102,7 +98,12 @@
   }
 
   async function toggleEnabled(entry) {
-    await domainEntries.update(entry.id, { ...entry, enabled: !entry.enabled })
+    await domainEntries.update(entry.id, {
+      domain: entry.domain,
+      entry_type: entry.entry_type,
+      comment: entry.comment,
+      enabled: !entry.enabled,
+    })
     markDirty()
     await load()
   }
@@ -114,7 +115,6 @@
       entry_type: row.entry_type,
       comment: row.comment ?? '',
       enabled: row.enabled,
-      groups: row.groups ?? ['default'],
     }
     editOpen = true
   }
@@ -132,12 +132,12 @@
     await load()
   }
 
-  // --- Group assignment modal ---
+  // --- Group assignment modal (same pattern as Blocklists page) ---
   function openAssign(row) {
     assignEntry = row
     assignChecked = {}
     for (const g of groups) {
-      assignChecked[g.name] = (row.groups ?? []).includes(g.name)
+      assignChecked[g.name] = g.groups?.includes(row.group_name) ?? false
     }
     assignOpen = true
   }
@@ -151,13 +151,30 @@
   }
 
   async function saveAssignments() {
-    const newGroups = groups.filter(g => assignChecked[g.name]).map(g => g.name)
-    if (newGroups.length === 0) newGroups.push('default')
+    const groupName = assignEntry.group_name
+    const updates = []
 
-    await domainEntries.update(assignEntry.id, { ...assignEntry, groups: newGroups })
+    for (const g of groups) {
+      const hasIt = g.groups?.includes(groupName) ?? false
+      const wantIt = assignChecked[g.name] ?? false
+
+      if (hasIt === wantIt) continue
+
+      let newGroups
+      if (wantIt) {
+        newGroups = [...(g.groups ?? []), groupName]
+      } else {
+        newGroups = (g.groups ?? []).filter(n => n !== groupName)
+      }
+      updates.push(clientGroups.put(g.name, { clients: g.clients, groups: newGroups }))
+    }
+
+    if (updates.length > 0) {
+      await Promise.all(updates)
+      markDirty()
+      await load()
+    }
     assignOpen = false
-    markDirty()
-    await load()
   }
 
   load()
@@ -240,7 +257,7 @@
 </Modal>
 
 <!-- Group Assignment Modal -->
-<Modal bind:open={assignOpen} title="Assign to Groups">
+<Modal bind:open={assignOpen} title="Assign to Client Groups">
   {#if groups.length === 0}
     <p class="empty-hint">No client groups exist yet. Create one from the Client Groups page.</p>
   {:else}

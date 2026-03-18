@@ -177,7 +177,7 @@ type DomainEntry struct {
 	Domain    string               `json:"domain"`
 	Enabled   bool                 `json:"enabled"`
 	EntryType DomainEntryEntryType `json:"entry_type"`
-	Groups    []string             `json:"groups"`
+	GroupName string               `json:"group_name"`
 	Id        int                  `json:"id"`
 }
 
@@ -190,7 +190,6 @@ type DomainEntryInput struct {
 	Domain    string                    `json:"domain"`
 	Enabled   bool                      `json:"enabled"`
 	EntryType DomainEntryInputEntryType `json:"entry_type"`
-	Groups    []string                  `json:"groups"`
 }
 
 // DomainEntryInputEntryType defines model for DomainEntryInput.EntryType.

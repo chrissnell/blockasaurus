@@ -70,6 +70,32 @@ var _ = Describe("Convert", func() {
 			Expect(time.Duration(result.BlockTTL)).Should(Equal(30 * time.Minute))
 		})
 
+		It("should add domain entries to denylists/allowlists by group_name", func() {
+			Expect(store.PutClientGroup(&ClientGroup{
+				Name:   "default",
+				Groups: StringList{"ads", "_d_1"},
+			})).Should(Succeed())
+
+			Expect(store.CreateDomainEntry(&DomainEntry{
+				Domain:    "evil.example.com",
+				EntryType: "exact_deny",
+				Enabled:   BoolPtr(true),
+				GroupName: "_d_1",
+			})).Should(Succeed())
+
+			result, err := store.BuildBlockingConfig(config.Blocking{})
+			Expect(err).Should(Succeed())
+
+			// Entry appears in denylists under its group_name
+			Expect(result.Denylists).Should(HaveKey("_d_1"))
+			Expect(result.Denylists["_d_1"]).Should(HaveLen(1))
+			Expect(result.Denylists["_d_1"][0].From).Should(Equal("evil.example.com"))
+
+			// Client group includes the domain entry's group_name
+			Expect(result.ClientGroupsBlock["default"]).Should(ContainElement("_d_1"))
+			Expect(result.ClientGroupsBlock["default"]).Should(ContainElement("ads"))
+		})
+
 		It("should preserve YAML-only fields", func() {
 			base := config.Blocking{
 				Loading: config.SourceLoading{

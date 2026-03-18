@@ -320,10 +320,20 @@ func (h *ConfigHandler) CreateDomainEntry(_ context.Context, req CreateDomainEnt
 		EntryType: string(req.Body.EntryType),
 		Comment:   comment,
 		Enabled:   configstore.BoolPtr(req.Body.Enabled),
-		Groups:    configstore.StringList(req.Body.Groups),
 	}
 
 	if err := h.store.CreateDomainEntry(e); err != nil {
+		return nil, err
+	}
+
+	// Auto-generate group name from ID (like blocklist sources get from URLs)
+	e.GroupName = fmt.Sprintf("_d_%d", e.ID)
+	if err := h.store.UpdateDomainEntry(e); err != nil {
+		return nil, err
+	}
+
+	// Auto-add to default client group so entries work immediately
+	if err := h.store.AddGroupToClientGroup("default", e.GroupName); err != nil {
 		return nil, err
 	}
 
@@ -366,7 +376,7 @@ func (h *ConfigHandler) UpdateDomainEntry(_ context.Context, req UpdateDomainEnt
 	existing.EntryType = string(req.Body.EntryType)
 	existing.Comment = comment
 	existing.Enabled = configstore.BoolPtr(req.Body.Enabled)
-	existing.Groups = configstore.StringList(req.Body.Groups)
+	// GroupName is immutable — set on create, managed via client group assignments
 
 	if err := h.store.UpdateDomainEntry(existing); err != nil {
 		return nil, err
@@ -376,12 +386,25 @@ func (h *ConfigHandler) UpdateDomainEntry(_ context.Context, req UpdateDomainEnt
 }
 
 func (h *ConfigHandler) DeleteDomainEntry(_ context.Context, req DeleteDomainEntryRequestObject) (DeleteDomainEntryResponseObject, error) {
-	if err := h.store.DeleteDomainEntry(uint(req.Id)); err != nil {
+	// Look up entry first to get group_name for cleanup
+	entry, err := h.store.GetDomainEntry(uint(req.Id))
+	if err != nil {
 		if isNotFound(err) {
 			return DeleteDomainEntry404JSONResponse{NotFoundJSONResponse{Message: "domain entry not found"}}, nil
 		}
 
 		return nil, err
+	}
+
+	if err := h.store.DeleteDomainEntry(uint(req.Id)); err != nil {
+		return nil, err
+	}
+
+	// Remove group_name from all client groups
+	if entry.GroupName != "" {
+		if err := h.store.RemoveGroupFromAllClientGroups(entry.GroupName); err != nil {
+			return nil, err
+		}
 	}
 
 	return DeleteDomainEntry204Response{}, nil
@@ -478,18 +501,13 @@ func customDNSEntryToAPI(e configstore.CustomDNSEntry) CustomDNSEntry {
 }
 
 func domainEntryToAPI(e configstore.DomainEntry) DomainEntry {
-	groups := []string(e.Groups)
-	if groups == nil {
-		groups = []string{}
-	}
-
 	return DomainEntry{
 		Id:        int(e.ID),
 		Domain:    e.Domain,
 		EntryType: DomainEntryEntryType(e.EntryType),
 		Comment:   e.Comment,
 		Enabled:   e.IsEnabled(),
-		Groups:    groups,
+		GroupName: e.GroupName,
 	}
 }
 
@@ -582,10 +600,6 @@ func validateDomainEntry(input *DomainEntryInput) error {
 
 	if strings.TrimSpace(input.Domain) == "" {
 		return fmt.Errorf("domain is required")
-	}
-
-	if len(input.Groups) == 0 {
-		return fmt.Errorf("at least one group is required")
 	}
 
 	// Validate regex patterns compile

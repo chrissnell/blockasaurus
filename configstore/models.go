@@ -95,15 +95,17 @@ func (StringList) GormDataType() string {
 }
 
 // DomainEntry is an individual domain block/allow rule (exact or regex).
+// GroupName is a hidden blocking group identifier (like BlocklistSource.GroupName)
+// used to wire the entry into client groups via their Groups array.
 type DomainEntry struct {
-	ID        uint       `gorm:"primaryKey" json:"id"`
-	Domain    string     `gorm:"not null" json:"domain"`
-	EntryType string     `gorm:"not null;index" json:"entry_type"` // exact_deny, regex_deny, exact_allow, regex_allow
-	Comment   string     `json:"comment"`
-	Enabled   *bool      `gorm:"not null;default:true" json:"enabled"`
-	Groups    StringList `gorm:"type:text;not null;default:'[\"default\"]'" json:"groups"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Domain    string    `gorm:"not null" json:"domain"`
+	EntryType string    `gorm:"not null;index" json:"entry_type"` // exact_deny, regex_deny, exact_allow, regex_allow
+	Comment   string    `json:"comment"`
+	Enabled   *bool     `gorm:"not null;default:true" json:"enabled"`
+	GroupName string    `gorm:"not null;default:''" json:"group_name"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // BoolPtr returns a pointer to a bool value.

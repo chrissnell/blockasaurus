@@ -63,59 +63,44 @@ func (s *ConfigStore) BuildBlockingConfig(base config.Blocking) (config.Blocking
 		}
 	}
 
-	// Individual domain entries — injected as inline text sources per group
+	// Individual domain entries — each entry has a GroupName (like
+	// BlocklistSource.GroupName) used to key into denylists/allowlists.
+	// Client group assignment is managed on the client group side.
 	domainEntries, err := s.ListDomainEntries("")
 	if err != nil {
 		return base, fmt.Errorf("load domain entries: %w", err)
 	}
 
-	// Collect domains per group+type: key is "deny:<group>" or "allow:<group>"
-	domainLines := make(map[string][]string)
-
 	for _, de := range domainEntries {
-		if !de.IsEnabled() {
+		if !de.IsEnabled() || de.GroupName == "" {
 			continue
 		}
 
-		var listKind string
 		var line string
 
 		switch de.EntryType {
 		case "exact_deny":
-			listKind = "deny"
 			line = de.Domain
 		case "regex_deny":
-			listKind = "deny"
 			line = "/" + de.Domain + "/"
 		case "exact_allow":
-			listKind = "allow"
 			line = de.Domain
 		case "regex_allow":
-			listKind = "allow"
 			line = "/" + de.Domain + "/"
 		default:
 			continue
 		}
 
-		for _, group := range de.Groups {
-			key := listKind + ":" + group
-			domainLines[key] = append(domainLines[key], line)
-		}
-	}
-
-	for key, lines := range domainLines {
-		parts := splitKeyOnce(key, ":")
-		listKind, group := parts[0], parts[1]
 		bs := config.BytesSource{
 			Type: config.BytesSourceTypeText,
-			From: joinLines(lines),
+			From: line,
 		}
 
-		switch listKind {
-		case "deny":
-			base.Denylists[group] = append(base.Denylists[group], bs)
-		case "allow":
-			base.Allowlists[group] = append(base.Allowlists[group], bs)
+		switch de.EntryType {
+		case "exact_deny", "regex_deny":
+			base.Denylists[de.GroupName] = append(base.Denylists[de.GroupName], bs)
+		case "exact_allow", "regex_allow":
+			base.Allowlists[de.GroupName] = append(base.Allowlists[de.GroupName], bs)
 		}
 	}
 
@@ -218,3 +203,4 @@ func splitKeyOnce(s, sep string) [2]string {
 func joinLines(lines []string) string {
 	return strings.Join(lines, "\n")
 }
+
