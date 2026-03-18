@@ -501,7 +501,10 @@ func (s *Server) Reconfigure(ctx context.Context) error {
 	newCfg.CustomDNS = customDNS
 
 	// Build new resolver chain (slow — list loading, network I/O)
-	chainCtx, chainCancel := context.WithCancel(ctx)
+	// Use Background context, not the caller's ctx (which may be an HTTP request
+	// context that gets cancelled when the response is sent, killing goroutines
+	// like writeLog that need to run for the lifetime of the chain).
+	chainCtx, chainCancel := context.WithCancel(context.Background())
 
 	newChain, err := createQueryResolver(chainCtx, &newCfg, s.bootstrap, s.redisClient, s.broadcaster)
 	if err != nil {
