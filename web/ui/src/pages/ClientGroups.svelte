@@ -70,6 +70,7 @@
   async function openDetail(row) {
     detailLoading = true
     selected = row
+    activeTab = null
 
     const [disc, epInfo] = await Promise.all([
       getDiscoveredClients().catch(() => []),
@@ -81,182 +82,204 @@
     detailLoading = false
   }
 
-  // Build per-OS setup instructions from endpoint info
-  function getSetupGuides(slug, info) {
+  // Tabbed setup guide data
+  let activeTab = $state(null)
+
+  function getSetupTabs(slug, info) {
     if (!info || !slug) return []
-    const guides = []
+    const tabs = []
     const dohPath = info.dohPath || '/dns-query'
-    const hasDomains = info.domains?.length > 0
-    const domain = hasDomains ? info.domains[0] : null
+    const domain = info.domains?.length > 0 ? info.domains[0] : null
     const fqdn = domain ? `${slug}.${domain}` : null
+    const httpsUrl = fqdn ? `https://${fqdn}${dohPath}` : null
+    const httpUrl = fqdn ? `http://${fqdn}${dohPath}` : null
+    const url = (info.hasTls && httpsUrl) ? httpsUrl : httpUrl
+    const fallbackUrl = `http://&lt;server&gt;${dohPath}/${slug}`
 
-    // Android — Private DNS (needs TLS + domain)
-    if (info.hasTls && fqdn) {
-      guides.push({
-        os: 'Android',
-        steps: [
-          'Open Settings and tap Network & internet.',
-          'Tap Private DNS.',
-          'Select "Private DNS provider hostname" and enter the hostname below.',
-        ],
-        fields: [
-          { label: 'Hostname', value: fqdn },
-        ],
-      })
-    }
-
-    // iOS / macOS — DNS configuration profile
-    if (info.hasTls && fqdn) {
-      guides.push({
-        os: 'Apple (iOS / macOS)',
-        steps: [
-          'Create or download a DNS configuration profile (.mobileconfig) for your device.',
-          'You can generate one at dns.notjakob.com/tool.html or write one manually.',
-          'Use the encrypted DNS server URL below as the server address in the profile.',
-          'On iOS: open the profile in Settings \u2192 General \u2192 VPN & Device Management to install it.',
-          'On macOS: double-click the profile to open System Settings and install it.',
-        ],
-        fields: [
-          { label: 'Server URL', value: `https://${fqdn}${dohPath}` },
-        ],
-      })
-    } else if (info.hasHttp && fqdn) {
-      guides.push({
-        os: 'Apple (iOS / macOS)',
-        steps: [
-          'Create or download a DNS configuration profile (.mobileconfig) for your device.',
-          'Use the server URL below. Note: this is unencrypted because TLS is not configured.',
-          'On iOS: open the profile in Settings \u2192 General \u2192 VPN & Device Management to install it.',
-          'On macOS: double-click the profile to open System Settings and install it.',
-        ],
-        fields: [
-          { label: 'Server URL', value: `http://${fqdn}${dohPath}` },
-        ],
-      })
-    }
-
-    // Windows 11
-    if (fqdn) {
-      const url = info.hasTls ? `https://${fqdn}${dohPath}` : `http://${fqdn}${dohPath}`
-      guides.push({
-        os: 'Windows 11',
-        steps: [
-          'Open Settings \u2192 Network & internet and click on your active connection (Wi-Fi or Ethernet).',
-          'Click Edit next to "DNS server assignment".',
-          'Switch to Manual DNS and enable IPv4.',
-          'Enter the blockasaurus server IP as the Preferred DNS.',
-          'Under "DNS over HTTPS", select "On (manual template)" and enter the template below.',
-        ],
-        fields: [
-          { label: 'DNS over HTTPS template', value: url },
-        ],
-      })
-    } else if (info.hasHttp) {
-      guides.push({
-        os: 'Windows 11',
-        steps: [
-          'Open Settings \u2192 Network & internet and click on your active connection.',
-          'Click Edit next to "DNS server assignment".',
-          'Switch to Manual DNS, enable IPv4, and enter the blockasaurus server IP.',
-          'Under "DNS over HTTPS", select "On (manual template)" and enter the template below.',
-          'Replace <server> with the IP address or hostname of your blockasaurus server.',
-        ],
-        fields: [
-          { label: 'DNS over HTTPS template', value: `http://<server>${dohPath}/${slug}` },
-        ],
-      })
-    }
-
-    // Linux — systemd-resolved
-    if (info.hasTls && fqdn) {
-      guides.push({
-        os: 'Linux (systemd-resolved)',
-        steps: [
-          'Edit /etc/systemd/resolved.conf and add or update the [Resolve] section with the values below.',
-          'Replace <server-ip> with the IP address of your blockasaurus server.',
-          'Run "sudo systemctl restart systemd-resolved" to apply the changes.',
-        ],
-        fields: [
-          { label: 'DNS', value: `<server-ip>#${fqdn}` },
-          { label: 'DNSOverTLS', value: 'yes' },
-        ],
-      })
-    }
-
-    // Browsers
-    if (info.hasHttp || info.hasTls) {
-      const url = fqdn
-        ? (info.hasTls ? `https://${fqdn}${dohPath}` : `http://${fqdn}${dohPath}`)
-        : `http://<server>${dohPath}/${slug}`
-
-      guides.push({
-        os: 'Chrome / Edge / Brave',
-        steps: [
-          'Open the browser and go to Settings.',
-          'Navigate to Privacy and security \u2192 Security.',
-          'Scroll to "Use secure DNS" and enable it.',
-          'Select "With: Custom" and paste the URL below.',
-        ],
-        fields: [
-          { label: 'Custom DNS provider URL', value: url },
-        ],
-      })
-
-      guides.push({
-        os: 'Firefox',
-        steps: [
-          'Open Firefox and go to Settings.',
-          'Navigate to Privacy & Security and scroll to "DNS over HTTPS".',
-          'Select "Max Protection" (or "Increased Protection" if you want a fallback).',
-          'Choose "Custom" as the provider and paste the URL below.',
-        ],
-        fields: [
-          { label: 'Custom DNS provider URL', value: url },
-        ],
-      })
-    }
-
-    // Router / dnsmasq
-    if (info.cpeId) {
-      guides.push({
-        os: 'Router running dnsmasq',
-        steps: [
-          'This is for routers or DNS forwarders that run dnsmasq and forward queries to blockasaurus.',
-          'Add the configuration line below to your dnsmasq.conf file.',
-          'This tags all DNS queries forwarded by this router so blockasaurus can identify them as belonging to this group.',
-          'Restart dnsmasq after making the change.',
-        ],
-        fields: [
-          { label: 'dnsmasq.conf line', value: `add-cpe-id=${slug}` },
-        ],
-      })
-    }
-
-    // Additional domain endpoints
-    if (hasDomains && info.domains.length > 1) {
-      const extra = []
-      for (const d of info.domains.slice(1)) {
-        const f = `${slug}.${d}`
-        if (info.hasTls) {
-          extra.push({ label: `Encrypted DNS URL (${d})`, value: `https://${f}${dohPath}` })
-          extra.push({ label: `Encrypted DNS hostname (${d})`, value: f })
-        } else if (info.hasHttp) {
-          extra.push({ label: `DNS URL (${d})`, value: `http://${f}${dohPath}` })
-        }
-      }
-      if (extra.length) {
-        guides.push({
-          os: 'Additional Domains',
+    // Windows — most common desktop OS
+    if (fqdn || info.hasHttp) {
+      const sections = []
+      if (fqdn) {
+        sections.push({
+          title: 'Secure DNS',
+          subtitle: 'Windows 11',
+          recommended: true,
           steps: [
-            'The addresses below are also available for this group using your other configured domains.',
-            'You can use these interchangeably with the addresses shown above.',
+            'Open <b>Settings</b> and go to <b>Network & internet</b>.',
+            'Click your active connection (<b>Wi-Fi</b> or <b>Ethernet</b>).',
+            'Click <b>Hardware properties</b>.',
+            'Next to <b>DNS server assignment</b>, click <b>Edit</b>.',
+            'Set to <b>Manual</b>, toggle <b>IPv4</b> on, and enter your blockasaurus server IP as the <b>Preferred DNS</b>.',
+            'Set <b>DNS over HTTPS</b> to <b>On (manual template)</b> and enter the template below.',
+            'Click <b>Save</b>.',
           ],
-          fields: extra,
+          fields: [{ label: 'DNS over HTTPS template', value: url }],
+        })
+      } else {
+        sections.push({
+          title: 'Secure DNS',
+          subtitle: 'Windows 11',
+          recommended: true,
+          steps: [
+            'Open <b>Settings</b> and go to <b>Network & internet</b>.',
+            'Click your active connection (<b>Wi-Fi</b> or <b>Ethernet</b>).',
+            'Click <b>Hardware properties</b>.',
+            'Next to <b>DNS server assignment</b>, click <b>Edit</b>.',
+            'Set to <b>Manual</b>, toggle <b>IPv4</b> on, and enter your blockasaurus server IP as the <b>Preferred DNS</b>.',
+            'Set <b>DNS over HTTPS</b> to <b>On (manual template)</b> and enter the template below.',
+            'Replace <b>&lt;server&gt;</b> with the IP or hostname of your blockasaurus server.',
+            'Click <b>Save</b>.',
+          ],
+          fields: [{ label: 'DNS over HTTPS template', value: fallbackUrl }],
         })
       }
+      tabs.push({ id: 'windows', label: 'Windows', sections })
     }
 
-    return guides
+    // Android — most common mobile OS
+    if (info.hasTls && fqdn) {
+      tabs.push({
+        id: 'android', label: 'Android', sections: [{
+          title: 'Private DNS',
+          subtitle: 'Android 9 or higher',
+          recommended: true,
+          steps: [
+            'Open <b>Settings</b> and tap <b>Network & internet</b>.',
+            'Tap <b>Private DNS</b>.',
+            'Select <b>Private DNS provider hostname</b>.',
+            'Enter the hostname below and tap <b>Save</b>.',
+          ],
+          fields: [{ label: 'Hostname', value: fqdn }],
+        }],
+      })
+    }
+
+    // iOS
+    if (fqdn && (info.hasTls || info.hasHttp)) {
+      tabs.push({
+        id: 'ios', label: 'iOS', sections: [{
+          title: 'Configuration Profile',
+          subtitle: 'iOS 14 or higher',
+          recommended: true,
+          steps: [
+            'Visit <b>dns.notjakob.com/tool.html</b> on your device to generate a DNS profile.',
+            'Set the server URL to the value below and download the <b>.mobileconfig</b> file.',
+            'Open <b>Settings</b> → <b>General</b> → <b>VPN & Device Management</b>.',
+            'Tap the downloaded profile and tap <b>Install</b>.',
+          ],
+          fields: [{ label: 'Server URL', value: url }],
+        }],
+      })
+    }
+
+    // macOS
+    if (fqdn && (info.hasTls || info.hasHttp)) {
+      tabs.push({
+        id: 'macos', label: 'macOS', sections: [{
+          title: 'Configuration Profile',
+          subtitle: 'macOS Big Sur or higher',
+          recommended: true,
+          steps: [
+            'Visit <b>dns.notjakob.com/tool.html</b> to generate a DNS profile.',
+            'Set the server URL to the value below and download the <b>.mobileconfig</b> file.',
+            'Double-click the file to open it.',
+            'Open <b>System Settings</b> → <b>Privacy & Security</b> → <b>Profiles</b> and install it.',
+          ],
+          fields: [{ label: 'Server URL', value: url }],
+        }],
+      })
+    }
+
+    // Browsers — easy cross-platform option
+    if (info.hasTls || info.hasHttp) {
+      const browserUrl = url || fallbackUrl
+      tabs.push({
+        id: 'browsers', label: 'Browsers', sections: [
+          {
+            title: 'Chrome / Edge / Brave',
+            recommended: true,
+            steps: [
+              'Open the browser and go to <b>Settings</b>.',
+              'Navigate to <b>Privacy and security</b> → <b>Security</b>.',
+              'Enable <b>Use secure DNS</b>.',
+              'Select <b>With: Custom</b> and paste the URL below.',
+            ],
+            fields: [{ label: 'Custom DNS URL', value: browserUrl }],
+          },
+          {
+            title: 'Firefox',
+            steps: [
+              'Open Firefox and go to <b>Settings</b>.',
+              'Navigate to <b>Privacy & Security</b> and scroll to <b>DNS over HTTPS</b>.',
+              'Select <b>Max Protection</b> (or <b>Increased Protection</b> for a fallback).',
+              'Choose <b>Custom</b> and paste the URL below.',
+            ],
+            fields: [{ label: 'Custom DNS URL', value: browserUrl }],
+          },
+        ],
+      })
+    }
+
+    // Linux — multiple methods
+    if (info.hasTls && fqdn) {
+      tabs.push({
+        id: 'linux', label: 'Linux', sections: [
+          {
+            title: 'systemd-resolved',
+            recommended: true,
+            steps: [
+              'Edit <b>/etc/systemd/resolved.conf</b> and add or update the <b>[Resolve]</b> section with the block below.',
+              'Replace <b>&lt;server-ip&gt;</b> with the IP address of your blockasaurus server.',
+              'Run <b>sudo systemctl restart systemd-resolved</b> to apply.',
+            ],
+            codeBlock: `[Resolve]\nDNS=<server-ip>#${fqdn}\nDNSOverTLS=yes`,
+          },
+          {
+            title: 'Stubby',
+            steps: [
+              'Add the block below to your <b>stubby.yml</b> configuration.',
+              'Replace <b>&lt;server-ip&gt;</b> with the IP address of your blockasaurus server.',
+              'Restart Stubby to apply.',
+            ],
+            codeBlock: `upstream_recursive_servers:\n  - address_data: <server-ip>\n    tls_auth_name: "${fqdn}"`,
+          },
+        ],
+      })
+    }
+
+    // Routers — advanced / network-wide
+    {
+      const sections = []
+      if (info.cpeId) {
+        sections.push({
+          title: 'dnsmasq',
+          recommended: true,
+          steps: [
+            'Add the block below to your <b>dnsmasq.conf</b>.',
+            'Replace <b>&lt;server-ip&gt;</b> with the IP address of your blockasaurus server.',
+            'The <b>add-cpe-id</b> line tags queries so blockasaurus identifies them as this group.',
+            'Restart dnsmasq to apply.',
+          ],
+          codeBlock: `server=<server-ip>\nadd-cpe-id=${slug}`,
+        })
+      }
+      if (info.hasTls && fqdn) {
+        sections.push({
+          title: 'Unbound',
+          steps: [
+            'Add the block below to your <b>unbound.conf</b>.',
+            'Replace <b>&lt;server-ip&gt;</b> with the IP address of your blockasaurus server.',
+            'Restart Unbound to apply.',
+          ],
+          codeBlock: `forward-zone:\n  name: "."\n  forward-tls-upstream: yes\n  forward-addr: <server-ip>#${fqdn}`,
+        })
+      }
+      if (sections.length > 0) {
+        tabs.push({ id: 'routers', label: 'Routers', sections })
+      }
+    }
+
+    return tabs
   }
 
   function backToList() {
@@ -322,36 +345,68 @@
         </div>
       </Card>
 
-      <!-- Device Setup Card -->
+      <!-- Setup Guide Card -->
       {#if endpointInfo && selected.slug}
-        {@const guides = getSetupGuides(selected.slug, endpointInfo)}
-        {#if guides.length > 0}
-          <Card title="Device Setup">
+        {@const tabs = getSetupTabs(selected.slug, endpointInfo)}
+        {@const currentTab = tabs.find(t => t.id === activeTab) ? activeTab : tabs[0]?.id}
+        {#if tabs.length > 0}
+          <Card title="Setup Guide">
             <p class="setup-intro">
-              Configure devices to use blockasaurus with the <strong>{selected.name}</strong> group.
-              Copy the values below into each device's DNS settings.
+              Follow the instructions below to set up blockasaurus on your device, browser, or router.
             </p>
-            <div class="guide-list">
-              {#each guides as guide}
-                <div class="guide">
-                  <h3 class="guide-os">{guide.os}</h3>
-                  <ol class="guide-steps">
-                    {#each guide.steps as step}
-                      <li>{step}</li>
-                    {/each}
-                  </ol>
-                  {#each guide.fields as field}
-                    <div class="guide-field">
-                      <span class="field-label">{field.label}</span>
-                      <div class="field-value-row">
-                        <code class="field-value">{field.value}</code>
-                        <CopyButton value={field.value} />
-                      </div>
+
+            <div class="tab-bar">
+              {#each tabs as tab}
+                <button class="tab" class:active={tab.id === currentTab}
+                  onclick={() => activeTab = tab.id}
+                >{tab.label}</button>
+              {/each}
+            </div>
+
+            {#each tabs as tab}
+              {#if tab.id === currentTab}
+                <div class="tab-content">
+                  {#each tab.sections as section, i}
+                    {#if i > 0}
+                      <div class="section-divider"><span>OR</span></div>
+                    {/if}
+                    <div class="section">
+                      {#if section.recommended}
+                        <span class="badge-recommended">RECOMMENDED</span>
+                      {/if}
+                      <h3 class="section-title">{section.title}</h3>
+                      {#if section.subtitle}
+                        <p class="section-subtitle">{section.subtitle}</p>
+                      {/if}
+                      <ol class="section-steps">
+                        {#each section.steps as step}
+                          <li>{@html step}</li>
+                        {/each}
+                      </ol>
+                      {#if section.fields}
+                        {#each section.fields as field}
+                          <div class="config-field">
+                            <span class="field-label">{field.label}</span>
+                            <div class="field-value-row">
+                              <code class="field-value">{field.value}</code>
+                              <CopyButton value={field.value} />
+                            </div>
+                          </div>
+                        {/each}
+                      {/if}
+                      {#if section.codeBlock}
+                        <div class="code-block-wrapper">
+                          <pre class="code-block">{section.codeBlock}</pre>
+                          <div class="code-block-copy">
+                            <CopyButton value={section.codeBlock} />
+                          </div>
+                        </div>
+                      {/if}
                     </div>
                   {/each}
                 </div>
-              {/each}
-            </div>
+              {/if}
+            {/each}
           </Card>
         {/if}
       {/if}
@@ -478,7 +533,7 @@
     margin-top: 0.5rem;
   }
 
-  /* Device Setup */
+  /* Setup Guide */
 
   .setup-intro {
     font-size: var(--text-sm);
@@ -486,41 +541,101 @@
     margin-bottom: 1rem;
   }
 
-  .guide-list {
+  .tab-bar {
     display: flex;
-    flex-direction: column;
-    gap: 1.25rem;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    border-bottom: 1px solid var(--color-border);
+    margin-bottom: 1.25rem;
+    padding-bottom: 0.5rem;
   }
 
-  .guide {
-    border: 1px solid var(--color-border);
+  .tab {
+    background: none;
+    border: 1px solid var(--color-btn-border);
     border-radius: var(--radius);
-    padding: 0.75rem 1rem;
-  }
-
-  .guide-os {
-    font-size: var(--text-sm);
-    font-weight: 600;
-    margin: 0 0 0.25rem 0;
-  }
-
-  .guide-steps {
-    font-size: var(--text-xs);
     color: var(--color-text-muted);
-    margin: 0 0 0.5rem 0;
-    padding-left: 1.4rem;
-    line-height: 1.6;
+    font-size: var(--text-xs);
+    padding: 0.3rem 0.75rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
   }
 
-  .guide-steps li {
-    margin-bottom: 0.15rem;
+  .tab:hover {
+    color: var(--color-text);
+    border-color: var(--color-text-dim);
   }
 
-  .guide-field {
+  .tab.active {
+    background: var(--color-primary);
+    color: var(--color-primary-fg, #fff);
+    border-color: var(--color-primary);
+  }
+
+  .tab-content {
     display: flex;
     flex-direction: column;
-    gap: 0.15rem;
-    margin-top: 0.35rem;
+  }
+
+  .section {
+    padding: 0.75rem 0;
+  }
+
+  .section-divider {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    color: var(--color-text-dim);
+    font-size: var(--text-xs);
+    margin: 0.25rem 0;
+  }
+
+  .section-divider::before,
+  .section-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--color-border);
+  }
+
+  .badge-recommended {
+    display: inline-block;
+    font-size: 0.6rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    background: var(--color-primary);
+    color: var(--color-primary-fg, #fff);
+    padding: 0.1rem 0.4rem;
+    border-radius: var(--radius);
+    margin-bottom: 0.3rem;
+  }
+
+  .section-title {
+    font-size: var(--text-base);
+    font-weight: 600;
+    margin: 0;
+  }
+
+  .section-subtitle {
+    font-size: var(--text-xs);
+    color: var(--color-text-dim);
+    margin: 0.1rem 0 0 0;
+  }
+
+  .section-steps {
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+    padding-left: 1.5rem;
+    line-height: 1.7;
+    margin: 0.5rem 0;
+  }
+
+  .config-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    margin-top: 0.5rem;
   }
 
   .field-label {
@@ -536,13 +651,36 @@
 
   .field-value {
     font-family: var(--font-mono, monospace);
+    font-size: var(--text-sm);
+    background: var(--color-btn-bg);
+    border: 1px solid var(--color-btn-border);
+    border-radius: var(--radius);
+    padding: 0.3rem 0.6rem;
+    word-break: break-all;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .code-block-wrapper {
+    position: relative;
+    margin-top: 0.5rem;
+  }
+
+  .code-block {
+    font-family: var(--font-mono, monospace);
     font-size: var(--text-xs);
     background: var(--color-btn-bg);
     border: 1px solid var(--color-btn-border);
     border-radius: var(--radius);
-    padding: 0.2rem 0.5rem;
-    word-break: break-all;
-    flex: 1;
-    min-width: 0;
+    padding: 0.75rem 2.5rem 0.75rem 1rem;
+    white-space: pre-wrap;
+    overflow-x: auto;
+    margin: 0;
+  }
+
+  .code-block-copy {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
   }
 </style>
