@@ -94,52 +94,13 @@
     const httpsUrl = fqdn ? `https://${fqdn}${dohPath}` : null
     const httpUrl = fqdn ? `http://${fqdn}${dohPath}` : null
     const url = (info.hasTls && httpsUrl) ? httpsUrl : httpUrl
-    const fallbackUrl = `http://&lt;server&gt;${dohPath}/${slug}`
+    const serverIpNote = 'Replace <b>&lt;server-ip&gt;</b> with the IP address of your blockasaurus server.'
 
-    // Windows — most common desktop OS
-    if (fqdn || info.hasHttp) {
+    // Android
+    {
       const sections = []
-      if (fqdn) {
+      if (info.hasTls && fqdn) {
         sections.push({
-          title: 'Secure DNS',
-          subtitle: 'Windows 11',
-          recommended: true,
-          steps: [
-            'Open <b>Settings</b> and go to <b>Network & internet</b>.',
-            'Click your active connection (<b>Wi-Fi</b> or <b>Ethernet</b>).',
-            'Click <b>Hardware properties</b>.',
-            'Next to <b>DNS server assignment</b>, click <b>Edit</b>.',
-            'Set to <b>Manual</b>, toggle <b>IPv4</b> on, and enter your blockasaurus server IP as the <b>Preferred DNS</b>.',
-            'Set <b>DNS over HTTPS</b> to <b>On (manual template)</b> and enter the template below.',
-            'Click <b>Save</b>.',
-          ],
-          fields: [{ label: 'DNS over HTTPS template', value: url }],
-        })
-      } else {
-        sections.push({
-          title: 'Secure DNS',
-          subtitle: 'Windows 11',
-          recommended: true,
-          steps: [
-            'Open <b>Settings</b> and go to <b>Network & internet</b>.',
-            'Click your active connection (<b>Wi-Fi</b> or <b>Ethernet</b>).',
-            'Click <b>Hardware properties</b>.',
-            'Next to <b>DNS server assignment</b>, click <b>Edit</b>.',
-            'Set to <b>Manual</b>, toggle <b>IPv4</b> on, and enter your blockasaurus server IP as the <b>Preferred DNS</b>.',
-            'Set <b>DNS over HTTPS</b> to <b>On (manual template)</b> and enter the template below.',
-            'Replace <b>&lt;server&gt;</b> with the IP or hostname of your blockasaurus server.',
-            'Click <b>Save</b>.',
-          ],
-          fields: [{ label: 'DNS over HTTPS template', value: fallbackUrl }],
-        })
-      }
-      tabs.push({ id: 'windows', label: 'Windows', sections })
-    }
-
-    // Android — most common mobile OS
-    if (info.hasTls && fqdn) {
-      tabs.push({
-        id: 'android', label: 'Android', sections: [{
           title: 'Private DNS',
           subtitle: 'Android 9 or higher',
           recommended: true,
@@ -150,14 +111,26 @@
             'Enter the hostname below and tap <b>Save</b>.',
           ],
           fields: [{ label: 'Hostname', value: fqdn }],
-        }],
+        })
+      }
+      sections.push({
+        title: 'Manual DNS',
+        steps: [
+          'Open <b>Settings</b> and tap <b>Wi-Fi</b>.',
+          'Long-press your connected network and tap <b>Modify network</b>.',
+          'Tap <b>Advanced options</b> and set <b>IP settings</b> to <b>Static</b>.',
+          'Set <b>DNS 1</b> to your blockasaurus server\'s IP address.',
+          'Tap <b>Save</b>.',
+        ],
       })
+      tabs.push({ id: 'android', label: 'Android', sections })
     }
 
     // iOS
-    if (fqdn && (info.hasTls || info.hasHttp)) {
-      tabs.push({
-        id: 'ios', label: 'iOS', sections: [{
+    {
+      const sections = []
+      if (fqdn && (info.hasTls || info.hasHttp)) {
+        sections.push({
           title: 'Configuration Profile',
           subtitle: 'iOS 14 or higher',
           recommended: true,
@@ -168,31 +141,188 @@
             'Tap the downloaded profile and tap <b>Install</b>.',
           ],
           fields: [{ label: 'Server URL', value: url }],
-        }],
+        })
+      }
+      sections.push({
+        title: 'Manual DNS',
+        steps: [
+          'Open <b>Settings</b> and tap <b>Wi-Fi</b>.',
+          'Tap the <b>ⓘ</b> button next to your connected network.',
+          'Tap <b>Configure DNS</b> and select <b>Manual</b>.',
+          'Remove existing DNS servers and add your blockasaurus server\'s IP address.',
+          'Tap <b>Save</b>.',
+        ],
       })
+      tabs.push({ id: 'ios', label: 'iOS', sections })
+    }
+
+    // Windows
+    {
+      const sections = []
+      if (url) {
+        sections.push({
+          title: 'Secure DNS',
+          subtitle: 'Windows 11',
+          recommended: true,
+          steps: [
+            'Open <b>Settings</b> and go to <b>Network & internet</b>.',
+            'Click your active connection (<b>Wi-Fi</b> or <b>Ethernet</b>).',
+            'Click <b>Hardware properties</b>.',
+            'Next to <b>DNS server assignment</b>, click <b>Edit</b>.',
+            'Set to <b>Manual</b> and toggle <b>IPv4</b> on.',
+            'Enter your blockasaurus server\'s IP as the <b>Preferred DNS</b>.',
+            'Set <b>DNS over HTTPS</b> to <b>On (manual template)</b> and enter the template below.',
+            'Click <b>Save</b>.',
+          ],
+          fields: [{ label: 'DNS over HTTPS template', value: url }],
+        })
+      }
+      sections.push({
+        title: 'Manual DNS',
+        subtitle: 'All Windows versions',
+        steps: [
+          'Open <b>Control Panel</b> → <b>Network and Internet</b> → <b>Network and Sharing Center</b>.',
+          'Click <b>Change adapter settings</b>.',
+          'Right-click your active connection and select <b>Properties</b>.',
+          'Select <b>Internet Protocol Version 4 (TCP/IPv4)</b> and click <b>Properties</b>.',
+          'Select <b>Use the following DNS server addresses</b>.',
+          'Enter your blockasaurus server\'s IP as the <b>Preferred DNS server</b>.',
+          'Click <b>OK</b>, then <b>Close</b>.',
+        ],
+      })
+      tabs.push({ id: 'windows', label: 'Windows', sections })
     }
 
     // macOS
-    if (fqdn && (info.hasTls || info.hasHttp)) {
-      tabs.push({
-        id: 'macos', label: 'macOS', sections: [{
+    {
+      const sections = []
+      if (fqdn && (info.hasTls || info.hasHttp)) {
+        sections.push({
           title: 'Configuration Profile',
           subtitle: 'macOS Big Sur or higher',
           recommended: true,
           steps: [
             'Visit <b>dns.notjakob.com/tool.html</b> to generate a DNS profile.',
             'Set the server URL to the value below and download the <b>.mobileconfig</b> file.',
-            'Double-click the file to open it.',
+            'Double-click the downloaded file to open it.',
             'Open <b>System Settings</b> → <b>Privacy & Security</b> → <b>Profiles</b> and install it.',
           ],
           fields: [{ label: 'Server URL', value: url }],
-        }],
+        })
+      }
+      sections.push({
+        title: 'Manual DNS',
+        steps: [
+          'Open <b>System Settings</b> and click <b>Network</b>.',
+          'Select your active connection and click <b>Details</b>.',
+          'Go to the <b>DNS</b> tab.',
+          'Remove existing DNS servers and add your blockasaurus server\'s IP address.',
+          'Click <b>OK</b>.',
+        ],
       })
+      tabs.push({ id: 'macos', label: 'macOS', sections })
     }
 
-    // Browsers — easy cross-platform option
-    if (info.hasTls || info.hasHttp) {
-      const browserUrl = url || fallbackUrl
+    // Linux
+    {
+      const sections = []
+      if (info.hasTls && fqdn) {
+        sections.push({
+          title: 'systemd-resolved',
+          recommended: true,
+          steps: [
+            'Edit <b>/etc/systemd/resolved.conf</b> and add the block below.',
+            serverIpNote,
+            'Run <b>sudo systemctl restart systemd-resolved</b> to apply.',
+          ],
+          codeBlock: `[Resolve]\nDNS=<server-ip>#${fqdn}\nDNSOverTLS=yes`,
+        })
+      }
+      sections.push({
+        title: 'resolv.conf',
+        ...(!info.hasTls || !fqdn ? { recommended: true } : {}),
+        steps: [
+          'Edit <b>/etc/resolv.conf</b> (or use your distribution\'s network manager).',
+          serverIpNote,
+        ],
+        codeBlock: 'nameserver <server-ip>',
+      })
+      if (info.hasTls && fqdn) {
+        sections.push({
+          title: 'Stubby',
+          steps: [
+            'Add the block below to your <b>stubby.yml</b>.',
+            serverIpNote,
+            'Restart Stubby to apply.',
+          ],
+          codeBlock: `round_robin_upstreams: 1\nupstream_recursive_servers:\n  - address_data: <server-ip>\n    tls_auth_name: "${fqdn}"`,
+        })
+        sections.push({
+          title: 'Unbound',
+          steps: [
+            'Add the block below to your <b>unbound.conf</b>.',
+            serverIpNote,
+            'Restart Unbound to apply.',
+          ],
+          codeBlock: `forward-zone:\n  name: "."\n  forward-tls-upstream: yes\n  forward-addr: <server-ip>#${fqdn}`,
+        })
+      }
+      if (url) {
+        sections.push({
+          title: 'cloudflared',
+          steps: [
+            'Add the block below to <b>/usr/local/etc/cloudflared/config.yml</b>.',
+            'Restart cloudflared to apply.',
+          ],
+          codeBlock: `proxy-dns: true\nproxy-dns-upstream:\n  - ${url}`,
+        })
+      }
+      if (info.cpeId) {
+        sections.push({
+          title: 'dnsmasq',
+          steps: [
+            'Add the block below to your <b>dnsmasq.conf</b>.',
+            serverIpNote,
+            'The <b>add-cpe-id</b> line tags queries so blockasaurus identifies them as this group.',
+            'Restart dnsmasq to apply.',
+          ],
+          codeBlock: `no-resolv\nbogus-priv\nstrict-order\nserver=<server-ip>\nadd-cpe-id=${slug}`,
+        })
+      }
+      tabs.push({ id: 'linux', label: 'Linux', sections })
+    }
+
+    // ChromeOS
+    {
+      const sections = []
+      if (url) {
+        sections.push({
+          title: 'Secure DNS',
+          recommended: true,
+          steps: [
+            'Open the <b>Settings</b> app.',
+            'Go to <b>Security and Privacy</b>.',
+            'Enable <b>Use secure DNS</b>.',
+            'Select <b>With: Custom</b> and enter the URL below.',
+          ],
+          fields: [{ label: 'DNS over HTTPS URL', value: url }],
+        })
+      }
+      sections.push({
+        title: 'Manual DNS',
+        steps: [
+          'Open <b>Settings</b> and go to <b>Network</b>.',
+          'Select your active connection.',
+          'Expand the <b>Network</b> section and set <b>Name servers</b> to <b>Custom name servers</b>.',
+          'Enter your blockasaurus server\'s IP address.',
+          'Close Settings to apply.',
+        ],
+      })
+      tabs.push({ id: 'chromeos', label: 'ChromeOS', sections })
+    }
+
+    // Browsers
+    if (url) {
       tabs.push({
         id: 'browsers', label: 'Browsers', sections: [
           {
@@ -202,9 +332,9 @@
               'Open the browser and go to <b>Settings</b>.',
               'Navigate to <b>Privacy and security</b> → <b>Security</b>.',
               'Enable <b>Use secure DNS</b>.',
-              'Select <b>With: Custom</b> and paste the URL below.',
+              'Select <b>With: Custom</b> and enter the URL below.',
             ],
-            fields: [{ label: 'Custom DNS URL', value: browserUrl }],
+            fields: [{ label: 'DNS over HTTPS URL', value: url }],
           },
           {
             title: 'Firefox',
@@ -212,55 +342,37 @@
               'Open Firefox and go to <b>Settings</b>.',
               'Navigate to <b>Privacy & Security</b> and scroll to <b>DNS over HTTPS</b>.',
               'Select <b>Max Protection</b> (or <b>Increased Protection</b> for a fallback).',
-              'Choose <b>Custom</b> and paste the URL below.',
+              'Choose <b>Custom</b> and enter the URL below.',
             ],
-            fields: [{ label: 'Custom DNS URL', value: browserUrl }],
+            fields: [{ label: 'DNS over HTTPS URL', value: url }],
           },
         ],
       })
     }
 
-    // Linux — multiple methods
-    if (info.hasTls && fqdn) {
-      tabs.push({
-        id: 'linux', label: 'Linux', sections: [
-          {
-            title: 'systemd-resolved',
-            recommended: true,
-            steps: [
-              'Edit <b>/etc/systemd/resolved.conf</b> and add or update the <b>[Resolve]</b> section with the block below.',
-              'Replace <b>&lt;server-ip&gt;</b> with the IP address of your blockasaurus server.',
-              'Run <b>sudo systemctl restart systemd-resolved</b> to apply.',
-            ],
-            codeBlock: `[Resolve]\nDNS=<server-ip>#${fqdn}\nDNSOverTLS=yes`,
-          },
-          {
-            title: 'Stubby',
-            steps: [
-              'Add the block below to your <b>stubby.yml</b> configuration.',
-              'Replace <b>&lt;server-ip&gt;</b> with the IP address of your blockasaurus server.',
-              'Restart Stubby to apply.',
-            ],
-            codeBlock: `upstream_recursive_servers:\n  - address_data: <server-ip>\n    tls_auth_name: "${fqdn}"`,
-          },
-        ],
-      })
-    }
-
-    // Routers — advanced / network-wide
+    // Routers
     {
       const sections = []
+      sections.push({
+        title: 'Plain DNS',
+        recommended: true,
+        steps: [
+          'Open your router\'s admin interface (usually <b>http://192.168.1.1</b> or <b>http://192.168.0.1</b>).',
+          'Locate the <b>DNS settings</b> (often under WAN, Internet, or DHCP settings).',
+          'Set the primary DNS server to your blockasaurus server\'s IP address.',
+          'Save and apply changes.',
+        ],
+      })
       if (info.cpeId) {
         sections.push({
           title: 'dnsmasq',
-          recommended: true,
           steps: [
             'Add the block below to your <b>dnsmasq.conf</b>.',
-            'Replace <b>&lt;server-ip&gt;</b> with the IP address of your blockasaurus server.',
+            serverIpNote,
             'The <b>add-cpe-id</b> line tags queries so blockasaurus identifies them as this group.',
             'Restart dnsmasq to apply.',
           ],
-          codeBlock: `server=<server-ip>\nadd-cpe-id=${slug}`,
+          codeBlock: `no-resolv\nbogus-priv\nstrict-order\nserver=<server-ip>\nadd-cpe-id=${slug}`,
         })
       }
       if (info.hasTls && fqdn) {
@@ -268,15 +380,32 @@
           title: 'Unbound',
           steps: [
             'Add the block below to your <b>unbound.conf</b>.',
-            'Replace <b>&lt;server-ip&gt;</b> with the IP address of your blockasaurus server.',
+            serverIpNote,
             'Restart Unbound to apply.',
           ],
           codeBlock: `forward-zone:\n  name: "."\n  forward-tls-upstream: yes\n  forward-addr: <server-ip>#${fqdn}`,
         })
+        sections.push({
+          title: 'pfSense',
+          steps: [
+            'Go to <b>Services</b> → <b>DNS Resolver</b>.',
+            'On the <b>General Settings</b> tab, scroll to the <b>Custom Options</b> box.',
+            'Enter the block below.',
+          ],
+          codeBlock: `server:\nforward-zone:\n  name: "."\n  forward-tls-upstream: yes\n  forward-addr: <server-ip>#${fqdn}`,
+        })
       }
-      if (sections.length > 0) {
-        tabs.push({ id: 'routers', label: 'Routers', sections })
+      if (url) {
+        sections.push({
+          title: 'MikroTik',
+          steps: [
+            'Open a terminal to your MikroTik router and run the commands below.',
+            serverIpNote,
+          ],
+          codeBlock: `/ip dns set servers=""\n/ip dns static add name=${domain} address=<server-ip> type=A\n/ip dns set use-doh-server="${url}" verify-doh-cert=yes`,
+        })
       }
+      tabs.push({ id: 'routers', label: 'Routers', sections })
     }
 
     return tabs
