@@ -247,6 +247,96 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /domain-entries:
+    get:
+      operationId: listDomainEntries
+      tags: [domain-entries]
+      summary: List domain entries
+      parameters:
+        - name: entry_type
+          in: query
+          schema:
+            type: string
+            enum: [exact_deny, regex_deny, exact_allow, regex_allow]
+      responses:
+        '200':
+          description: List of domain entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DomainEntry'
+    post:
+      operationId: createDomainEntry
+      tags: [domain-entries]
+      summary: Create a domain entry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DomainEntryInput'
+      responses:
+        '201':
+          description: Created domain entry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DomainEntry'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /domain-entries/{id}:
+    get:
+      operationId: getDomainEntry
+      tags: [domain-entries]
+      summary: Get a domain entry by ID
+      parameters:
+        - $ref: '#/components/parameters/ResourceID'
+      responses:
+        '200':
+          description: Domain entry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DomainEntry'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      operationId: updateDomainEntry
+      tags: [domain-entries]
+      summary: Update a domain entry
+      parameters:
+        - $ref: '#/components/parameters/ResourceID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DomainEntryInput'
+      responses:
+        '200':
+          description: Updated domain entry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DomainEntry'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: deleteDomainEntry
+      tags: [domain-entries]
+      summary: Delete a domain entry
+      parameters:
+        - $ref: '#/components/parameters/ResourceID'
+      responses:
+        '204':
+          description: Deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /block-settings:
     get:
       operationId: getBlockSettings
@@ -430,6 +520,44 @@ components:
           minimum: 0
         enabled:
           type: boolean
+
+    DomainEntry:
+      type: object
+      required: [id, domain, entry_type, comment, enabled, groups]
+      properties:
+        id:
+          type: integer
+        domain:
+          type: string
+        entry_type:
+          type: string
+          enum: [exact_deny, regex_deny, exact_allow, regex_allow]
+        comment:
+          type: string
+        enabled:
+          type: boolean
+        groups:
+          type: array
+          items:
+            type: string
+
+    DomainEntryInput:
+      type: object
+      required: [domain, entry_type, enabled, groups]
+      properties:
+        domain:
+          type: string
+        entry_type:
+          type: string
+          enum: [exact_deny, regex_deny, exact_allow, regex_allow]
+        comment:
+          type: string
+        enabled:
+          type: boolean
+        groups:
+          type: array
+          items:
+            type: string
 
     BlockSettings:
       type: object

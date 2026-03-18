@@ -59,6 +59,18 @@ export const customDNS = {
   delete: (id) => request('DELETE', `/custom-dns/${id}`),
 }
 
+// Domain Entries
+export const domainEntries = {
+  list: (params) => {
+    const qs = params ? '?' + new URLSearchParams(params) : ''
+    return request('GET', `/domain-entries${qs}`)
+  },
+  get: (id) => request('GET', `/domain-entries/${id}`),
+  create: (body) => request('POST', '/domain-entries', body),
+  update: (id, body) => request('PUT', `/domain-entries/${id}`, body),
+  delete: (id) => request('DELETE', `/domain-entries/${id}`),
+}
+
 // Block Settings
 export const blockSettings = {
   get: () => request('GET', '/block-settings'),

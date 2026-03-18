@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -75,8 +76,8 @@ func (h *ConfigHandler) PutClientGroup(_ context.Context, req PutClientGroupRequ
 
 	g := &configstore.ClientGroup{
 		Name:    req.Name,
-		Clients: configstore.StringList(req.Body.Clients),
-		Groups:  configstore.StringList(req.Body.Groups),
+		Clients: derefStringList(req.Body.Clients),
+		Groups:  derefStringList(req.Body.Groups),
 	}
 
 	if err := h.store.PutClientGroup(g); err != nil {
@@ -283,6 +284,109 @@ func (h *ConfigHandler) DeleteCustomDNSEntry(_ context.Context, req DeleteCustom
 	return DeleteCustomDNSEntry204Response{}, nil
 }
 
+// --- Domain Entries ---
+
+func (h *ConfigHandler) ListDomainEntries(_ context.Context, req ListDomainEntriesRequestObject) (ListDomainEntriesResponseObject, error) {
+	var entryType string
+	if req.Params.EntryType != nil {
+		entryType = string(*req.Params.EntryType)
+	}
+
+	entries, err := h.store.ListDomainEntries(entryType)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(ListDomainEntries200JSONResponse, len(entries))
+	for i, e := range entries {
+		result[i] = domainEntryToAPI(e)
+	}
+
+	return result, nil
+}
+
+func (h *ConfigHandler) CreateDomainEntry(_ context.Context, req CreateDomainEntryRequestObject) (CreateDomainEntryResponseObject, error) {
+	if err := validateDomainEntry(req.Body); err != nil {
+		return CreateDomainEntry400JSONResponse{BadRequestJSONResponse{Message: err.Error()}}, nil
+	}
+
+	var comment string
+	if req.Body.Comment != nil {
+		comment = *req.Body.Comment
+	}
+
+	e := &configstore.DomainEntry{
+		Domain:    req.Body.Domain,
+		EntryType: string(req.Body.EntryType),
+		Comment:   comment,
+		Enabled:   configstore.BoolPtr(req.Body.Enabled),
+		Groups:    configstore.StringList(req.Body.Groups),
+	}
+
+	if err := h.store.CreateDomainEntry(e); err != nil {
+		return nil, err
+	}
+
+	return CreateDomainEntry201JSONResponse(domainEntryToAPI(*e)), nil
+}
+
+func (h *ConfigHandler) GetDomainEntry(_ context.Context, req GetDomainEntryRequestObject) (GetDomainEntryResponseObject, error) {
+	e, err := h.store.GetDomainEntry(uint(req.Id))
+	if err != nil {
+		if isNotFound(err) {
+			return GetDomainEntry404JSONResponse{NotFoundJSONResponse{Message: "domain entry not found"}}, nil
+		}
+
+		return nil, err
+	}
+
+	return GetDomainEntry200JSONResponse(domainEntryToAPI(*e)), nil
+}
+
+func (h *ConfigHandler) UpdateDomainEntry(_ context.Context, req UpdateDomainEntryRequestObject) (UpdateDomainEntryResponseObject, error) {
+	existing, err := h.store.GetDomainEntry(uint(req.Id))
+	if err != nil {
+		if isNotFound(err) {
+			return UpdateDomainEntry404JSONResponse{NotFoundJSONResponse{Message: "domain entry not found"}}, nil
+		}
+
+		return nil, err
+	}
+
+	if err := validateDomainEntry(req.Body); err != nil {
+		return UpdateDomainEntry400JSONResponse{BadRequestJSONResponse{Message: err.Error()}}, nil
+	}
+
+	var comment string
+	if req.Body.Comment != nil {
+		comment = *req.Body.Comment
+	}
+
+	existing.Domain = req.Body.Domain
+	existing.EntryType = string(req.Body.EntryType)
+	existing.Comment = comment
+	existing.Enabled = configstore.BoolPtr(req.Body.Enabled)
+	existing.Groups = configstore.StringList(req.Body.Groups)
+
+	if err := h.store.UpdateDomainEntry(existing); err != nil {
+		return nil, err
+	}
+
+	return UpdateDomainEntry200JSONResponse(domainEntryToAPI(*existing)), nil
+}
+
+func (h *ConfigHandler) DeleteDomainEntry(_ context.Context, req DeleteDomainEntryRequestObject) (DeleteDomainEntryResponseObject, error) {
+	if err := h.store.DeleteDomainEntry(uint(req.Id)); err != nil {
+		if isNotFound(err) {
+			return DeleteDomainEntry404JSONResponse{NotFoundJSONResponse{Message: "domain entry not found"}}, nil
+		}
+
+		return nil, err
+	}
+
+	return DeleteDomainEntry204Response{}, nil
+}
+
 // --- Block Settings ---
 
 func (h *ConfigHandler) GetBlockSettings(_ context.Context, _ GetBlockSettingsRequestObject) (GetBlockSettingsResponseObject, error) {
@@ -373,6 +477,22 @@ func customDNSEntryToAPI(e configstore.CustomDNSEntry) CustomDNSEntry {
 	}
 }
 
+func domainEntryToAPI(e configstore.DomainEntry) DomainEntry {
+	groups := []string(e.Groups)
+	if groups == nil {
+		groups = []string{}
+	}
+
+	return DomainEntry{
+		Id:        int(e.ID),
+		Domain:    e.Domain,
+		EntryType: DomainEntryEntryType(e.EntryType),
+		Comment:   e.Comment,
+		Enabled:   e.IsEnabled(),
+		Groups:    groups,
+	}
+}
+
 func blockSettingsToAPI(bs configstore.BlockSettings) BlockSettings {
 	return BlockSettings{
 		BlockType: bs.BlockType,
@@ -387,7 +507,7 @@ func validateClientGroup(input *ClientGroupInput) error {
 		return fmt.Errorf("request body is required")
 	}
 
-	for _, c := range input.Clients {
+	for _, c := range derefStringList(input.Clients) {
 		if _, _, err := net.ParseCIDR(c); err != nil && net.ParseIP(c) == nil {
 			// Not a CIDR or IP — treat as hostname (allow any non-empty string)
 			if strings.TrimSpace(c) == "" {
@@ -455,6 +575,30 @@ func validateCustomDNSEntry(input *CustomDNSEntryInput) error {
 	return nil
 }
 
+func validateDomainEntry(input *DomainEntryInput) error {
+	if input == nil {
+		return fmt.Errorf("request body is required")
+	}
+
+	if strings.TrimSpace(input.Domain) == "" {
+		return fmt.Errorf("domain is required")
+	}
+
+	if len(input.Groups) == 0 {
+		return fmt.Errorf("at least one group is required")
+	}
+
+	// Validate regex patterns compile
+	switch input.EntryType {
+	case DomainEntryInputEntryTypeRegexDeny, DomainEntryInputEntryTypeRegexAllow:
+		if _, err := regexp.Compile(input.Domain); err != nil {
+			return fmt.Errorf("invalid regex pattern: %w", err)
+		}
+	}
+
+	return nil
+}
+
 func validateBlockSettings(input *BlockSettingsInput) error {
 	if input == nil {
 		return fmt.Errorf("request body is required")
@@ -474,6 +618,14 @@ func validateBlockSettings(input *BlockSettingsInput) error {
 	}
 
 	return nil
+}
+
+func derefStringList(p *[]string) configstore.StringList {
+	if p == nil {
+		return configstore.StringList{}
+	}
+
+	return configstore.StringList(*p)
 }
 
 func isNotFound(err error) bool {

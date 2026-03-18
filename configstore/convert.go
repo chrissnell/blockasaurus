@@ -6,6 +6,7 @@ package configstore
 import (
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/0xERR0R/blocky/config"
@@ -59,6 +60,62 @@ func (s *ConfigStore) BuildBlockingConfig(base config.Blocking) (config.Blocking
 			base.Denylists[src.GroupName] = append(base.Denylists[src.GroupName], bs)
 		case "allow":
 			base.Allowlists[src.GroupName] = append(base.Allowlists[src.GroupName], bs)
+		}
+	}
+
+	// Individual domain entries — injected as inline text sources per group
+	domainEntries, err := s.ListDomainEntries("")
+	if err != nil {
+		return base, fmt.Errorf("load domain entries: %w", err)
+	}
+
+	// Collect domains per group+type: key is "deny:<group>" or "allow:<group>"
+	domainLines := make(map[string][]string)
+
+	for _, de := range domainEntries {
+		if !de.IsEnabled() {
+			continue
+		}
+
+		var listKind string
+		var line string
+
+		switch de.EntryType {
+		case "exact_deny":
+			listKind = "deny"
+			line = de.Domain
+		case "regex_deny":
+			listKind = "deny"
+			line = "/" + de.Domain + "/"
+		case "exact_allow":
+			listKind = "allow"
+			line = de.Domain
+		case "regex_allow":
+			listKind = "allow"
+			line = "/" + de.Domain + "/"
+		default:
+			continue
+		}
+
+		for _, group := range de.Groups {
+			key := listKind + ":" + group
+			domainLines[key] = append(domainLines[key], line)
+		}
+	}
+
+	for key, lines := range domainLines {
+		parts := splitKeyOnce(key, ":")
+		listKind, group := parts[0], parts[1]
+		bs := config.BytesSource{
+			Type: config.BytesSourceTypeText,
+			From: joinLines(lines),
+		}
+
+		switch listKind {
+		case "deny":
+			base.Denylists[group] = append(base.Denylists[group], bs)
+		case "allow":
+			base.Allowlists[group] = append(base.Allowlists[group], bs)
 		}
 	}
 
@@ -147,4 +204,17 @@ func entryToRR(e CustomDNSEntry) (dns.RR, error) {
 	default:
 		return nil, fmt.Errorf("unsupported record type %q", e.RecordType)
 	}
+}
+
+func splitKeyOnce(s, sep string) [2]string {
+	i := strings.Index(s, sep)
+	if i < 0 {
+		return [2]string{s, ""}
+	}
+
+	return [2]string{s[:i], s[i+len(sep):]}
+}
+
+func joinLines(lines []string) string {
+	return strings.Join(lines, "\n")
 }

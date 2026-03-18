@@ -36,6 +36,7 @@
     { path: '/', label: 'dashboard' },
     { path: '/client-groups', label: 'client groups' },
     { path: '/blocklists', label: 'blocklists' },
+    { path: '/domains', label: 'domains' },
     { path: '/custom-dns', label: 'custom dns' },
     { path: '/settings', label: 'settings' },
     { path: '/logs', label: 'logs' },

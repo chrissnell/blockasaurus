@@ -94,6 +94,18 @@ func (StringList) GormDataType() string {
 	return "text"
 }
 
+// DomainEntry is an individual domain block/allow rule (exact or regex).
+type DomainEntry struct {
+	ID        uint       `gorm:"primaryKey" json:"id"`
+	Domain    string     `gorm:"not null" json:"domain"`
+	EntryType string     `gorm:"not null;index" json:"entry_type"` // exact_deny, regex_deny, exact_allow, regex_allow
+	Comment   string     `json:"comment"`
+	Enabled   *bool      `gorm:"not null;default:true" json:"enabled"`
+	Groups    StringList `gorm:"type:text;not null;default:'[\"default\"]'" json:"groups"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+}
+
 // BoolPtr returns a pointer to a bool value.
 func BoolPtr(b bool) *bool { return &b }
 
@@ -102,3 +114,6 @@ func (s *BlocklistSource) IsEnabled() bool { return s.Enabled == nil || *s.Enabl
 
 // IsEnabled returns the Enabled value, defaulting to true if nil.
 func (e *CustomDNSEntry) IsEnabled() bool { return e.Enabled == nil || *e.Enabled }
+
+// IsEnabled returns the Enabled value, defaulting to true if nil.
+func (d *DomainEntry) IsEnabled() bool { return d.Enabled == nil || *d.Enabled }

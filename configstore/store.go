@@ -45,6 +45,7 @@ func Open(path string) (*ConfigStore, error) {
 		&ClientGroup{},
 		&BlocklistSource{},
 		&CustomDNSEntry{},
+		&DomainEntry{},
 		&BlockSettings{},
 		&DBMetadata{},
 	); err != nil {
@@ -220,6 +221,62 @@ func (s *ConfigStore) DeleteCustomDNSEntry(id uint) error {
 	result := s.db.Delete(&CustomDNSEntry{}, id)
 	if result.Error != nil {
 		return fmt.Errorf("delete custom DNS entry %d: %w", id, result.Error)
+	}
+
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+
+	return nil
+}
+
+// --- DomainEntry CRUD ---
+
+func (s *ConfigStore) ListDomainEntries(entryType string) ([]DomainEntry, error) {
+	q := s.db.Order("domain")
+
+	if entryType != "" {
+		q = q.Where("entry_type = ?", entryType)
+	}
+
+	var entries []DomainEntry
+	if err := q.Find(&entries).Error; err != nil {
+		return nil, fmt.Errorf("list domain entries: %w", err)
+	}
+
+	return entries, nil
+}
+
+func (s *ConfigStore) GetDomainEntry(id uint) (*DomainEntry, error) {
+	var e DomainEntry
+	if err := s.db.First(&e, id).Error; err != nil {
+		return nil, fmt.Errorf("get domain entry %d: %w", id, err)
+	}
+
+	return &e, nil
+}
+
+func (s *ConfigStore) CreateDomainEntry(e *DomainEntry) error {
+	if err := s.db.Create(e).Error; err != nil {
+		return fmt.Errorf("create domain entry: %w", err)
+	}
+
+	return nil
+}
+
+func (s *ConfigStore) UpdateDomainEntry(e *DomainEntry) error {
+	result := s.db.Save(e)
+	if result.Error != nil {
+		return fmt.Errorf("update domain entry %d: %w", e.ID, result.Error)
+	}
+
+	return nil
+}
+
+func (s *ConfigStore) DeleteDomainEntry(id uint) error {
+	result := s.db.Delete(&DomainEntry{}, id)
+	if result.Error != nil {
+		return fmt.Errorf("delete domain entry %d: %w", id, result.Error)
 	}
 
 	if result.RowsAffected == 0 {

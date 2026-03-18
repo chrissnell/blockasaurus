@@ -6,6 +6,7 @@
   import Dashboard from './pages/Dashboard.svelte'
   import ClientGroups from './pages/ClientGroups.svelte'
   import Blocklists from './pages/Blocklists.svelte'
+  import DomainEntries from './pages/DomainEntries.svelte'
   import CustomDNS from './pages/CustomDNS.svelte'
   import BlockSettings from './pages/BlockSettings.svelte'
   import Logs from './pages/Logs.svelte'
@@ -26,6 +27,7 @@
     '/': Dashboard,
     '/client-groups': ClientGroups,
     '/blocklists': Blocklists,
+    '/domains': DomainEntries,
     '/custom-dns': CustomDNS,
     '/settings': BlockSettings,
     '/logs': Logs,
