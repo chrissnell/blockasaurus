@@ -25,12 +25,6 @@
   let addListType = $state('deny')
   let addWildcard = $state(false)
 
-  // Filters
-  let showExactAllow = $state(true)
-  let showRegexAllow = $state(true)
-  let showExactDeny = $state(true)
-  let showRegexDeny = $state(true)
-
   // Edit modal
   let editOpen = $state(false)
   let editId = $state(null)
@@ -40,14 +34,6 @@
   let assignOpen = $state(false)
   let assignEntry = $state(null)
   let assignChecked = $state({})
-
-  let filteredEntries = $derived(entries.filter(e => {
-    if (e.entry_type === 'exact_allow' && !showExactAllow) return false
-    if (e.entry_type === 'regex_allow' && !showRegexAllow) return false
-    if (e.entry_type === 'exact_deny' && !showExactDeny) return false
-    if (e.entry_type === 'regex_deny' && !showRegexDeny) return false
-    return true
-  }))
 
   const typeLabels = {
     exact_deny: 'Exact block',
@@ -195,36 +181,26 @@
           { value: 'allow', label: 'Allow' },
         ]} />
       </FormField>
+    </div>
+    <div class="add-form-row2">
       <label class="wildcard-check">
         <input type="checkbox" bind:checked={addWildcard} />
         <span>Add as wildcard</span>
       </label>
-      <div class="add-btn">
-        <Button onclick={addEntry}>Add</Button>
-      </div>
+      <Button onclick={addEntry}>Add</Button>
     </div>
   </Card>
 
   <!-- List -->
   <Card>
-    {#snippet actions()}
-      <div class="filters">
-        <label class="filter-check"><input type="checkbox" bind:checked={showExactAllow} /> Exact allow</label>
-        <label class="filter-check"><input type="checkbox" bind:checked={showRegexAllow} /> Regex allow</label>
-        <label class="filter-check"><input type="checkbox" bind:checked={showExactDeny} /> Exact block</label>
-        <label class="filter-check"><input type="checkbox" bind:checked={showRegexDeny} /> Regex block</label>
-      </div>
-    {/snippet}
     {#if loading}
       <EmptyState message="Loading..." />
     {:else if entries.length === 0}
       <EmptyState message="no domain entries">
         <p class="empty-hint">Add your first entry above</p>
       </EmptyState>
-    {:else if filteredEntries.length === 0}
-      <EmptyState message="no entries match current filters" />
     {:else}
-      <DataTable {columns} rows={filteredEntries}>
+      <DataTable {columns} rows={entries}>
         {#snippet rowActions(row)}
           <Button size="sm" onclick={() => toggleEnabled(row)}>{row.enabled ? 'Disable' : 'Enable'}</Button>
           <Button size="sm" onclick={() => openAssign(row)}>Groups</Button>
@@ -302,38 +278,22 @@
     flex-wrap: wrap;
   }
 
+  .add-form-row2 {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-top: 0.75rem;
+  }
+
   .wildcard-check {
     display: flex;
     align-items: center;
     gap: 0.4rem;
     font-size: var(--text-sm);
     cursor: pointer;
-    padding-bottom: 0.35rem;
   }
 
   .wildcard-check input[type="checkbox"] {
-    accent-color: var(--color-accent, currentColor);
-  }
-
-  .add-btn {
-    padding-bottom: 0.1rem;
-  }
-
-  .filters {
-    display: flex;
-    gap: 1rem;
-  }
-
-  .filter-check {
-    display: flex;
-    align-items: center;
-    gap: 0.3rem;
-    font-size: var(--text-xs);
-    cursor: pointer;
-    white-space: nowrap;
-  }
-
-  .filter-check input[type="checkbox"] {
     accent-color: var(--color-accent, currentColor);
   }
 
