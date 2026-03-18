@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/0xERR0R/blocky/util"
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -59,6 +60,12 @@ func Open(path string) (*ConfigStore, error) {
 	}
 
 	store := &ConfigStore{db: db}
+
+	// Backfill slugs for client groups that predate the slug column
+	if err := store.backfillClientGroupSlugs(); err != nil {
+		return nil, fmt.Errorf("backfill client group slugs: %w", err)
+	}
+
 	if err := store.ensureDomainEntriesInDefaultGroup(); err != nil {
 		return nil, fmt.Errorf("wire domain entries to default group: %w", err)
 	}
@@ -96,7 +103,19 @@ func (s *ConfigStore) GetClientGroup(name string) (*ClientGroup, error) {
 }
 
 // PutClientGroup upserts a client group by name.
+// The Slug field is always regenerated from the Name.
 func (s *ConfigStore) PutClientGroup(g *ClientGroup) error {
+	g.Slug = util.SanitizeGroupSlug(g.Name)
+	if g.Slug == "" {
+		return fmt.Errorf("client group name %q produces an empty slug", g.Name)
+	}
+
+	// Check for slug collision with a different group
+	var collision ClientGroup
+	if err := s.db.Where("slug = ? AND name != ?", g.Slug, g.Name).First(&collision).Error; err == nil {
+		return fmt.Errorf("slug %q already used by client group %q", g.Slug, collision.Name)
+	}
+
 	var existing ClientGroup
 
 	err := s.db.Where("name = ?", g.Name).First(&existing).Error
@@ -212,6 +231,28 @@ func (s *ConfigStore) ensureDomainEntriesInDefaultGroup() error {
 
 	if changed {
 		return s.PutClientGroup(defGroup)
+	}
+
+	return nil
+}
+
+// backfillClientGroupSlugs populates empty slugs for groups created before
+// the slug column was added.
+func (s *ConfigStore) backfillClientGroupSlugs() error {
+	var groups []ClientGroup
+	if err := s.db.Where("slug = '' OR slug IS NULL").Find(&groups).Error; err != nil {
+		return err
+	}
+
+	for i := range groups {
+		groups[i].Slug = util.SanitizeGroupSlug(groups[i].Name)
+		if groups[i].Slug == "" {
+			groups[i].Slug = fmt.Sprintf("group-%d", groups[i].ID)
+		}
+
+		if err := s.db.Save(&groups[i]).Error; err != nil {
+			return fmt.Errorf("backfill slug for group %q: %w", groups[i].Name, err)
+		}
 	}
 
 	return nil

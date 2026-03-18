@@ -13,6 +13,7 @@ import (
 type ClientGroup struct {
 	ID        uint       `gorm:"primaryKey" json:"id"`
 	Name      string     `gorm:"uniqueIndex;not null" json:"name"`
+	Slug      string     `gorm:"uniqueIndex;not null" json:"slug"`
 	Clients   StringList `gorm:"type:text;not null;default:'[]'" json:"clients"`
 	Groups    StringList `gorm:"type:text;not null;default:'[]'" json:"groups"`
 	CreatedAt time.Time  `json:"created_at"`
