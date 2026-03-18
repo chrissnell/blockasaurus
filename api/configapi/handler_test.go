@@ -54,8 +54,8 @@ var _ = Describe("ConfigAPI Handler", func() {
 			putResp, err := h.PutClientGroup(ctx, configapi.PutClientGroupRequestObject{
 				Name: "kids",
 				Body: &configapi.ClientGroupInput{
-					Clients: []string{"192.168.1.0/24"},
-					Groups:  []string{"ads"},
+					Clients: &[]string{"192.168.1.0/24"},
+					Groups:  &[]string{"ads"},
 				},
 			})
 			Expect(err).Should(Succeed())
@@ -78,7 +78,7 @@ var _ = Describe("ConfigAPI Handler", func() {
 		It("should delete", func() {
 			_, err := h.PutClientGroup(ctx, configapi.PutClientGroupRequestObject{
 				Name: "temp",
-				Body: &configapi.ClientGroupInput{Clients: []string{}, Groups: []string{}},
+				Body: &configapi.ClientGroupInput{Clients: &[]string{}, Groups: &[]string{}},
 			})
 			Expect(err).Should(Succeed())
 
@@ -96,7 +96,7 @@ var _ = Describe("ConfigAPI Handler", func() {
 		It("should reject empty client entry", func() {
 			resp, err := h.PutClientGroup(ctx, configapi.PutClientGroupRequestObject{
 				Name: "bad",
-				Body: &configapi.ClientGroupInput{Clients: []string{"  "}, Groups: []string{}},
+				Body: &configapi.ClientGroupInput{Clients: &[]string{"  "}, Groups: &[]string{}},
 			})
 			Expect(err).Should(Succeed())
 			Expect(resp).Should(BeAssignableToTypeOf(configapi.PutClientGroup400JSONResponse{}))
