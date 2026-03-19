@@ -25,7 +25,7 @@
 
   function formatDuration(entry) {
     const f = entry.fields
-    if (f && f.duration_ms != null) return `${f.duration_ms}ms`
+    if (f && f.duration_ms != null) return `${f.duration_ms * 1000}µs`
     return ''
   }
 
@@ -48,9 +48,9 @@
     <span>{connected ? 'live' : 'disconnected'}</span>
     <span class="count">{entries.length} entries</span>
   </div>
-  <div class="log-col-hdr">{"Time".padEnd(8)}  {"Level".padEnd(5)}  {"Type".padEnd(5)}  {"Name".padEnd(30)}  {"Code".padEnd(10)}  {"Reason".padEnd(20)}  {"Duration"}</div>
+  <div class="log-col-hdr">{"Time".padEnd(8)}  {"Duration".padEnd(10)}  {"Level".padEnd(5)}  {"Type".padEnd(5)}  {"Name".padEnd(30)}  {"Code".padEnd(10)}  {"Reason"}</div>
   <div class="log-body" bind:this={container}>
-{#each entries as entry}<div class="log-{entryClass(entry)}">{formatTime(entry.timestamp)}  {(entry.level || '').padEnd(5)}  {formatMessage(entry).padEnd(56)}{formatDuration(entry)}</div>{:else}<span class="log-dim">waiting for data...</span>{/each}
+{#each entries as entry}<div class="log-{entryClass(entry)}">{formatTime(entry.timestamp)}  {formatDuration(entry).padEnd(10)}  {(entry.level || '').padEnd(5)}  {formatMessage(entry)}</div>{:else}<span class="log-dim">waiting for data...</span>{/each}
   </div>
 </div>
 
