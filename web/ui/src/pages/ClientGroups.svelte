@@ -599,8 +599,8 @@
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    gap: 0.15rem;
-    margin-bottom: var(--space-4);
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
   }
 
   .back-btn {
