@@ -14,7 +14,7 @@ fullnameOverride: ""
 config:
   ports:
     dns: 53
-    http: 4000
+    http: 80
   upstreams:
     groups:
       default:
@@ -27,63 +27,17 @@ config:
 # Per-client-group DNS identification via hostname, path, or EDNS CPE-ID.
 # Client groups are created in the web UI; each group gets a DNS-safe slug
 # derived from its name (e.g., "Kids Devices" → "kids-devices").
+# See docs/client_group_endpoints.md for full details.
 #
 # Scenario 1: Homelab — no TLS, .local or LAN IP
 #   Clients identified by source IP/CIDR, EDNS CPE-ID, or DoH URL path.
-#   No TLS certs or custom domain required.
 #
 #   config:
 #     clientGroupEndpoints:
-#       cpeId: true                # enable dnsmasq add-cpe-id= support
-#
-#   Client examples:
-#     - Any device via DHCP: set DNS server to blockasaurus IP → source IP matching
-#     - dnsmasq forwarder:   server=192.168.1.5 / add-cpe-id=guest
-#     - Browser DoH:         http://<blockasaurus-ip>:4000/dns-query/kids-devices
+#       cpeId: true
 #
 # Scenario 2: Homelab with self-signed wildcard cert (.local)
-#   Adds subdomain-based DoH/DoT. Blockasaurus resolves its own subdomains
-#   via CustomDNS wildcard (e.g., kids-devices.blockasaurus.local).
-#
-#   tls:
-#     enabled: true
-#     secretName: blockasaurus-tls      # k8s Secret with tls.crt + tls.key
-#   config:
-#     clientGroupEndpoints:
-#       domains:
-#         - blockasaurus.local
-#       advertiseAddress: auto   # auto-creates *.blockasaurus.local DNS records
-#       cpeId: true
-#     ports:
-#       dns: 53
-#       http: 4000
-#       https: 443
-#       tls: 853
-#     certFile: /certs/tls.crt
-#     keyFile: /certs/tls.key
-#   service:
-#     dns:
-#       dot: true
-#
-#   Generate the self-signed wildcard cert:
-#     openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
-#       -days 3650 -nodes \
-#       -keyout tls.key -out tls.crt \
-#       -subj '/CN=blockasaurus.local' \
-#       -addext 'subjectAltName=DNS:blockasaurus.local,DNS:*.blockasaurus.local'
-#     kubectl create secret tls blockasaurus-tls --cert=tls.crt --key=tls.key
-#
-#   Client examples (in addition to Scenario 1):
-#     - Browser DoH (subdomain): https://kids-devices.blockasaurus.local/dns-query
-#     - DoT per-group:           kids-devices.blockasaurus.local:853
-#     - Android Private DNS:     kids-devices.blockasaurus.local (must trust cert)
-#
-#   Note: mDNS does NOT resolve these subdomains. Clients must already use
-#   blockasaurus as their DNS server (port 53) for the CustomDNS wildcard to work.
-#
-# Scenario 3: Custom domain with wildcard cert (production)
-#   Full setup — all identification methods. Requires external DNS records
-#   (*.dns.example.com → blockasaurus IP) and a wildcard TLS cert.
+#   Adds subdomain-based DoH/DoT.
 #
 #   tls:
 #     enabled: true
@@ -91,12 +45,12 @@ config:
 #   config:
 #     clientGroupEndpoints:
 #       domains:
-#         - dns.example.com
-#       advertiseAddress: auto   # auto-creates *.dns.example.com DNS records from LB IP
+#         - blockasaurus.local
+#       advertiseAddress: auto
 #       cpeId: true
 #     ports:
 #       dns: 53
-#       http: 4000
+#       http: 80
 #       https: 443
 #       tls: 853
 #     certFile: /certs/tls.crt
@@ -104,57 +58,57 @@ config:
 #   service:
 #     dns:
 #       dot: true
-#       doq: true
-#   ingress:
+#       http: true
+#       https: true
+#
+# Scenario 3: Custom domain with wildcard cert (production)
+#   Full setup — all protocols on one LoadBalancer IP. With advertiseAddress,
+#   blockasaurus auto-creates DNS records from its LB IP — no external DNS
+#   records or ingress needed.
+#
+#   certificate:
 #     enabled: true
-#     hosts:
-#       - host: dns.example.com
-#         paths:
-#           - path: /dns-query
-#             pathType: Prefix
-#       - host: "*.dns.example.com"
-#         paths:
-#           - path: /dns-query
-#             pathType: Prefix
-#     tls:
-#       - secretName: blockasaurus-tls
-#         hosts:
-#           - dns.example.com
-#           - "*.dns.example.com"
-#
-#   DNS records (at registrar/DNS provider):
-#     dns.example.com.     A   203.0.113.5
-#     *.dns.example.com.   A   203.0.113.5
-#
-#   TLS cert (Let's Encrypt wildcard via DNS-01 using cert-manager):
-#     certificate:
-#       enabled: true
-#       issuerRef:
-#         name: letsencrypt-dns01-cloudflare
-#         kind: ClusterIssuer
-#       dnsNames:
+#     issuerRef:
+#       name: letsencrypt-dns01-cloudflare
+#       kind: ClusterIssuer
+#     dnsNames:                        # BOTH base + wildcard required
+#       - dns.example.com              # for https://dns.example.com
+#       - "*.dns.example.com"          # for per-group subdomains
+#   tls:
+#     enabled: true
+#     secretName: blockasaurus-tls
+#   config:
+#     clientGroupEndpoints:
+#       domains:
 #         - dns.example.com
-#         - "*.dns.example.com"
-#   Or manually:
-#     certbot certonly --dns-cloudflare -d 'dns.example.com' -d '*.dns.example.com'
-#
-#   Client examples (all methods):
-#     - Browser DoH (path):      https://dns.example.com/dns-query/kids-devices
-#     - Browser DoH (subdomain): https://kids-devices.dns.example.com/dns-query
-#     - Android Private DNS:     kids-devices.dns.example.com
-#     - DoT (Stubby):            kids-devices.dns.example.com:853
-#     - DoQ:                     quic://kids-devices.dns.example.com:853
-#     - dnsmasq CPE-ID:          server=203.0.113.5 / add-cpe-id=kids-devices
+#       advertiseAddress: auto
+#       cpeId: true
+#     ports:
+#       dns: 53
+#       http: 80
+#       https: 443
+#       tls: 853
+#     certFile: /certs/tls.crt
+#     keyFile: /certs/tls.key
+#   service:
+#     dns:
+#       externalTrafficPolicy: Local   # preserves client source IPs
+#       dot: true
+#       http: true
+#       https: true
 
 # cert-manager Certificate resource — creates a TLS cert automatically.
 # Requires cert-manager to be installed in the cluster.
+# IMPORTANT: dnsNames must include BOTH the base domain and the wildcard.
+# A wildcard cert (*.dns.example.com) does NOT cover the bare domain.
 certificate:
   enabled: false
   # issuerRef:
   #   name: letsencrypt-dns01-cloudflare
   #   kind: ClusterIssuer
   # dnsNames:
-  #   - "*.dns.example.com"
+  #   - dns.example.com         # base domain
+  #   - "*.dns.example.com"     # wildcard for per-group subdomains
   # secretName: ""            # defaults to <fullname>-tls
   # commonName: ""
   # duration: 2160h           # 90 days
@@ -189,31 +143,30 @@ service:
     loadBalancerIP: ""
     annotations: {}
     #   metallb.universe.tf/address-pool: dns
-    dot: false            # Expose DoT port 853/TCP
-    doq: false            # Expose DoQ port 853/UDP
+    dot: false            # Expose DoT port 853/TCP on the LB
+    doq: false            # Expose DoQ port 853/UDP on the LB
+    http: false           # Expose HTTP (web UI) on the LB
+    https: false          # Expose HTTPS (DoH + web UI) on the LB
 
-  # HTTP service for the web UI and API
+  # HTTP service — separate ClusterIP for internal access.
+  # Not needed if service.dns.http is true (web UI on the LB).
   http:
     enabled: true
     type: ClusterIP
-    port: 4000
+    port: 80
 
-# Ingress for the web UI
+# Ingress — not needed when using service.dns.http/https on the LB.
+# Useful if you don't have a LoadBalancer (e.g., bare metal without MetalLB).
 ingress:
   enabled: false
   className: ""
   annotations: {}
-    # nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
-    # nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
   hosts:
     - host: blockasaurus.local
       paths:
         - path: /
           pathType: Prefix
   tls: []
-  #  - secretName: blockasaurus-tls
-  #    hosts:
-  #      - blockasaurus.local
 
 serviceAccount:
   create: true

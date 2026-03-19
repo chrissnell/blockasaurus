@@ -88,7 +88,7 @@ clientGroupEndpoints:
 
 ports:
   dns: 53
-  http: 4000
+  http: 80
 ```
 
 **Client examples:**
@@ -102,7 +102,7 @@ ports:
   add-cpe-id=kids-devices
   ```
 - **Browser/OS DoH:** Configure DoH URL:
-  `http://192.168.1.5:4000/dns-query/kids-devices`
+  `http://192.168.1.5/dns-query/kids-devices`
 
 !!! note
     Android Private DNS and other DoT-only clients are not available without
@@ -125,12 +125,25 @@ clientGroupEndpoints:
 
 ports:
   dns: 53
-  http: 4000
+  http: 80
   https: 443
   tls: 853
 
 certFile: /certs/tls.crt
 keyFile: /certs/tls.key
+```
+
+**Helm service values** — expose all ports on the LoadBalancer:
+
+```yaml
+service:
+  dns:
+    enabled: true
+    type: LoadBalancer
+    port: 53
+    dot: true
+    http: true
+    https: true
 ```
 
 **Generate the self-signed wildcard cert:**
@@ -174,7 +187,8 @@ openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
 ### Scenario 3: Custom Domain with Wildcard Cert
 
 Full production setup with a real domain and automated wildcard cert from
-Let's Encrypt. All identification methods are available.
+Let's Encrypt. All identification methods are available. A single
+LoadBalancer IP serves DNS, DoT, DoH, and the web UI.
 
 ```yaml
 clientGroupEndpoints:
@@ -185,7 +199,7 @@ clientGroupEndpoints:
 
 ports:
   dns: 53
-  http: 4000
+  http: 80
   https: 443
   tls: 853
 
@@ -193,14 +207,27 @@ certFile: /certs/tls.crt
 keyFile: /certs/tls.key
 ```
 
-**DNS records** (at your registrar or DNS provider):
+**Helm service values** — expose all protocols on one LoadBalancer:
 
-```
-dns.example.com.       A     203.0.113.5
-*.dns.example.com.     A     203.0.113.5
+```yaml
+service:
+  dns:
+    enabled: true
+    type: LoadBalancer
+    externalTrafficPolicy: Local   # preserves client source IPs
+    port: 53
+    dot: true      # DoT on 853/TCP
+    http: true     # Web UI + DoH on 80/TCP
+    https: true    # Web UI + DoH on 443/TCP
 ```
 
-**TLS cert** — two options:
+With `advertiseAddress: auto`, blockasaurus detects the LoadBalancer's
+external IP and creates DNS records for `dns.example.com` and
+`*.dns.example.com` automatically. No external DNS records or ingress
+needed — clients resolve the domain through blockasaurus itself.
+
+**TLS cert** — the certificate must include **both** the base domain and
+the wildcard as SANs:
 
 === "cert-manager (Helm chart)"
 
@@ -214,8 +241,8 @@ dns.example.com.       A     203.0.113.5
         name: letsencrypt-dns01-cloudflare
         kind: ClusterIssuer
       dnsNames:
-        - dns.example.com
-        - "*.dns.example.com"
+        - dns.example.com          # base domain — required for https://dns.example.com
+        - "*.dns.example.com"      # wildcard — covers per-group subdomains
 
     tls:
       enabled: true
@@ -225,6 +252,12 @@ dns.example.com.       A     203.0.113.5
     This requires [cert-manager](https://cert-manager.io/) and a `ClusterIssuer`
     (or `Issuer`) already configured in your cluster. The certificate is created
     and renewed automatically alongside the blockasaurus release.
+
+    !!! warning "Include the base domain in dnsNames"
+        A wildcard cert (`*.dns.example.com`) does **not** cover the bare
+        domain (`dns.example.com`). You must list both in `dnsNames` or
+        HTTPS connections to the base domain will fail with a certificate
+        error.
 
     See the full set of `certificate.*` options in the chart's
     [`values.yaml`](https://github.com/chrissnell/blockasaurus/blob/main/packaging/helm/blockasaurus/values.yaml).
@@ -249,10 +282,11 @@ dns.example.com.       A     203.0.113.5
 
 | Device / Software | Configuration | Method |
 |---|---|---|
-| Any device (DHCP) | DNS server: 203.0.113.5 | Source IP |
-| dnsmasq forwarder | `server=203.0.113.5` / `add-cpe-id=kids-devices` | EDNS CPE-ID |
+| Any device (DHCP) | DNS server: `<LB IP>` | Source IP |
+| dnsmasq forwarder | `server=<LB IP>` / `add-cpe-id=kids-devices` | EDNS CPE-ID |
 | Browser DoH (path) | `https://dns.example.com/dns-query/kids-devices` | URL path |
 | Browser DoH (subdomain) | `https://kids-devices.dns.example.com/dns-query` | Subdomain |
+| Web UI | `https://dns.example.com` | HTTPS |
 | Android Private DNS | `kids-devices.dns.example.com` | DoT via SNI |
 | iOS/macOS profile | `https://kids-devices.dns.example.com/dns-query` | DoH via subdomain |
 | DoQ client | `quic://kids-devices.dns.example.com:853` | DoQ via SNI |
