@@ -53,6 +53,9 @@ spec:
               containerPort: {{ .Values.service.http.port }}
               protocol: TCP
             {{- if .Values.tls.enabled }}
+            - name: https
+              containerPort: {{ .Values.config.ports.https | default 443 }}
+              protocol: TCP
             - name: dot
               containerPort: 853
               protocol: TCP
