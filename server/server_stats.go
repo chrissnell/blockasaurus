@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/0xERR0R/blocky/metrics"
+	"github.com/0xERR0R/blocky/pkg/statscollector"
 
 	dto "github.com/prometheus/client_model/go"
 )
@@ -70,4 +71,56 @@ func labelValue(labels []*dto.LabelPair, name string) string {
 	}
 
 	return ""
+}
+
+func handleStatsOvertime(c *statscollector.Collector) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"buckets": c.OverTime()})
+	}
+}
+
+func handleStatsOvertimeClients(c *statscollector.Collector) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"buckets": c.OverTime()})
+	}
+}
+
+func handleStatsQueryTypes(c *statscollector.Collector) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(c.QueryTypes())
+	}
+}
+
+func handleStatsResponseTypes(c *statscollector.Collector) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(c.ResponseTypes())
+	}
+}
+
+func handleStatsTopDomains(c *statscollector.Collector) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		permitted, blocked := c.TopDomains(statscollector.DefaultTopN)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"permitted": permitted,
+			"blocked":   blocked,
+		})
+	}
+}
+
+func handleStatsTopClients(c *statscollector.Collector) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		total, blocked := c.TopClients(statscollector.DefaultTopN)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"total":   total,
+			"blocked": blocked,
+		})
+	}
 }

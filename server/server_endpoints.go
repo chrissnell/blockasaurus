@@ -15,6 +15,7 @@ import (
 
 	"github.com/0xERR0R/blocky/metrics"
 	"github.com/0xERR0R/blocky/pkg/arp"
+	"github.com/0xERR0R/blocky/pkg/statscollector"
 	"github.com/0xERR0R/blocky/resolver"
 
 	"github.com/0xERR0R/blocky/api"
@@ -240,6 +241,7 @@ func handleDiscoveredClients(w http.ResponseWriter, r *http.Request) {
 func createHTTPRouter(cfg *config.Config, openAPIImpl api.StrictServerInterface,
 	store *configstore.ConfigStore, reconfigurer configapi.Reconfigurer,
 	broadcaster *logstream.Broadcaster,
+	statsCollector *statscollector.Collector,
 ) *chi.Mux {
 	router := chi.NewRouter()
 
@@ -252,6 +254,12 @@ func createHTTPRouter(cfg *config.Config, openAPIImpl api.StrictServerInterface,
 	router.Get("/api/discovered-clients", handleDiscoveredClients)
 	router.Get("/api/endpoint-info", handleEndpointInfo(cfg))
 	router.Get("/api/stats", handleStats)
+	router.Get("/api/stats/overtime", handleStatsOvertime(statsCollector))
+	router.Get("/api/stats/overtime/clients", handleStatsOvertimeClients(statsCollector))
+	router.Get("/api/stats/query-types", handleStatsQueryTypes(statsCollector))
+	router.Get("/api/stats/response-types", handleStatsResponseTypes(statsCollector))
+	router.Get("/api/stats/top-domains", handleStatsTopDomains(statsCollector))
+	router.Get("/api/stats/top-clients", handleStatsTopClients(statsCollector))
 	router.Get("/api/version", handleVersion)
 
 	if store != nil {

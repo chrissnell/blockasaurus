@@ -36,6 +36,19 @@
   --color-info-muted: rgba(26, 111, 150, 0.1);
   --color-info-fg: #fff;
   --color-blocked: #9333ea;
+  --color-blocked-muted: rgba(147, 51, 234, 0.1);
+
+  /* Chart palette */
+  --chart-1: #1a7a1a;
+  --chart-2: #1a6f96;
+  --chart-3: #d48f00;
+  --chart-4: #c60202;
+  --chart-5: #9333ea;
+  --chart-6: #0d9488;
+  --chart-7: #b45309;
+  --chart-8: #6366f1;
+  --chart-9: #db2777;
+  --chart-10: #65a30d;
 
   /* Buttons */
   --color-btn-bg: #e5e5e5;
@@ -83,6 +96,19 @@
   --color-info-muted: rgba(35, 134, 176, 0.15);
   --color-info-fg: #fff;
   --color-blocked: #a855f7;
+  --color-blocked-muted: rgba(168, 85, 247, 0.15);
+
+  /* Chart palette */
+  --chart-1: #2a8a2a;
+  --chart-2: #2386b0;
+  --chart-3: #ffaa00;
+  --chart-4: #d60202;
+  --chart-5: #a855f7;
+  --chart-6: #14b8a6;
+  --chart-7: #f59e0b;
+  --chart-8: #818cf8;
+  --chart-9: #ec4899;
+  --chart-10: #84cc16;
 
   /* Buttons */
   --color-btn-bg: #1a1a1a;

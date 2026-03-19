@@ -8,6 +8,7 @@ import (
 	"github.com/0xERR0R/blocky/config"
 	"github.com/0xERR0R/blocky/metrics"
 	"github.com/0xERR0R/blocky/model"
+	"github.com/0xERR0R/blocky/pkg/statscollector"
 
 	"github.com/miekg/dns"
 	"github.com/prometheus/client_golang/prometheus"
@@ -27,6 +28,8 @@ type MetricsResolver struct {
 	totalResponse     *prometheus.CounterVec
 	totalErrors       prometheus.Counter
 	durationHistogram *prometheus.HistogramVec
+
+	StatsCollector *statscollector.Collector
 }
 
 // Resolve resolves the passed request
@@ -57,6 +60,21 @@ func (r *MetricsResolver) Resolve(ctx context.Context, request *model.Request) (
 				"response_type": response.RType.String(),
 			}).Inc()
 		}
+	}
+
+	if r.StatsCollector != nil && response != nil {
+		domain := request.Req.Question[0].Name
+		if len(domain) > 0 && domain[len(domain)-1] == '.' {
+			domain = domain[:len(domain)-1]
+		}
+
+		r.StatsCollector.Record(statscollector.QueryRecord{
+			Timestamp:    request.RequestTS,
+			Client:       strings.Join(request.ClientNames, ","),
+			Domain:       strings.ToLower(domain),
+			QueryType:    dns.TypeToString[request.Req.Question[0].Qtype],
+			ResponseType: response.RType.String(),
+		})
 	}
 
 	return response, err

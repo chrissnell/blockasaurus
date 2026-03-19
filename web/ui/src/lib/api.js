@@ -94,6 +94,42 @@ export async function getStats() {
   return resp.json()
 }
 
+export async function getStatsOvertime() {
+  const resp = await fetch('/api/stats/overtime')
+  if (!resp.ok) return null
+  return resp.json()
+}
+
+export async function getStatsOvertimeClients() {
+  const resp = await fetch('/api/stats/overtime/clients')
+  if (!resp.ok) return null
+  return resp.json()
+}
+
+export async function getStatsQueryTypes() {
+  const resp = await fetch('/api/stats/query-types')
+  if (!resp.ok) return null
+  return resp.json()
+}
+
+export async function getStatsResponseTypes() {
+  const resp = await fetch('/api/stats/response-types')
+  if (!resp.ok) return null
+  return resp.json()
+}
+
+export async function getStatsTopDomains() {
+  const resp = await fetch('/api/stats/top-domains')
+  if (!resp.ok) return null
+  return resp.json()
+}
+
+export async function getStatsTopClients() {
+  const resp = await fetch('/api/stats/top-clients')
+  if (!resp.ok) return null
+  return resp.json()
+}
+
 // Endpoint Info (client group endpoint configuration)
 export async function getEndpointInfo() {
   const resp = await fetch('/api/endpoint-info')

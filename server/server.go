@@ -24,6 +24,7 @@ import (
 	"github.com/0xERR0R/blocky/metrics"
 	"github.com/0xERR0R/blocky/model"
 	"github.com/0xERR0R/blocky/pkg/advertise"
+	"github.com/0xERR0R/blocky/pkg/statscollector"
 	"github.com/0xERR0R/blocky/redis"
 	"github.com/0xERR0R/blocky/resolver"
 
@@ -55,10 +56,11 @@ type Server struct {
 	cfg         *config.Config
 	cfgMu       sync.RWMutex
 
-	configStore *configstore.ConfigStore
-	bootstrap   *resolver.Bootstrap
-	redisClient *redis.Client
-	broadcaster *logstream.Broadcaster
+	configStore    *configstore.ConfigStore
+	bootstrap      *resolver.Bootstrap
+	redisClient    *redis.Client
+	broadcaster    *logstream.Broadcaster
+	statsCollector *statscollector.Collector
 
 	servers map[net.Listener]*httpServer
 }
@@ -159,9 +161,11 @@ func NewServer(ctx context.Context, cfg *config.Config, store *configstore.Confi
 	broadcaster := logstream.NewBroadcaster(ctx, 1000)
 	log.Log().AddHook(logstream.NewHook(broadcaster))
 
+	sc := statscollector.New()
+
 	chainCtx, chainCancel := context.WithCancel(ctx)
 
-	queryResolver, queryError := createQueryResolver(chainCtx, cfg, bootstrap, redisClient, broadcaster)
+	queryResolver, queryError := createQueryResolver(chainCtx, cfg, bootstrap, redisClient, broadcaster, sc)
 	if queryError != nil {
 		chainCancel()
 
@@ -169,12 +173,13 @@ func NewServer(ctx context.Context, cfg *config.Config, store *configstore.Confi
 	}
 
 	server = &Server{
-		dnsServers:  dnsServers,
-		cfg:         cfg,
-		configStore: store,
-		bootstrap:   bootstrap,
-		redisClient: redisClient,
-		broadcaster: broadcaster,
+		dnsServers:     dnsServers,
+		cfg:            cfg,
+		configStore:    store,
+		bootstrap:      bootstrap,
+		redisClient:    redisClient,
+		broadcaster:    broadcaster,
+		statsCollector: sc,
 
 		servers: make(map[net.Listener]*httpServer),
 	}
@@ -190,7 +195,7 @@ func NewServer(ctx context.Context, cfg *config.Config, store *configstore.Confi
 		return nil, fmt.Errorf("failed to create OpenAPI interface implementation: %w", err)
 	}
 
-	httpRouter := createHTTPRouter(cfg, openAPIImpl, server.configStore, server, server.broadcaster)
+	httpRouter := createHTTPRouter(cfg, openAPIImpl, server.configStore, server, server.broadcaster, server.statsCollector)
 	server.registerDoHEndpoints(httpRouter, cfg)
 
 	if len(cfg.Ports.HTTP) != 0 {
@@ -332,6 +337,7 @@ func createQueryResolver(
 	bootstrap *resolver.Bootstrap,
 	redisClient *redis.Client,
 	broadcaster *logstream.Broadcaster,
+	statsCollector *statscollector.Collector,
 ) (resolver.ChainedResolver, error) {
 	upstreamTree, utErr := resolver.NewUpstreamTreeResolver(ctx, cfg.Upstreams, bootstrap)
 	blocking, blErr := resolver.NewBlockingResolver(ctx, cfg.Blocking, redisClient, bootstrap)
@@ -357,13 +363,16 @@ func createQueryResolver(
 		return nil, fmt.Errorf("failed to create query resolver components: %w", multiErr)
 	}
 
+	metricsResolver := resolver.NewMetricsResolver(cfg.Prometheus)
+	metricsResolver.StatsCollector = statsCollector
+
 	r := resolver.Chain(
 		resolver.NewFilteringResolver(cfg.Filtering),
 		resolver.NewFQDNOnlyResolver(cfg.FQDNOnly),
 		clientNames,
 		resolver.NewEDEResolver(cfg.EDE),
 		queryLogging,
-		resolver.NewMetricsResolver(cfg.Prometheus),
+		metricsResolver,
 		resolver.NewCustomDNSResolver(cfg.CustomDNS),
 		hostsFile,
 		blocking,
@@ -523,7 +532,7 @@ func (s *Server) Reconfigure(ctx context.Context) error {
 	// like writeLog that need to run for the lifetime of the chain).
 	chainCtx, chainCancel := context.WithCancel(context.Background())
 
-	newChain, err := createQueryResolver(chainCtx, &newCfg, s.bootstrap, s.redisClient, s.broadcaster)
+	newChain, err := createQueryResolver(chainCtx, &newCfg, s.bootstrap, s.redisClient, s.broadcaster, s.statsCollector)
 	if err != nil {
 		chainCancel()
 
