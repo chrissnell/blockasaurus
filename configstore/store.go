@@ -102,6 +102,15 @@ func (s *ConfigStore) GetClientGroup(name string) (*ClientGroup, error) {
 	return &g, nil
 }
 
+func (s *ConfigStore) GetClientGroupBySlug(slug string) (*ClientGroup, error) {
+	var g ClientGroup
+	if err := s.db.Where("slug = ?", slug).First(&g).Error; err != nil {
+		return nil, fmt.Errorf("get client group by slug %q: %w", slug, err)
+	}
+
+	return &g, nil
+}
+
 // PutClientGroup upserts a client group by name.
 // The Slug field is always regenerated from the Name.
 func (s *ConfigStore) PutClientGroup(g *ClientGroup) error {

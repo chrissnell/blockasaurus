@@ -254,6 +254,10 @@ func createHTTPRouter(cfg *config.Config, openAPIImpl api.StrictServerInterface,
 	router.Get("/api/stats", handleStats)
 	router.Get("/api/version", handleVersion)
 
+	if store != nil {
+		router.Get("/api/mobileconfig/{slug}", handleMobileconfig(cfg, store))
+	}
+
 	if broadcaster != nil {
 		router.Get("/api/ws/logs", logstream.Handler(broadcaster))
 	}

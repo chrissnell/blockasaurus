@@ -129,20 +129,20 @@
     // iOS
     {
       const sections = []
-      if (fqdn && (info.hasTls || info.hasHttp)) {
-        sections.push({
-          title: 'Configuration Profile',
-          subtitle: 'iOS 14 or higher',
-          recommended: true,
-          steps: [
-            'Visit <b>dns.notjakob.com/tool.html</b> on your device to generate a DNS profile.',
-            'Set the server URL to the value below and download the <b>.mobileconfig</b> file.',
-            'Open <b>Settings</b> → <b>General</b> → <b>VPN & Device Management</b>.',
-            'Tap the downloaded profile and tap <b>Install</b>.',
-          ],
-          fields: [{ label: 'Server URL', value: url }],
-        })
-      }
+      const profileUrl = `/api/mobileconfig/${slug}`
+      sections.push({
+        title: 'Configuration Profile',
+        subtitle: 'iOS 14 or higher',
+        recommended: true,
+        steps: [
+          'Download the profile using the button below.',
+          'Open <b>Settings</b> → <b>General</b> → <b>VPN & Device Management</b>.',
+          'Tap the downloaded profile and tap <b>Install</b>.',
+          ...(info.hasSelfSignedCert ? ['If you included the CA certificate: go to <b>Settings</b> → <b>General</b> → <b>About</b> → <b>Certificate Trust Settings</b> and enable trust for the Blockasaurus CA.'] : []),
+        ],
+        download: { url: profileUrl, label: 'Download Configuration Profile' },
+        certCheckbox: info.hasSelfSignedCert,
+      })
       sections.push({
         title: 'Manual DNS',
         steps: [
@@ -196,20 +196,20 @@
     // macOS
     {
       const sections = []
-      if (fqdn && (info.hasTls || info.hasHttp)) {
-        sections.push({
-          title: 'Configuration Profile',
-          subtitle: 'macOS Big Sur or higher',
-          recommended: true,
-          steps: [
-            'Visit <b>dns.notjakob.com/tool.html</b> to generate a DNS profile.',
-            'Set the server URL to the value below and download the <b>.mobileconfig</b> file.',
-            'Double-click the downloaded file to open it.',
-            'Open <b>System Settings</b> → <b>Privacy & Security</b> → <b>Profiles</b> and install it.',
-          ],
-          fields: [{ label: 'Server URL', value: url }],
-        })
-      }
+      const profileUrl = `/api/mobileconfig/${slug}`
+      sections.push({
+        title: 'Configuration Profile',
+        subtitle: 'macOS Big Sur or higher',
+        recommended: true,
+        steps: [
+          'Download the profile using the button below.',
+          'Double-click the downloaded file to open it.',
+          'Open <b>System Settings</b> → <b>Privacy & Security</b> → <b>Profiles</b> and install it.',
+          ...(info.hasSelfSignedCert ? ['If you included the CA certificate: open <b>Keychain Access</b>, find the Blockasaurus CA cert, and set it to <b>Always Trust</b>.'] : []),
+        ],
+        download: { url: profileUrl, label: 'Download Configuration Profile' },
+        certCheckbox: info.hasSelfSignedCert,
+      })
       sections.push({
         title: 'Manual DNS',
         steps: [
@@ -513,6 +513,21 @@
                       <h3 class="section-title">{section.title}</h3>
                       {#if section.subtitle}
                         <p class="section-subtitle">{section.subtitle}</p>
+                      {/if}
+                      {#if section.download}
+                        <div class="download-section">
+                          {#if section.certCheckbox}
+                            <label class="cert-checkbox">
+                              <input type="checkbox" bind:checked={section._includeCert} />
+                              Include CA certificate in profile
+                            </label>
+                          {/if}
+                          <a
+                            class="download-btn"
+                            href={section._includeCert ? section.download.url + '?includeCert=1' : section.download.url}
+                            download
+                          >{section.download.label}</a>
+                        </div>
                       {/if}
                       <ol class="section-steps">
                         {#each section.steps as step}
@@ -834,5 +849,46 @@
     position: absolute;
     top: 0.5rem;
     right: 0.5rem;
+  }
+
+  .download-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin: 0.75rem 0;
+  }
+
+  .download-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.5rem 1rem;
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--color-primary-fg, #fff);
+    background: var(--color-primary);
+    border: 1px solid var(--color-primary);
+    border-radius: var(--radius);
+    text-decoration: none;
+    cursor: pointer;
+    transition: opacity 0.15s ease;
+    width: fit-content;
+  }
+
+  .download-btn:hover {
+    opacity: 0.85;
+  }
+
+  .cert-checkbox {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+    cursor: pointer;
+  }
+
+  .cert-checkbox input[type="checkbox"] {
+    accent-color: var(--color-primary);
   }
 </style>

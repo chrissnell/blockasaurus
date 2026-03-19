@@ -312,3 +312,80 @@ be unique across all client groups.
 
 The slug is shown alongside the group name in the web UI and is the value
 used for DoH paths, subdomain hostnames, and CPE-ID strings.
+
+## Apple Configuration Profiles (.mobileconfig)
+
+Blockasaurus can generate Apple `.mobileconfig` profiles for iOS and macOS
+devices directly from the web UI. Each profile is preconfigured for the
+selected client group and the server's endpoint configuration.
+
+### How It Works
+
+Navigate to a client group in the web UI, open the **iOS** or **macOS** tab
+in the Setup Guide, and click **Download Configuration Profile**. The
+downloaded `.mobileconfig` file configures the device's system-wide DNS
+settings so all apps use blockasaurus.
+
+The profile's DNS protocol is chosen automatically based on your server
+configuration:
+
+| Server Configuration | Profile Protocol | DNS Identifier |
+|---|---|---|
+| HTTPS ports + domains configured | DoH | `https://{slug}.{domain}{dohPath}` |
+| TLS ports + domains (no HTTPS) | DoT | `{slug}.{domain}` |
+| No encrypted DNS | Cleartext | Server IP from `advertiseAddress` |
+
+### Deterministic UUIDs
+
+Profiles use UUID v5 (SHA-1 based, deterministic) so that reinstalling a
+profile for the same client group **replaces** the existing profile rather
+than creating a duplicate. The UUIDs are derived from the client group slug.
+
+### Captive Portal & Carrier Exclusions
+
+Encrypted DNS profiles (DoH/DoT) include `OnDemandRules` that exclude
+captive portal detection domains (e.g., `captive.apple.com`), airline
+inflight WiFi portals, and carrier services (WiFi calling, visual voicemail)
+from the DNS tunnel. This prevents the profile from breaking WiFi login
+pages or cellular features.
+
+### Optional CA Certificate Embedding
+
+If your server uses a self-signed certificate (common in homelab setups),
+the web UI shows an **Include CA certificate in profile** checkbox. When
+checked, the profile includes a `com.apple.security.root` payload containing
+the trust anchor certificate extracted from the configured `certFile`.
+
+This checkbox only appears when blockasaurus detects a self-signed root in
+the certificate chain. Users with publicly-trusted certificates (e.g.,
+Let's Encrypt) will not see it.
+
+!!! important "Manual trust step required"
+    Even with the certificate embedded in the profile, Apple requires the
+    user to manually enable trust after installing:
+
+    - **iOS**: Settings → General → About → Certificate Trust Settings →
+      enable the Blockasaurus CA
+    - **macOS**: Open Keychain Access, find the Blockasaurus CA cert, and
+      set it to Always Trust
+
+    Only MDM-deployed profiles receive automatic trust.
+
+### API Endpoint
+
+The profile is served at:
+
+```
+GET /api/mobileconfig/{slug}
+GET /api/mobileconfig/{slug}?includeCert=1
+```
+
+| Parameter | Description |
+|---|---|
+| `{slug}` | Client group slug (from the URL path) |
+| `includeCert=1` | Optional query parameter to embed the CA certificate |
+
+Response headers:
+
+- `Content-Type: application/x-apple-aspen-config`
+- `Content-Disposition: attachment; filename="blockasaurus-{slug}.mobileconfig"`

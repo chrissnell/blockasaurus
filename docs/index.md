@@ -37,6 +37,7 @@ Blockasaurus is a DNS proxy and ad-blocker for the local network written in Go w
     * DNS over UDP and TCP
     * DNS over HTTPS (aka DoH)
     * DNS over TLS (aka DoT)
+    * Apple configuration profiles (.mobileconfig) for one-tap iOS/macOS setup
 
 - **Security and Privacy** - :dark_sunglasses: Secure communication
 

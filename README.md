@@ -35,6 +35,7 @@ Blockasaurus is a blocking DNS server with a modern web UI for blocklist and use
   - DNS over UDP and TCP
   - DNS over HTTPS (DoH)
   - DNS over TLS (DoT)
+  - Apple configuration profiles (.mobileconfig) for one-tap iOS/macOS setup
 
 - **Security and Privacy** - Secure communication
 
