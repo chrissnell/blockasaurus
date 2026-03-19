@@ -68,9 +68,19 @@ func (r *MetricsResolver) Resolve(ctx context.Context, request *model.Request) (
 			domain = domain[:len(domain)-1]
 		}
 
+		// Prefer the client IP for dashboard display (like Pi-hole).
+		// ClientNames may be a group slug for DoH requests, which isn't useful.
+		// Fall back to ClientNames only when IP is unavailable.
+		client := ""
+		if request.ClientIP != nil {
+			client = request.ClientIP.String()
+		} else if len(request.ClientNames) > 0 {
+			client = strings.Join(request.ClientNames, ",")
+		}
+
 		r.StatsCollector.Record(statscollector.QueryRecord{
 			Timestamp:    request.RequestTS,
-			Client:       strings.Join(request.ClientNames, ","),
+			Client:       client,
 			Domain:       strings.ToLower(domain),
 			QueryType:    dns.TypeToString[request.Req.Question[0].Qtype],
 			ResponseType: response.RType.String(),
