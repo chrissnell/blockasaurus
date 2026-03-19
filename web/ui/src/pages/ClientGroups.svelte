@@ -136,6 +136,7 @@
         recommended: true,
         steps: [
           'Download the profile using the button below.',
+          'We recommend reviewing the profile before installing. The free <a href="https://imazing.com/profile-editor" target="_blank" rel="noopener"><b>iMazing Profile Editor</b></a> can open <b>.mobileconfig</b> files and show you exactly what the profile changes.',
           'Open <b>Settings</b> → <b>General</b> → <b>VPN & Device Management</b>.',
           'Tap the downloaded profile and tap <b>Install</b>.',
           ...(info.hasSelfSignedCert ? ['If you included the CA certificate: go to <b>Settings</b> → <b>General</b> → <b>About</b> → <b>Certificate Trust Settings</b> and enable trust for the Blockasaurus CA.'] : []),
@@ -203,6 +204,7 @@
         recommended: true,
         steps: [
           'Download the profile using the button below.',
+          'We recommend reviewing the profile before installing. The free <a href="https://imazing.com/profile-editor" target="_blank" rel="noopener"><b>iMazing Profile Editor</b></a> can open <b>.mobileconfig</b> files and show you exactly what the profile changes.',
           'Double-click the downloaded file to open it.',
           'Open <b>System Settings</b> → <b>Privacy & Security</b> → <b>Profiles</b> and install it.',
           ...(info.hasSelfSignedCert ? ['If you included the CA certificate: open <b>Keychain Access</b>, find the Blockasaurus CA cert, and set it to <b>Always Trust</b>.'] : []),

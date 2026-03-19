@@ -24,24 +24,6 @@ import (
 // a profile replaces rather than duplicates it.
 var mobileconfigNamespace = uuid.NewSHA1(uuid.NameSpaceDNS, []byte("blockasaurus.mobileconfig"))
 
-// Domains excluded from on-demand DNS rules to allow captive portals,
-// carrier services, and inflight WiFi to function.
-var neverConnectDomains = []string{
-	"captive.apple.com",
-	"gogoinflight.com",
-	"inflightinternet.com",
-	"wifionboard.com",
-	"southwestwifi.com",
-	"unitedwifi.com",
-	"aainflight.com",
-	"3gppnetwork.org",
-	"vvm.mstore.msg.t-mobile.com",
-	"dav.orange.fr",
-	"vvm.mobistar.be",
-	"tma.vvm.mone.pan-net.eu",
-	"vvm.ee.co.uk",
-}
-
 type mobileconfigData struct {
 	DisplayName    string
 	Identifier     string
@@ -52,7 +34,7 @@ type mobileconfigData struct {
 	ServerURL      string // DoH only
 	ServerName     string // DoT only
 	ServerAddress  string // plain DNS only
-	NeverConnect   []string
+	Encrypted      bool   // true for DoH/DoT — enables OnDemandRules
 	IncludeCert    bool
 	CertUUID       string
 	CertB64        string
@@ -109,26 +91,9 @@ var mobileconfigTmpl = template.Must(template.New("mobileconfig").Parse(`<?xml v
 				</array>
 {{- end}}
 			</dict>
-{{- if and (ne .DNSProtocol "") (gt (len .NeverConnect) 0)}}
+{{- if .Encrypted}}
 			<key>OnDemandRules</key>
 			<array>
-{{- range .NeverConnect}}
-				<dict>
-					<key>Action</key>
-					<string>EvaluateConnection</string>
-					<key>ActionParameters</key>
-					<array>
-						<dict>
-							<key>DomainAction</key>
-							<string>NeverConnect</string>
-							<key>Domains</key>
-							<array>
-								<string>{{.}}</string>
-							</array>
-						</dict>
-					</array>
-				</dict>
-{{- end}}
 				<dict>
 					<key>Action</key>
 					<string>Connect</string>
@@ -210,7 +175,7 @@ func handleMobileconfig(cfg *config.Config, store *configstore.ConfigStore) http
 			ServerURL:    serverURL,
 			ServerName:   serverName,
 			ServerAddress: serverAddress,
-			NeverConnect: neverConnectDomains,
+			Encrypted:     dnsProtocol != "",
 		}
 
 		// Optional CA certificate embedding
