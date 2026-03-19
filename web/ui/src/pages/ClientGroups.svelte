@@ -474,6 +474,13 @@
         </div>
       </Card>
 
+      <!-- Blocklists Card -->
+      <Card title="Blocklists">
+        <p class="blocklist-hint">
+          Go to the <a href="/blocklists" class="inline-link">blocklists</a> tab and click <strong>Groups</strong> to add individual blocklists to your client group(s).
+        </p>
+      </Card>
+
       <!-- Setup Guide Card -->
       {#if endpointInfo && selected.slug}
         {@const tabs = getSetupTabs(selected.slug, endpointInfo)}
@@ -586,15 +593,14 @@
   .page-title {
     font-size: var(--text-2xl);
     font-weight: 700;
-    margin-bottom: var(--space-6);
   }
 
   .detail-header {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    gap: 0.25rem;
-    margin-bottom: var(--space-6);
+    gap: 0.15rem;
+    margin-bottom: var(--space-4);
   }
 
   .back-btn {
@@ -639,6 +645,22 @@
   }
 
   .chip-remove:hover { color: var(--color-danger); }
+
+  .blocklist-hint {
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+    line-height: 1.5;
+  }
+
+  .inline-link {
+    color: var(--color-accent);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .inline-link:hover {
+    color: var(--color-text);
+  }
 
   .empty-hint {
     color: var(--color-text-dim);
