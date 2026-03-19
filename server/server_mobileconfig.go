@@ -50,7 +50,7 @@ var mobileconfigTmpl = template.Must(template.New("mobileconfig").Parse(`<?xml v
 	<key>PayloadIdentifier</key>
 	<string>{{.Identifier}}</string>
 	<key>PayloadScope</key>
-	<string>User</string>
+	<string>System</string>
 	<key>PayloadType</key>
 	<string>Configuration</string>
 	<key>PayloadUUID</key>

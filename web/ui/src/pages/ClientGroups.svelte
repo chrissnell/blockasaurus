@@ -516,6 +516,11 @@
                       {#if section.subtitle}
                         <p class="section-subtitle">{section.subtitle}</p>
                       {/if}
+                      <ol class="section-steps">
+                        {#each section.steps as step}
+                          <li>{@html step}</li>
+                        {/each}
+                      </ol>
                       {#if section.download}
                         <div class="download-section">
                           {#if section.certCheckbox}
@@ -531,11 +536,6 @@
                           >{section.download.label}</a>
                         </div>
                       {/if}
-                      <ol class="section-steps">
-                        {#each section.steps as step}
-                          <li>{@html step}</li>
-                        {/each}
-                      </ol>
                       {#if section.fields}
                         {#each section.fields as field}
                           <div class="config-field">
