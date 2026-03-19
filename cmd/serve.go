@@ -18,6 +18,7 @@ import (
 	"github.com/0xERR0R/blocky/configstore"
 	"github.com/0xERR0R/blocky/evt"
 	"github.com/0xERR0R/blocky/log"
+	"github.com/0xERR0R/blocky/pkg/advertise"
 	"github.com/0xERR0R/blocky/server"
 	"github.com/0xERR0R/blocky/util"
 
@@ -89,6 +90,11 @@ func startServer(_ *cobra.Command, _ []string) error {
 		}
 
 		log.Log().Info("Using database-backed configuration from ", cfg.DatabasePath)
+	}
+
+	// Auto-advertise DNS records for client group endpoint domains
+	if err := injectAdvertiseRecords(cfg); err != nil {
+		return fmt.Errorf("advertise DNS records: %w", err)
 	}
 
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
@@ -170,6 +176,33 @@ func parseCgroupLimit(s string) int64 {
 	}
 
 	return v
+}
+
+// injectAdvertiseRecords resolves the advertise address and injects DNS records
+// for each configured client group endpoint domain into the CustomDNS mapping.
+func injectAdvertiseRecords(cfg *config.Config) error {
+	cge := cfg.ClientGroupEndpoints
+	if cge.AdvertiseAddress == "" || len(cge.Domains) == 0 {
+		return nil
+	}
+
+	ip, err := advertise.ResolveAddress(cge.AdvertiseAddress)
+	if err != nil {
+		return err
+	}
+
+	if ip == nil {
+		return nil
+	}
+
+	if cfg.CustomDNS.Mapping == nil {
+		cfg.CustomDNS.Mapping = make(config.CustomDNSMapping)
+	}
+
+	const advertiseTTL = 3600
+	advertise.InjectRecords(cfg.CustomDNS.Mapping, cge.Domains, ip, advertiseTTL)
+
+	return nil
 }
 
 func printBanner() {

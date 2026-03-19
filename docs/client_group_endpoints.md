@@ -40,12 +40,40 @@ clientGroupEndpoints:
   # Enable EDNS CPE-ID extraction (option code 65074) for plain DNS.
   # Used by dnsmasq's add-cpe-id= directive.
   cpeId: true     # default: true
+
+  # Auto-create DNS records so clients can resolve *.{domain} to this server.
+  # "auto" detects the IP (k8s LB service or outbound interface), or set an
+  # explicit IP. Omit or leave empty to disable.
+  advertiseAddress: auto
 ```
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `clientGroupEndpoints.domains` | list of strings | `[]` | Base domains for subdomain extraction |
 | `clientGroupEndpoints.cpeId` | bool | `true` | Enable EDNS CPE-ID (option 65074) extraction |
+| `clientGroupEndpoints.advertiseAddress` | string | `""` | Auto-create DNS records for configured domains. `auto`, explicit IP, or empty to disable |
+
+### Auto-Advertise DNS Records
+
+When `advertiseAddress` is set, blockasaurus automatically creates `A` (or `AAAA`)
+records for each configured domain and its wildcard (`*.domain`), pointing to the
+detected or specified IP. This eliminates the need to manually add `customDNS.mapping`
+entries or external DNS records for subdomain-based client group identification.
+
+**Detection order for `auto`:**
+
+1. **Kubernetes**: Queries the k8s API for a LoadBalancer Service with port 53 in the
+   pod's namespace. Requires the service account to have `get`/`list` on Services
+   (the Helm chart creates this RBAC automatically).
+2. **Bare metal**: Opens a UDP socket to detect the primary outbound interface IP.
+3. **Failure**: Logs a warning and skips record injection.
+
+User-defined `customDNS.mapping` entries for the same domain always take precedence —
+auto-advertised records are skipped for domains that already have explicit entries.
+
+!!! note
+    The IP is detected once at startup. If the IP changes (e.g., DHCP renewal),
+    a restart is required. In Kubernetes, LoadBalancer IPs are typically stable.
 
 ## Setup Scenarios
 
@@ -84,13 +112,15 @@ ports:
 
 ### Scenario 2: Homelab with Self-Signed Wildcard Cert (.local)
 
-Adds subdomain-based DoH and DoT. Blockasaurus resolves its own subdomains
-via a CustomDNS wildcard entry.
+Adds subdomain-based DoH and DoT. With `advertiseAddress`, blockasaurus
+automatically creates DNS records for `*.blockasaurus.local` — no manual
+`customDNS.mapping` needed.
 
 ```yaml
 clientGroupEndpoints:
   domains:
     - blockasaurus.local
+  advertiseAddress: auto   # or explicit IP like 192.168.1.5
   cpeId: true
 
 ports:
@@ -101,11 +131,6 @@ ports:
 
 certFile: /certs/tls.crt
 keyFile: /certs/tls.key
-
-customDNS:
-  mapping:
-    blockasaurus.local: 192.168.1.5
-    "*.blockasaurus.local": 192.168.1.5
 ```
 
 **Generate the self-signed wildcard cert:**
@@ -155,6 +180,7 @@ Let's Encrypt. All identification methods are available.
 clientGroupEndpoints:
   domains:
     - dns.example.com
+  advertiseAddress: auto
   cpeId: true
 
 ports:
@@ -174,13 +200,50 @@ dns.example.com.       A     203.0.113.5
 *.dns.example.com.     A     203.0.113.5
 ```
 
-**TLS cert** (Let's Encrypt wildcard via DNS-01 challenge):
+**TLS cert** — two options:
 
-```bash
-certbot certonly --dns-cloudflare \
-  -d 'dns.example.com' \
-  -d '*.dns.example.com'
-```
+=== "cert-manager (Helm chart)"
+
+    The Helm chart can create a cert-manager `Certificate` resource for you.
+    In your `values.yaml`:
+
+    ```yaml
+    certificate:
+      enabled: true
+      issuerRef:
+        name: letsencrypt-dns01-cloudflare
+        kind: ClusterIssuer
+      dnsNames:
+        - dns.example.com
+        - "*.dns.example.com"
+
+    tls:
+      enabled: true
+      secretName: my-release-blockasaurus-tls  # matches certificate.secretName default
+    ```
+
+    This requires [cert-manager](https://cert-manager.io/) and a `ClusterIssuer`
+    (or `Issuer`) already configured in your cluster. The certificate is created
+    and renewed automatically alongside the blockasaurus release.
+
+    See the full set of `certificate.*` options in the chart's
+    [`values.yaml`](https://github.com/chrissnell/blockasaurus/blob/main/packaging/helm/blockasaurus/values.yaml).
+
+=== "certbot (manual)"
+
+    ```bash
+    certbot certonly --dns-cloudflare \
+      -d 'dns.example.com' \
+      -d '*.dns.example.com'
+    ```
+
+    Then create the Kubernetes secret and reference it in `tls.secretName`:
+
+    ```bash
+    kubectl create secret tls blockasaurus-tls \
+      --cert=/etc/letsencrypt/live/dns.example.com/fullchain.pem \
+      --key=/etc/letsencrypt/live/dns.example.com/privkey.pem
+    ```
 
 **Client examples** (all methods):
 

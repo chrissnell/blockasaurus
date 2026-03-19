@@ -52,6 +52,7 @@ config:
 #     clientGroupEndpoints:
 #       domains:
 #         - blockasaurus.local
+#       advertiseAddress: auto   # auto-creates *.blockasaurus.local DNS records
 #       cpeId: true
 #     ports:
 #       dns: 53
@@ -60,10 +61,6 @@ config:
 #       tls: 853
 #     certFile: /certs/tls.crt
 #     keyFile: /certs/tls.key
-#     customDNS:
-#       mapping:
-#         blockasaurus.local: 192.168.1.5
-#         "*.blockasaurus.local": 192.168.1.5
 #   service:
 #     dns:
 #       dot: true
@@ -95,6 +92,7 @@ config:
 #     clientGroupEndpoints:
 #       domains:
 #         - dns.example.com
+#       advertiseAddress: auto   # auto-creates *.dns.example.com DNS records from LB IP
 #       cpeId: true
 #     ports:
 #       dns: 53
@@ -128,7 +126,16 @@ config:
 #     dns.example.com.     A   203.0.113.5
 #     *.dns.example.com.   A   203.0.113.5
 #
-#   TLS cert (Let's Encrypt wildcard via DNS-01):
+#   TLS cert (Let's Encrypt wildcard via DNS-01 using cert-manager):
+#     certificate:
+#       enabled: true
+#       issuerRef:
+#         name: letsencrypt-dns01-cloudflare
+#         kind: ClusterIssuer
+#       dnsNames:
+#         - dns.example.com
+#         - "*.dns.example.com"
+#   Or manually:
 #     certbot certonly --dns-cloudflare -d 'dns.example.com' -d '*.dns.example.com'
 #
 #   Client examples (all methods):
@@ -138,6 +145,26 @@ config:
 #     - DoT (Stubby):            kids-devices.dns.example.com:853
 #     - DoQ:                     quic://kids-devices.dns.example.com:853
 #     - dnsmasq CPE-ID:          server=203.0.113.5 / add-cpe-id=kids-devices
+
+# cert-manager Certificate resource — creates a TLS cert automatically.
+# Requires cert-manager to be installed in the cluster.
+certificate:
+  enabled: false
+  # issuerRef:
+  #   name: letsencrypt-dns01-cloudflare
+  #   kind: ClusterIssuer
+  # dnsNames:
+  #   - "*.dns.example.com"
+  # secretName: ""            # defaults to <fullname>-tls
+  # commonName: ""
+  # duration: 2160h           # 90 days
+  # renewBefore: 360h         # 15 days before expiry
+  # subject:
+  #   organizations:
+  #     - My Org
+  # privateKey:
+  #   algorithm: RSA
+  #   size: 2048
 
 # TLS certificate for DoT/DoH/DoQ — mounts a k8s TLS Secret into the pod
 tls:

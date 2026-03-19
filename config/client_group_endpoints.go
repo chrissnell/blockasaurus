@@ -13,6 +13,11 @@ type ClientGroupEndpoints struct {
 
 	// CpeID enables EDNS CPE-ID (option 65074) extraction for plain DNS queries.
 	CpeID bool `yaml:"cpeId" default:"true"`
+
+	// AdvertiseAddress controls automatic DNS record injection for configured domains.
+	// "auto" detects the IP (k8s LB service → outbound interface), an explicit IP uses
+	// that address, empty/omitted disables the feature.
+	AdvertiseAddress string `yaml:"advertiseAddress"`
 }
 
 // IsEnabled implements `config.Configurable`.
@@ -23,6 +28,10 @@ func (c *ClientGroupEndpoints) IsEnabled() bool {
 // LogConfig implements `config.Configurable`.
 func (c *ClientGroupEndpoints) LogConfig(logger *logrus.Entry) {
 	logger.Infof("cpeId = %t", c.CpeID)
+
+	if c.AdvertiseAddress != "" {
+		logger.Infof("advertiseAddress = %s", c.AdvertiseAddress)
+	}
 
 	if len(c.Domains) > 0 {
 		logger.Info("domains:")

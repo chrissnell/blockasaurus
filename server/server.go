@@ -23,6 +23,7 @@ import (
 	"github.com/0xERR0R/blocky/logstream"
 	"github.com/0xERR0R/blocky/metrics"
 	"github.com/0xERR0R/blocky/model"
+	"github.com/0xERR0R/blocky/pkg/advertise"
 	"github.com/0xERR0R/blocky/redis"
 	"github.com/0xERR0R/blocky/resolver"
 
@@ -499,6 +500,22 @@ func (s *Server) Reconfigure(ctx context.Context) error {
 
 	newCfg.Blocking = blocking
 	newCfg.CustomDNS = customDNS
+
+	// Re-inject auto-advertise DNS records for client group endpoint domains
+	cge := newCfg.ClientGroupEndpoints
+	if cge.AdvertiseAddress != "" && len(cge.Domains) > 0 {
+		ip, advErr := advertise.ResolveAddress(cge.AdvertiseAddress)
+		if advErr != nil {
+			logger().Warnf("advertise address resolution failed during reconfigure: %v", advErr)
+		} else if ip != nil {
+			if newCfg.CustomDNS.Mapping == nil {
+				newCfg.CustomDNS.Mapping = make(config.CustomDNSMapping)
+			}
+
+			const advertiseTTL = 3600
+			advertise.InjectRecords(newCfg.CustomDNS.Mapping, cge.Domains, ip, advertiseTTL)
+		}
+	}
 
 	// Build new resolver chain (slow — list loading, network I/O)
 	// Use Background context, not the caller's ctx (which may be an HTTP request
