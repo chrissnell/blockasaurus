@@ -38,6 +38,18 @@ spec:
       targetPort: doq
       protocol: UDP
     {{- end }}
+    {{- if .Values.service.dns.http }}
+    - name: http
+      port: {{ .Values.config.ports.http | default 4000 }}
+      targetPort: http
+      protocol: TCP
+    {{- end }}
+    {{- if .Values.service.dns.https }}
+    - name: https
+      port: 443
+      targetPort: https
+      protocol: TCP
+    {{- end }}
   selector:
     {{- include "blockasaurus.selectorLabels" . | nindent 4 }}
 {{- end }}
