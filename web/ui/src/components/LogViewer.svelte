@@ -18,9 +18,9 @@
   }
 
   function formatTime(ts) {
-    if (!ts) return ''
+    if (!ts) return ''.padEnd(8)
     const d = new Date(ts)
-    return d.toLocaleTimeString('en-GB', { hour12: false, fractionalSecondDigits: 3 })
+    return d.toLocaleTimeString('en-GB', { hour12: false })
   }
 
   function formatDuration(entry) {
@@ -48,7 +48,7 @@
     <span>{connected ? 'live' : 'disconnected'}</span>
     <span class="count">{entries.length} entries</span>
   </div>
-  <div class="log-col-hdr">{"Time".padEnd(12)}  {"Level".padEnd(5)}  {"Type".padEnd(5)}  {"Name".padEnd(30)}  {"Code".padEnd(10)}  {"Reason".padEnd(20)}  {"Duration"}</div>
+  <div class="log-col-hdr">{"Time".padEnd(8)}  {"Level".padEnd(5)}  {"Type".padEnd(5)}  {"Name".padEnd(30)}  {"Code".padEnd(10)}  {"Reason".padEnd(20)}  {"Duration"}</div>
   <div class="log-body" bind:this={container}>
 {#each entries as entry}<div class="log-{entryClass(entry)}">{formatTime(entry.timestamp)}  {(entry.level || '').padEnd(5)}  {formatMessage(entry).padEnd(56)}{formatDuration(entry)}</div>{:else}<span class="log-dim">waiting for data...</span>{/each}
   </div>
