@@ -90,7 +90,26 @@
 
   let rtLabels = $derived(responseTypes ? Object.keys(responseTypes) : [])
   let rtData = $derived(responseTypes ? Object.values(responseTypes) : [])
-  let rtColors = $derived(() => chartPalette().slice(0, rtLabels.length))
+
+  // Semantic colors for response types
+  const responseTypeColorMap = {
+    RESOLVED: '--color-success',
+    CACHED: '--color-info',
+    BLOCKED: '--color-danger',
+    CUSTOMDNS: '--color-primary',
+    CONDITIONAL: '--chart-6',
+    HOSTSFILE: '--chart-7',
+    FILTERED: '--chart-8',
+    SPECIAL: '--chart-9',
+  }
+
+  let rtColors = $derived(() => {
+    const palette = chartPalette()
+    return rtLabels.map((label, i) => {
+      const varName = responseTypeColorMap[label]
+      return varName ? getCssVar(varName) : palette[i % palette.length]
+    })
+  })
 
   function maxCount(items) {
     if (!items?.length) return 1
