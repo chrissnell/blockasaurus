@@ -477,7 +477,7 @@
       <!-- Blocklists Card -->
       <Card title="Blocklists">
         <p class="blocklist-hint">
-          Go to the <a href="/blocklists" class="inline-link">blocklists</a> tab and click <strong>Groups</strong> to add individual blocklists to your client group(s).
+          Go to the <a href="#/blocklists" class="inline-link">blocklists</a> tab and click <strong>Groups</strong> to add individual blocklists to your client group(s).
         </p>
       </Card>
 
