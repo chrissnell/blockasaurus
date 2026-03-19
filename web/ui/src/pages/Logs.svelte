@@ -30,7 +30,7 @@
     max-width: 1200px;
     display: flex;
     flex-direction: column;
-    height: calc(100vh - var(--space-8) * 2);
+    height: calc(65vh - var(--space-8) * 2);
   }
   .page-title {
     font-size: var(--text-2xl);

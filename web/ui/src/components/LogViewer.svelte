@@ -23,6 +23,12 @@
     return d.toLocaleTimeString('en-GB', { hour12: false, fractionalSecondDigits: 3 })
   }
 
+  function formatDuration(entry) {
+    const f = entry.fields
+    if (f && f.duration_ms != null) return `${f.duration_ms}ms`
+    return ''
+  }
+
   function formatMessage(entry) {
     const f = entry.fields
     if (f && f.question_name) {
@@ -30,8 +36,7 @@
       const name = (f.question_name || '').padEnd(30)
       const rcode = (f.response_code || '').padEnd(10)
       const reason = f.response_reason || ''
-      const dur = f.duration_ms != null ? `  ${f.duration_ms}ms` : ''
-      return `${qtype}  ${name}  ${rcode}  ${reason}${dur}`
+      return `${qtype}  ${name}  ${rcode}  ${reason}`
     }
     return entry.message
   }
@@ -43,9 +48,9 @@
     <span>{connected ? 'live' : 'disconnected'}</span>
     <span class="count">{entries.length} entries</span>
   </div>
+  <div class="log-col-hdr">{"Time".padEnd(12)}  {"Level".padEnd(5)}  {"Type".padEnd(5)}  {"Name".padEnd(30)}  {"Code".padEnd(10)}  {"Reason".padEnd(20)}  {"Duration"}</div>
   <div class="log-body" bind:this={container}>
-<div class="log-hdr">{"Time".padEnd(12)}  {"Level".padEnd(5)}  {"Type".padEnd(5)}  {"Name".padEnd(30)}  {"Code".padEnd(10)}  {"Reason"}</div>
-{#each entries as entry}<div class="log-{entryClass(entry)}">{formatTime(entry.timestamp)}  {(entry.level || '').padEnd(5)}  {formatMessage(entry)}</div>{:else}<span class="log-dim">waiting for data...</span>{/each}
+{#each entries as entry}<div class="log-{entryClass(entry)}">{formatTime(entry.timestamp)}  {(entry.level || '').padEnd(5)}  {formatMessage(entry).padEnd(56)}{formatDuration(entry)}</div>{:else}<span class="log-dim">waiting for data...</span>{/each}
   </div>
 </div>
 
@@ -102,5 +107,16 @@
   .log-warn { color: var(--color-warning); }
   .log-blocked { color: var(--color-blocked); }
   .log-dim { color: var(--color-text-dim); }
-  .log-hdr { color: var(--color-text); font-weight: 700; border-bottom: 1px solid var(--color-border-subtle); margin-bottom: 2px; }
+
+  .log-col-hdr {
+    white-space: pre;
+    font-size: var(--text-xs);
+    line-height: 1.2;
+    padding: 0.35rem 0.5rem;
+    color: var(--color-text);
+    font-weight: 700;
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-bg);
+    flex-shrink: 0;
+  }
 </style>

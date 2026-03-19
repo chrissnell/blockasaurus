@@ -34,12 +34,12 @@
 
   const nav = [
     { path: '/', label: 'dashboard' },
+    { path: '/logs', label: 'live logs' },
     { path: '/client-groups', label: 'client groups' },
     { path: '/blocklists', label: 'blocklists' },
     { path: '/domains', label: 'domains' },
     { path: '/custom-dns', label: 'custom dns' },
     { path: '/settings', label: 'settings' },
-    { path: '/logs', label: 'logs' },
   ]
 </script>
 
