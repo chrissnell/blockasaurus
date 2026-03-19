@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/0xERR0R/blocky/config"
+	"github.com/0xERR0R/blocky/pkg/advertise"
 )
 
 type endpointInfo struct {
@@ -25,7 +26,11 @@ func handleEndpointInfo(cfg *config.Config) http.HandlerFunc {
 		HasTLS:           len(cfg.Ports.TLS) > 0 || len(cfg.Ports.HTTPS) > 0,
 		HasHTTP:          len(cfg.Ports.HTTP) > 0,
 		HasSelfSignedCert: cfg.CertFile != "" && hasSelfSignedRoot(cfg.CertFile),
-		AdvertiseAddress: cfg.ClientGroupEndpoints.AdvertiseAddress,
+	}
+
+	// Resolve "auto" or explicit IP to an actual address for the frontend
+	if ip, err := advertise.ResolveAddress(cfg.ClientGroupEndpoints.AdvertiseAddress); err == nil && ip != nil {
+		info.AdvertiseAddress = ip.String()
 	}
 
 	if info.Domains == nil {

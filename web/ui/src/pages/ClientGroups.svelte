@@ -94,7 +94,9 @@
     const httpsUrl = fqdn ? `https://${fqdn}${dohPath}` : null
     const httpUrl = fqdn ? `http://${fqdn}${dohPath}` : null
     const url = (info.hasTls && httpsUrl) ? httpsUrl : httpUrl
-    const serverIpNote = 'Replace <b>&lt;server-ip&gt;</b> with the IP address of your blockasaurus server.'
+    const serverIp = info.advertiseAddress || null
+    const serverIpDisplay = serverIp || '&lt;server-ip&gt;'
+    const serverIpNote = serverIp ? null : 'Replace <b>&lt;server-ip&gt;</b> with the IP address of your blockasaurus server.'
 
     // Android
     {
@@ -119,7 +121,7 @@
           'Open <b>Settings</b> and tap <b>Wi-Fi</b>.',
           'Long-press your connected network and tap <b>Modify network</b>.',
           'Tap <b>Advanced options</b> and set <b>IP settings</b> to <b>Static</b>.',
-          'Set <b>DNS 1</b> to your blockasaurus server\'s IP address.',
+          serverIp ? `Set <b>DNS 1</b> to <b>${serverIp}</b>.` : 'Set <b>DNS 1</b> to your blockasaurus server\'s IP address.',
           'Tap <b>Save</b>.',
         ],
       })
@@ -150,7 +152,7 @@
           'Open <b>Settings</b> and tap <b>Wi-Fi</b>.',
           'Tap the <b>ⓘ</b> button next to your connected network.',
           'Tap <b>Configure DNS</b> and select <b>Manual</b>.',
-          'Remove existing DNS servers and add your blockasaurus server\'s IP address.',
+          serverIp ? `Remove existing DNS servers and add <b>${serverIp}</b>.` : 'Remove existing DNS servers and add your blockasaurus server\'s IP address.',
           'Tap <b>Save</b>.',
         ],
       })
@@ -171,7 +173,7 @@
             'Click <b>Hardware properties</b>.',
             'Next to <b>DNS server assignment</b>, click <b>Edit</b>.',
             'Set to <b>Manual</b> and toggle <b>IPv4</b> on.',
-            'Enter your blockasaurus server\'s IP as the <b>Preferred DNS</b>.',
+            serverIp ? `Enter <b>${serverIp}</b> as the <b>Preferred DNS</b>.` : 'Enter your blockasaurus server\'s IP as the <b>Preferred DNS</b>.',
             'Set <b>DNS over HTTPS</b> to <b>On (manual template)</b> and enter the template below.',
             'Click <b>Save</b>.',
           ],
@@ -187,7 +189,7 @@
           'Right-click your active connection and select <b>Properties</b>.',
           'Select <b>Internet Protocol Version 4 (TCP/IPv4)</b> and click <b>Properties</b>.',
           'Select <b>Use the following DNS server addresses</b>.',
-          'Enter your blockasaurus server\'s IP as the <b>Preferred DNS server</b>.',
+          serverIp ? `Enter <b>${serverIp}</b> as the <b>Preferred DNS server</b>.` : 'Enter your blockasaurus server\'s IP as the <b>Preferred DNS server</b>.',
           'Click <b>OK</b>, then <b>Close</b>.',
         ],
       })
@@ -218,7 +220,7 @@
           'Open <b>System Settings</b> and click <b>Network</b>.',
           'Select your active connection and click <b>Details</b>.',
           'Go to the <b>DNS</b> tab.',
-          'Remove existing DNS servers and add your blockasaurus server\'s IP address.',
+          serverIp ? `Remove existing DNS servers and add <b>${serverIp}</b>.` : 'Remove existing DNS servers and add your blockasaurus server\'s IP address.',
           'Click <b>OK</b>.',
         ],
       })
@@ -237,7 +239,7 @@
             serverIpNote,
             'Run <b>sudo systemctl restart systemd-resolved</b> to apply.',
           ],
-          codeBlock: `[Resolve]\nDNS=<server-ip>#${fqdn}\nDNSOverTLS=yes`,
+          codeBlock: `[Resolve]\nDNS=${serverIpDisplay}#${fqdn}\nDNSOverTLS=yes`,
         })
       }
       sections.push({
@@ -247,7 +249,7 @@
           'Edit <b>/etc/resolv.conf</b> (or use your distribution\'s network manager).',
           serverIpNote,
         ],
-        codeBlock: 'nameserver <server-ip>',
+        codeBlock: `nameserver ${serverIpDisplay}`,
       })
       if (info.hasTls && fqdn) {
         sections.push({
@@ -257,7 +259,7 @@
             serverIpNote,
             'Restart Stubby to apply.',
           ],
-          codeBlock: `round_robin_upstreams: 1\nupstream_recursive_servers:\n  - address_data: <server-ip>\n    tls_auth_name: "${fqdn}"`,
+          codeBlock: `round_robin_upstreams: 1\nupstream_recursive_servers:\n  - address_data: ${serverIpDisplay}\n    tls_auth_name: "${fqdn}"`,
         })
         sections.push({
           title: 'Unbound',
@@ -266,7 +268,7 @@
             serverIpNote,
             'Restart Unbound to apply.',
           ],
-          codeBlock: `forward-zone:\n  name: "."\n  forward-tls-upstream: yes\n  forward-addr: <server-ip>#${fqdn}`,
+          codeBlock: `forward-zone:\n  name: "."\n  forward-tls-upstream: yes\n  forward-addr: ${serverIpDisplay}#${fqdn}`,
         })
       }
       if (url) {
@@ -288,7 +290,7 @@
             'The <b>add-cpe-id</b> line tags queries so blockasaurus identifies them as this group.',
             'Restart dnsmasq to apply.',
           ],
-          codeBlock: `no-resolv\nbogus-priv\nstrict-order\nserver=<server-ip>\nadd-cpe-id=${slug}`,
+          codeBlock: `no-resolv\nbogus-priv\nstrict-order\nserver=${serverIpDisplay}\nadd-cpe-id=${slug}`,
         })
       }
       tabs.push({ id: 'linux', label: 'Linux', sections })
@@ -316,7 +318,7 @@
           'Open <b>Settings</b> and go to <b>Network</b>.',
           'Select your active connection.',
           'Expand the <b>Network</b> section and set <b>Name servers</b> to <b>Custom name servers</b>.',
-          'Enter your blockasaurus server\'s IP address.',
+          serverIp ? `Enter <b>${serverIp}</b>.` : 'Enter your blockasaurus server\'s IP address.',
           'Close Settings to apply.',
         ],
       })
@@ -361,7 +363,7 @@
         steps: [
           'Open your router\'s admin interface (usually <b>http://192.168.1.1</b> or <b>http://192.168.0.1</b>).',
           'Locate the <b>DNS settings</b> (often under WAN, Internet, or DHCP settings).',
-          'Set the primary DNS server to your blockasaurus server\'s IP address.',
+          serverIp ? `Set the primary DNS server to <b>${serverIp}</b>.` : 'Set the primary DNS server to your blockasaurus server\'s IP address.',
           'Save and apply changes.',
         ],
       })
@@ -374,7 +376,7 @@
             'The <b>add-cpe-id</b> line tags queries so blockasaurus identifies them as this group.',
             'Restart dnsmasq to apply.',
           ],
-          codeBlock: `no-resolv\nbogus-priv\nstrict-order\nserver=<server-ip>\nadd-cpe-id=${slug}`,
+          codeBlock: `no-resolv\nbogus-priv\nstrict-order\nserver=${serverIpDisplay}\nadd-cpe-id=${slug}`,
         })
       }
       if (info.hasTls && fqdn) {
@@ -385,7 +387,7 @@
             serverIpNote,
             'Restart Unbound to apply.',
           ],
-          codeBlock: `forward-zone:\n  name: "."\n  forward-tls-upstream: yes\n  forward-addr: <server-ip>#${fqdn}`,
+          codeBlock: `forward-zone:\n  name: "."\n  forward-tls-upstream: yes\n  forward-addr: ${serverIpDisplay}#${fqdn}`,
         })
         sections.push({
           title: 'pfSense',
@@ -394,7 +396,7 @@
             'On the <b>General Settings</b> tab, scroll to the <b>Custom Options</b> box.',
             'Enter the block below.',
           ],
-          codeBlock: `server:\nforward-zone:\n  name: "."\n  forward-tls-upstream: yes\n  forward-addr: <server-ip>#${fqdn}`,
+          codeBlock: `server:\nforward-zone:\n  name: "."\n  forward-tls-upstream: yes\n  forward-addr: ${serverIpDisplay}#${fqdn}`,
         })
       }
       if (url) {
@@ -404,7 +406,7 @@
             'Open a terminal to your MikroTik router and run the commands below.',
             serverIpNote,
           ],
-          codeBlock: `/ip dns set servers=""\n/ip dns static add name=${domain} address=<server-ip> type=A\n/ip dns set use-doh-server="${url}" verify-doh-cert=yes`,
+          codeBlock: `/ip dns set servers=""\n/ip dns static add name=${domain} address=${serverIpDisplay} type=A\n/ip dns set use-doh-server="${url}" verify-doh-cert=yes`,
         })
       }
       tabs.push({ id: 'routers', label: 'Routers', sections })
@@ -517,7 +519,7 @@
                         <p class="section-subtitle">{section.subtitle}</p>
                       {/if}
                       <ol class="section-steps">
-                        {#each section.steps as step}
+                        {#each section.steps.filter(Boolean) as step}
                           <li>{@html step}</li>
                         {/each}
                       </ol>

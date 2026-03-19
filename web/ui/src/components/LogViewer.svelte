@@ -25,7 +25,7 @@
 
   function formatDuration(entry) {
     const f = entry.fields
-    if (f && f.duration_ms != null) return `${f.duration_ms * 1000}µs`
+    if (f && f.duration_ms != null) return `${f.duration_ms}ms`
     return ''
   }
 
