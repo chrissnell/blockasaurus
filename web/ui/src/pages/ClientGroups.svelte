@@ -591,8 +591,9 @@
 
   .detail-header {
     display: flex;
-    align-items: center;
-    gap: 1rem;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.25rem;
     margin-bottom: var(--space-6);
   }
 
