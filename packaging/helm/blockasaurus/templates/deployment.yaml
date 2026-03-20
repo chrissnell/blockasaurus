@@ -52,6 +52,11 @@ spec:
             - name: http
               containerPort: {{ .Values.service.http.port }}
               protocol: TCP
+            {{- if .Values.service.splitUIPort.enabled }}
+            - name: split-ui
+              containerPort: {{ .Values.service.splitUIPort.port }}
+              protocol: TCP
+            {{- end }}
             {{- if .Values.tls.enabled }}
             - name: https
               containerPort: {{ .Values.config.ports.https | default 443 }}

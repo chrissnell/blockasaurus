@@ -238,13 +238,14 @@ func handleDiscoveredClients(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(clients)
 }
 
-func createHTTPRouter(cfg *config.Config, openAPIImpl api.StrictServerInterface,
+// registerUIRoutes adds all admin routes: API, config, UI, static assets,
+// docs, debug, metrics, websocket logs. Does NOT add DoH endpoints.
+func registerUIRoutes(router *chi.Mux, cfg *config.Config,
+	openAPIImpl api.StrictServerInterface,
 	store *configstore.ConfigStore, reconfigurer configapi.Reconfigurer,
 	broadcaster *logstream.Broadcaster,
 	statsCollector *statscollector.Collector,
-) *chi.Mux {
-	router := chi.NewRouter()
-
+) {
 	api.RegisterOpenAPIEndpoints(router, openAPIImpl)
 
 	if store != nil {
@@ -271,18 +272,23 @@ func createHTTPRouter(cfg *config.Config, openAPIImpl api.StrictServerInterface,
 	}
 
 	configureDebugHandler(router)
-
 	configureDocsHandler(router)
-
 	configureStaticAssetsHandler(router)
-
 	configureUIHandler(router)
-
 	configureRootHandler(cfg, router)
-
 	configureRobotsHandler(router)
 
 	metrics.Start(router, cfg.Prometheus)
+}
+
+func createHTTPRouter(cfg *config.Config, openAPIImpl api.StrictServerInterface,
+	store *configstore.ConfigStore, reconfigurer configapi.Reconfigurer,
+	broadcaster *logstream.Broadcaster,
+	statsCollector *statscollector.Collector,
+) *chi.Mux {
+	router := chi.NewRouter()
+
+	registerUIRoutes(router, cfg, openAPIImpl, store, reconfigurer, broadcaster, statsCollector)
 
 	return router
 }

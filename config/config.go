@@ -298,11 +298,18 @@ type Config struct {
 }
 
 type Ports struct {
-	DNS     ListenConfig `default:"53"         yaml:"dns"`
-	HTTP    ListenConfig `yaml:"http"`
-	HTTPS   ListenConfig `yaml:"https"`
-	TLS     ListenConfig `yaml:"tls"`
-	DOHPath string       `default:"/dns-query" yaml:"dohPath"`
+	DNS        ListenConfig `default:"53"         yaml:"dns"`
+	HTTP       ListenConfig `yaml:"http"`
+	HTTPS      ListenConfig `yaml:"https"`
+	TLS        ListenConfig `yaml:"tls"`
+	DOHPath    string       `default:"/dns-query" yaml:"dohPath"`
+	SplitUIPort    ListenConfig `yaml:"splitUIPort"`
+	SplitUIPortTLS ListenConfig `yaml:"splitUIPortTLS"`
+}
+
+// SplitUIPortEnabled returns true when the UI is on separate listeners from DoH.
+func (c *Ports) SplitUIPortEnabled() bool {
+	return len(c.SplitUIPort) > 0 || len(c.SplitUIPortTLS) > 0
 }
 
 func (c *Ports) LogConfig(logger *logrus.Entry) {
@@ -310,6 +317,11 @@ func (c *Ports) LogConfig(logger *logrus.Entry) {
 	logger.Infof("TLS   = %s", c.TLS)
 	logger.Infof("HTTP  = %s", c.HTTP)
 	logger.Infof("HTTPS = %s", c.HTTPS)
+
+	if c.SplitUIPortEnabled() {
+		logger.Infof("Split UI       = %s", c.SplitUIPort)
+		logger.Infof("Split UI (TLS) = %s", c.SplitUIPortTLS)
+	}
 }
 
 // split in two types to avoid infinite recursion. See `BootstrapDNS.UnmarshalYAML`.

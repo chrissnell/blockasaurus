@@ -126,7 +126,7 @@ func newTLSConfig(cfg *config.Config) (*tls.Config, error) {
 func NewServer(ctx context.Context, cfg *config.Config, store *configstore.ConfigStore) (server *Server, err error) {
 	var tlsCfg *tls.Config
 
-	if len(cfg.Ports.HTTPS) > 0 || len(cfg.Ports.TLS) > 0 {
+	if len(cfg.Ports.HTTPS) > 0 || len(cfg.Ports.TLS) > 0 || len(cfg.Ports.SplitUIPortTLS) > 0 {
 		tlsCfg, err = newTLSConfig(cfg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create TLS configuration: %w", err)
@@ -195,22 +195,64 @@ func NewServer(ctx context.Context, cfg *config.Config, store *configstore.Confi
 		return nil, fmt.Errorf("failed to create OpenAPI interface implementation: %w", err)
 	}
 
-	httpRouter := createHTTPRouter(cfg, openAPIImpl, server.configStore, server, server.broadcaster, server.statsCollector)
-	server.registerDoHEndpoints(httpRouter, cfg)
+	if cfg.Ports.SplitUIPortEnabled() {
+		// DoH-only router for main http/https ports
+		dohRouter := chi.NewRouter()
+		server.registerDoHEndpoints(dohRouter, cfg)
 
-	if len(cfg.Ports.HTTP) != 0 {
-		srv := newHTTPServer("http", httpRouter)
+		// UI-only router for split UI ports
+		uiRouter := chi.NewRouter()
+		registerUIRoutes(uiRouter, cfg, openAPIImpl, server.configStore, server, server.broadcaster, server.statsCollector)
 
-		for _, l := range httpListeners {
-			server.servers[l] = srv
+		// Create split UI listeners
+		splitUIHTTP, splitUIHTTPS, err := createSplitUIListeners(ctx, cfg, tlsCfg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create split UI listeners: %w", err)
 		}
-	}
 
-	if len(cfg.Ports.HTTPS) != 0 {
-		srv := newHTTPServer("https", httpRouter)
+		if len(cfg.Ports.HTTP) != 0 {
+			srv := newHTTPServer("http-doh", dohRouter)
+			for _, l := range httpListeners {
+				server.servers[l] = srv
+			}
+		}
 
-		for _, l := range httpsListeners {
-			server.servers[l] = srv
+		if len(cfg.Ports.HTTPS) != 0 {
+			srv := newHTTPServer("https-doh", dohRouter)
+			for _, l := range httpsListeners {
+				server.servers[l] = srv
+			}
+		}
+
+		if len(cfg.Ports.SplitUIPort) != 0 {
+			srv := newHTTPServer("http-split-ui", uiRouter)
+			for _, l := range splitUIHTTP {
+				server.servers[l] = srv
+			}
+		}
+
+		if len(cfg.Ports.SplitUIPortTLS) != 0 {
+			srv := newHTTPServer("https-split-ui", uiRouter)
+			for _, l := range splitUIHTTPS {
+				server.servers[l] = srv
+			}
+		}
+	} else {
+		httpRouter := createHTTPRouter(cfg, openAPIImpl, server.configStore, server, server.broadcaster, server.statsCollector)
+		server.registerDoHEndpoints(httpRouter, cfg)
+
+		if len(cfg.Ports.HTTP) != 0 {
+			srv := newHTTPServer("http", httpRouter)
+			for _, l := range httpListeners {
+				server.servers[l] = srv
+			}
+		}
+
+		if len(cfg.Ports.HTTPS) != 0 {
+			srv := newHTTPServer("https", httpRouter)
+			for _, l := range httpsListeners {
+				server.servers[l] = srv
+			}
 		}
 	}
 
@@ -260,6 +302,22 @@ func createHTTPListeners(
 	httpsListeners, err = newTLSListeners(ctx, "https", cfg.Ports.HTTPS, tlsCfg)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create HTTPS listeners: %w", err)
+	}
+
+	return httpListeners, httpsListeners, nil
+}
+
+func createSplitUIListeners(
+	ctx context.Context, cfg *config.Config, tlsCfg *tls.Config,
+) (httpListeners, httpsListeners []net.Listener, err error) {
+	httpListeners, err = newTCPListeners(ctx, "http-split-ui", cfg.Ports.SplitUIPort)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create split UI HTTP listeners: %w", err)
+	}
+
+	httpsListeners, err = newTLSListeners(ctx, "https-split-ui", cfg.Ports.SplitUIPortTLS, tlsCfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create split UI HTTPS listeners: %w", err)
 	}
 
 	return httpListeners, httpsListeners, nil

@@ -465,6 +465,31 @@ bootstrapDns:
 				Expect(*l).Should(ContainElements(":55", ":56"))
 			})
 		})
+
+		Context("Ports.SplitUIPortEnabled", func() {
+			It("should return false when both SplitUIPort and SplitUIPortTLS are empty", func() {
+				p := &Ports{}
+				Expect(p.SplitUIPortEnabled()).Should(BeFalse())
+			})
+
+			It("should return true when SplitUIPort is set", func() {
+				p := &Ports{SplitUIPort: ListenConfig{":8080"}}
+				Expect(p.SplitUIPortEnabled()).Should(BeTrue())
+			})
+
+			It("should return true when SplitUIPortTLS is set", func() {
+				p := &Ports{SplitUIPortTLS: ListenConfig{":8443"}}
+				Expect(p.SplitUIPortEnabled()).Should(BeTrue())
+			})
+
+			It("should return true when both are set", func() {
+				p := &Ports{
+					SplitUIPort:    ListenConfig{":8080"},
+					SplitUIPortTLS: ListenConfig{":8443"},
+				}
+				Expect(p.SplitUIPortEnabled()).Should(BeTrue())
+			})
+		})
 	})
 
 	DescribeTable("Upstream parsing",

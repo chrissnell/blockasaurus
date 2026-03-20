@@ -96,6 +96,34 @@ config:
 #       dot: true
 #       http: true
 #       https: true
+#   For external-facing DoH with a private admin UI, see Scenario 4 below.
+#
+# Scenario 4: External DoH with internal-only UI (Split UI)
+#   DoH exposed on the LB; admin UI restricted to a separate ClusterIP.
+#   Use this when DoH is internet-facing and the web UI should not be.
+#
+#   config:
+#     ports:
+#       dns: 53
+#       http: 80          # DoH only (internet-facing)
+#       https: 443        # DoH only (internet-facing)
+#       splitUIPort: 8080     # Web UI, API, metrics (internal)
+#       tls: 853
+#     certFile: /certs/tls.crt
+#     keyFile: /certs/tls.key
+#   service:
+#     dns:
+#       externalTrafficPolicy: Local
+#       dot: true
+#       http: true        # DoH on the LoadBalancer (no UI)
+#       https: true       # DoH on the LoadBalancer (no UI)
+#     splitUIPort:
+#       enabled: true     # UI on a separate ClusterIP
+#       type: ClusterIP
+#       port: 8080
+#
+#   Note: When splitUIPort is active, prometheus.io/port should be set to the
+#   split UI port (e.g., "8080") since /metrics moves there.
 
 # cert-manager Certificate resource — creates a TLS cert automatically.
 # Requires cert-manager to be installed in the cluster.
@@ -154,6 +182,16 @@ service:
     enabled: true
     type: ClusterIP
     port: 80
+
+  # Split UI service — serves the web UI, API, and metrics on a separate port
+  # from the DoH query endpoint. Use for external-facing deployments where DoH
+  # is internet-exposed but the admin UI should remain internal.
+  # Requires config.ports.splitUIPort (or splitUIPortTLS) to be set.
+  # See Scenario 4 above and docs/client_group_endpoints.md for details.
+  splitUIPort:
+    enabled: false
+    type: ClusterIP
+    port: 8080
 
 # Ingress — not needed when using service.dns.http/https on the LB.
 # Useful if you don't have a LoadBalancer (e.g., bare metal without MetalLB).
