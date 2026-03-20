@@ -206,6 +206,18 @@ ingress:
           pathType: Prefix
   tls: []
 
+  # Split UI ingress — exposes the admin UI via a separate ingress.
+  # Useful for LAN access to the web UI when DoH is on a LoadBalancer.
+  splitUI:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts:
+      - host: blockasaurus.local
+        paths:
+          - path: /
+            pathType: Prefix
+
 serviceAccount:
   create: true
   annotations: {}
