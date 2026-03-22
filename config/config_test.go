@@ -466,28 +466,28 @@ bootstrapDns:
 			})
 		})
 
-		Context("Ports.SplitUIPortEnabled", func() {
-			It("should return false when both SplitUIPort and SplitUIPortTLS are empty", func() {
+		Context("Ports.AdminPortEnabled", func() {
+			It("should return false when both AdminPort and AdminPortTLS are empty", func() {
 				p := &Ports{}
-				Expect(p.SplitUIPortEnabled()).Should(BeFalse())
+				Expect(p.AdminPortEnabled()).Should(BeFalse())
 			})
 
-			It("should return true when SplitUIPort is set", func() {
-				p := &Ports{SplitUIPort: ListenConfig{":8080"}}
-				Expect(p.SplitUIPortEnabled()).Should(BeTrue())
+			It("should return true when AdminPort is set", func() {
+				p := &Ports{AdminPort: ListenConfig{":8080"}}
+				Expect(p.AdminPortEnabled()).Should(BeTrue())
 			})
 
-			It("should return true when SplitUIPortTLS is set", func() {
-				p := &Ports{SplitUIPortTLS: ListenConfig{":8443"}}
-				Expect(p.SplitUIPortEnabled()).Should(BeTrue())
+			It("should return true when AdminPortTLS is set", func() {
+				p := &Ports{AdminPortTLS: ListenConfig{":8443"}}
+				Expect(p.AdminPortEnabled()).Should(BeTrue())
 			})
 
 			It("should return true when both are set", func() {
 				p := &Ports{
-					SplitUIPort:    ListenConfig{":8080"},
-					SplitUIPortTLS: ListenConfig{":8443"},
+					AdminPort:    ListenConfig{":8080"},
+					AdminPortTLS: ListenConfig{":8443"},
 				}
-				Expect(p.SplitUIPortEnabled()).Should(BeTrue())
+				Expect(p.AdminPortEnabled()).Should(BeTrue())
 			})
 		})
 	})

@@ -303,13 +303,13 @@ type Ports struct {
 	HTTPS      ListenConfig `yaml:"https"`
 	TLS        ListenConfig `yaml:"tls"`
 	DOHPath    string       `default:"/dns-query" yaml:"dohPath"`
-	SplitUIPort    ListenConfig `yaml:"splitUIPort"`
-	SplitUIPortTLS ListenConfig `yaml:"splitUIPortTLS"`
+	AdminPort    ListenConfig `yaml:"adminPort"`
+	AdminPortTLS ListenConfig `yaml:"adminPortTLS"`
 }
 
-// SplitUIPortEnabled returns true when the UI is on separate listeners from DoH.
-func (c *Ports) SplitUIPortEnabled() bool {
-	return len(c.SplitUIPort) > 0 || len(c.SplitUIPortTLS) > 0
+// AdminPortEnabled returns true when the admin UI is on separate listeners from DoH.
+func (c *Ports) AdminPortEnabled() bool {
+	return len(c.AdminPort) > 0 || len(c.AdminPortTLS) > 0
 }
 
 func (c *Ports) LogConfig(logger *logrus.Entry) {
@@ -318,9 +318,9 @@ func (c *Ports) LogConfig(logger *logrus.Entry) {
 	logger.Infof("HTTP  = %s", c.HTTP)
 	logger.Infof("HTTPS = %s", c.HTTPS)
 
-	if c.SplitUIPortEnabled() {
-		logger.Infof("Split UI       = %s", c.SplitUIPort)
-		logger.Infof("Split UI (TLS) = %s", c.SplitUIPortTLS)
+	if c.AdminPortEnabled() {
+		logger.Infof("Admin       = %s", c.AdminPort)
+		logger.Infof("Admin (TLS) = %s", c.AdminPortTLS)
 	}
 }
 

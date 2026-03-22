@@ -809,27 +809,27 @@ var _ = Describe("Running DNS server", func() {
 		})
 	})
 
-	Describe("Split UI mode", func() {
-		const splitUIBasePort = 9000
+	Describe("Admin port mode", func() {
+		const adminBasePort = 9000
 
 		var (
-			splitServer  *Server
-			splitErrChan chan error
+			adminServer  *Server
+			adminErrChan chan error
 			mainBaseURL  string
-			splitBaseURL string
-			splitQueryURL string
+			adminBaseURL string
+			dnsQueryURL  string
 		)
 
 		BeforeEach(func() {
 			mainPort := GetHostPort("", httpBasePort+100) // offset to avoid conflict with BeforeSuite server
-			splitPort := GetHostPort("", splitUIBasePort)
+			adminPort := GetHostPort("", adminBasePort)
 			dnsPort := GetHostPort("127.0.0.1", dnsBasePort+100)
 
 			mainBaseURL = fmt.Sprintf("http://%s/", GetHostPort("localhost", httpBasePort+100))
-			splitBaseURL = fmt.Sprintf("http://%s/", GetHostPort("localhost", splitUIBasePort))
-			splitQueryURL = mainBaseURL + "dns-query"
+			adminBaseURL = fmt.Sprintf("http://%s/", GetHostPort("localhost", adminBasePort))
+			dnsQueryURL = mainBaseURL + "dns-query"
 
-			splitServer, err = NewServer(ctx, &config.Config{
+			adminServer, err = NewServer(ctx, &config.Config{
 				Upstreams: config.Upstreams{
 					Groups: map[string][]config.Upstream{
 						"default": {config.Upstream{Net: config.NetProtocolTcpUdp, Host: "8.8.8.8", Port: 53}},
@@ -842,10 +842,10 @@ var _ = Describe("Running DNS server", func() {
 				},
 				Blocking: config.Blocking{BlockType: "zeroIp"},
 				Ports: config.Ports{
-					DNS:     config.ListenConfig{dnsPort},
-					HTTP:    config.ListenConfig{mainPort},
-					SplitUIPort: config.ListenConfig{splitPort},
-					DOHPath: "/dns-query",
+					DNS:       config.ListenConfig{dnsPort},
+					HTTP:      config.ListenConfig{mainPort},
+					AdminPort: config.ListenConfig{adminPort},
+					DOHPath:   "/dns-query",
 				},
 				Prometheus: config.Metrics{
 					Enable: true,
@@ -854,51 +854,50 @@ var _ = Describe("Running DNS server", func() {
 			}, nil)
 			Expect(err).Should(Succeed())
 
-			splitErrChan = make(chan error, 10)
-			go splitServer.Start(ctx, splitErrChan)
-			DeferCleanup(func() { Expect(splitServer.Stop(ctx)).Should(Succeed()) })
+			adminErrChan = make(chan error, 10)
+			go adminServer.Start(ctx, adminErrChan)
+			DeferCleanup(func() { Expect(adminServer.Stop(ctx)).Should(Succeed()) })
 
-			Consistently(splitErrChan, "1s").ShouldNot(Receive())
+			Consistently(adminErrChan, "1s").ShouldNot(Receive())
 		})
 
-		It("should serve DoH on the main port", func() {
-			// DoH GET with a valid DNS query for custom.lan
-			resp, err := http.Get(splitQueryURL + "?dns=AAABAAABAAAAAAAAA3d3dwdleGFtcGxlA2NvbQAAAQAB")
+		It("should serve DoH on the DNS server port", func() {
+			resp, err := http.Get(dnsQueryURL + "?dns=AAABAAABAAAAAAAAA3d3dwdleGFtcGxlA2NvbQAAAQAB")
 			Expect(err).Should(Succeed())
 			DeferCleanup(resp.Body.Close)
 			Expect(resp).Should(HaveHTTPStatus(http.StatusOK))
 		})
 
-		It("should NOT serve /api/version on the main port", func() {
+		It("should NOT serve /api/version on the DNS server port", func() {
 			resp, err := http.Get(mainBaseURL + "api/version")
 			Expect(err).Should(Succeed())
 			DeferCleanup(resp.Body.Close)
 			Expect(resp).Should(HaveHTTPStatus(http.StatusNotFound))
 		})
 
-		It("should NOT serve /metrics on the main port", func() {
+		It("should NOT serve /metrics on the DNS server port", func() {
 			resp, err := http.Get(mainBaseURL + "metrics")
 			Expect(err).Should(Succeed())
 			DeferCleanup(resp.Body.Close)
 			Expect(resp).Should(HaveHTTPStatus(http.StatusNotFound))
 		})
 
-		It("should serve /api/version on the split UI port", func() {
-			resp, err := http.Get(splitBaseURL + "api/version")
+		It("should serve /api/version on the admin port", func() {
+			resp, err := http.Get(adminBaseURL + "api/version")
 			Expect(err).Should(Succeed())
 			DeferCleanup(resp.Body.Close)
 			Expect(resp).Should(HaveHTTPStatus(http.StatusOK))
 		})
 
-		It("should serve /metrics on the split UI port", func() {
-			resp, err := http.Get(splitBaseURL + "metrics")
+		It("should serve /metrics on the admin port", func() {
+			resp, err := http.Get(adminBaseURL + "metrics")
 			Expect(err).Should(Succeed())
 			DeferCleanup(resp.Body.Close)
 			Expect(resp).Should(HaveHTTPStatus(http.StatusOK))
 		})
 
-		It("should NOT serve DoH on the split UI port", func() {
-			resp, err := http.Get(splitBaseURL + "dns-query?dns=AAABAAABAAAAAAAAA3d3dwdleGFtcGxlA2NvbQAAAQAB")
+		It("should NOT serve DoH on the admin port", func() {
+			resp, err := http.Get(adminBaseURL + "dns-query?dns=AAABAAABAAAAAAAAA3d3dwdleGFtcGxlA2NvbQAAAQAB")
 			Expect(err).Should(Succeed())
 			DeferCleanup(resp.Body.Close)
 			Expect(resp).Should(HaveHTTPStatus(http.StatusNotFound))

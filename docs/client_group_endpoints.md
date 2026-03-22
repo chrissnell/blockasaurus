@@ -52,8 +52,8 @@ clientGroupEndpoints:
 | `clientGroupEndpoints.domains` | list of strings | `[]` | Base domains for subdomain extraction |
 | `clientGroupEndpoints.cpeId` | bool | `true` | Enable EDNS CPE-ID (option 65074) extraction |
 | `clientGroupEndpoints.advertiseAddress` | string | `""` | Auto-create DNS records for configured domains. `auto`, explicit IP, or empty to disable |
-| `ports.splitUIPort` | string/int | `""` | Split UI port (HTTP). When set, `http`/`https` serve DoH only; UI/API/metrics move here |
-| `ports.splitUIPortTLS` | string/int | `""` | Split UI port (HTTPS). Same as `splitUIPort` but with TLS |
+| `ports.adminPort` | string/int | `""` | Admin port (HTTP). When set, `http`/`https` serve DoH only; UI/API/metrics move here |
+| `ports.adminPortTLS` | string/int | `""` | Admin port (HTTPS). Same as `adminPort` but with TLS |
 
 ### Auto-Advertise DNS Records
 
@@ -300,16 +300,16 @@ manual certificate trust.
 
 ---
 
-### Scenario 4: External DoH with Split UI
+### Scenario 4: External DoH with Admin Port
 
 For deployments where DoH is exposed to the internet but the admin UI
-should remain internal, use the **Split UI** feature to separate them
+should remain internal, use the **admin port** feature to separate them
 onto different ports.
 
-When `splitUIPort` (or `splitUIPortTLS`) is set in the `ports` config, the main
+When `adminPort` (or `adminPortTLS`) is set in the `ports` config, the main
 `http`/`https` ports serve **only** the `/dns-query` endpoint. Everything
 else — the web UI, REST API, Prometheus metrics, debug profiler, and
-websocket log stream — moves to the Split UI port. When omitted (the
+websocket log stream — moves to the admin port. When omitted (the
 default), all endpoints share the same port as in Scenarios 1-3.
 
 **Blockasaurus config** (under `config:` in Helm values, or standalone):
@@ -320,7 +320,7 @@ ports:
   http: 80          # DoH queries only (internet-facing)
   https: 443        # DoH queries only (internet-facing, TLS)
   tls: 853
-  splitUIPort: 8080     # Web UI, API, metrics (internal only)
+  adminPort: 8080       # Web UI, API, metrics (internal only)
 
 certFile: /certs/tls.crt
 keyFile: /certs/tls.key
@@ -336,21 +336,21 @@ service:
     externalTrafficPolicy: Local
     port: 53
     dot: true       # DoT on 853/TCP
-    http: true      # DoH on 80/TCP (no UI — split off)
-    https: true     # DoH on 443/TCP (no UI — split off)
-  splitUIPort:
+    http: true      # DoH on 80/TCP (no UI — on admin port)
+    https: true     # DoH on 443/TCP (no UI — on admin port)
+  adminPort:
     enabled: true   # Web UI on a separate internal service
     type: ClusterIP
     port: 8080
 ```
 
-The Split UI service is only reachable within the cluster (or via
+The admin service is only reachable within the cluster (or via
 `kubectl port-forward`). The DoH endpoint remains on the LoadBalancer,
 exposed to DNS clients.
 
-**What moves to the Split UI port:**
+**What moves to the admin port:**
 
-| Endpoint | Split UI port | Main http/https port |
+| Endpoint | Admin port | Main http/https port |
 |----------|:---:|:---:|
 | `/dns-query` (DoH) | — | ✓ |
 | Web UI (`/`, `/ui/`) | ✓ | — |
@@ -361,25 +361,25 @@ exposed to DNS clients.
 | OpenAPI docs (`/docs/`) | ✓ | — |
 
 !!! note "Prometheus scraping"
-    When Split UI is active, the `/metrics` endpoint moves to the Split UI
+    When the admin port is active, the `/metrics` endpoint moves to the admin
     port. Update `prometheus.io/port` in your pod annotations to match
     (e.g., `"8080"` instead of `"80"`).
 
 !!! tip "Accessing the UI"
-    With Split UI on a ClusterIP, access the web UI via:
+    With the admin port on a ClusterIP, access the web UI via:
 
-    - `kubectl port-forward svc/blockasaurus-split-ui 8080:8080`
+    - `kubectl port-forward svc/blockasaurus-admin 8080:8080`
     - Or configure an internal ingress / VPN route to the ClusterIP
 
-**Split UI with TLS on both sides:**
+**Admin port with TLS on both sides:**
 
-If you want TLS on the Split UI port as well (e.g., for internal compliance),
-use `splitUIPortTLS` instead of `splitUIPort`:
+If you want TLS on the admin port as well (e.g., for internal compliance),
+use `adminPortTLS` instead of `adminPort`:
 
 ```yaml
 ports:
   https: 443           # DoH over TLS
-  splitUIPortTLS: 8443     # UI over TLS
+  adminPortTLS: 8443       # UI over TLS
 ```
 
 Both listeners share the same TLS certificate from `certFile`/`keyFile`.

@@ -98,16 +98,16 @@ config:
 #       https: true
 #   For external-facing DoH with a private admin UI, see Scenario 4 below.
 #
-# Scenario 4: External DoH with internal-only UI (Split UI)
+# Scenario 4: Separate admin and DNS server ports
 #   DoH exposed on the LB; admin UI restricted to a separate ClusterIP.
 #   Use this when DoH is internet-facing and the web UI should not be.
 #
 #   config:
 #     ports:
 #       dns: 53
-#       http: 80          # DoH only (internet-facing)
-#       https: 443        # DoH only (internet-facing)
-#       splitUIPort: 8080     # Web UI, API, metrics (internal)
+#       http: 80          # DNS server only (internet-facing)
+#       https: 443        # DNS server only (internet-facing)
+#       adminPort: 8080   # Web UI, API, metrics (internal)
 #       tls: 853
 #     certFile: /certs/tls.crt
 #     keyFile: /certs/tls.key
@@ -117,13 +117,13 @@ config:
 #       dot: true
 #       http: true        # DoH on the LoadBalancer (no UI)
 #       https: true       # DoH on the LoadBalancer (no UI)
-#     splitUIPort:
-#       enabled: true     # UI on a separate ClusterIP
+#     adminPort:
+#       enabled: true     # Admin UI on a separate ClusterIP
 #       type: ClusterIP
 #       port: 8080
 #
-#   Note: When splitUIPort is active, prometheus.io/port should be set to the
-#   split UI port (e.g., "8080") since /metrics moves there.
+#   Note: When adminPort is active, prometheus.io/port should be set to the
+#   admin port (e.g., "8080") since /metrics moves there.
 
 # cert-manager Certificate resource — creates a TLS cert automatically.
 # Requires cert-manager to be installed in the cluster.
@@ -183,12 +183,12 @@ service:
     type: ClusterIP
     port: 80
 
-  # Split UI service — serves the web UI, API, and metrics on a separate port
-  # from the DoH query endpoint. Use for external-facing deployments where DoH
+  # Admin port service — serves the web UI, API, and metrics on a separate port
+  # from the DNS server endpoint. Use for external-facing deployments where DoH
   # is internet-exposed but the admin UI should remain internal.
-  # Requires config.ports.splitUIPort (or splitUIPortTLS) to be set.
+  # Requires config.ports.adminPort (or adminPortTLS) to be set.
   # See Scenario 4 above and docs/client_group_endpoints.md for details.
-  splitUIPort:
+  adminPort:
     enabled: false
     type: ClusterIP
     port: 8080
@@ -206,9 +206,9 @@ ingress:
           pathType: Prefix
   tls: []
 
-  # Split UI ingress — exposes the admin UI via a separate ingress.
+  # Admin ingress — exposes the admin UI via a separate ingress.
   # Useful for LAN access to the web UI when DoH is on a LoadBalancer.
-  splitUI:
+  admin:
     enabled: false
     className: ""
     annotations: {}

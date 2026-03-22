@@ -1,0 +1,17 @@
+{{- if .Values.service.adminPort.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "blockasaurus.fullname" . }}-admin
+  labels:
+    {{- include "blockasaurus.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.adminPort.type }}
+  ports:
+    - name: admin
+      port: {{ .Values.service.adminPort.port }}
+      targetPort: admin
+      protocol: TCP
+  selector:
+    {{- include "blockasaurus.selectorLabels" . | nindent 4 }}
+{{- end }}

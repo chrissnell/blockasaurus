@@ -1,20 +1,20 @@
-{{- if and .Values.service.splitUIPort.enabled .Values.ingress.splitUI.enabled }}
+{{- if and .Values.service.adminPort.enabled .Values.ingress.admin.enabled }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "blockasaurus.fullname" . }}-split-ui
+  name: {{ include "blockasaurus.fullname" . }}-admin
   labels:
     {{- include "blockasaurus.labels" . | nindent 4 }}
-  {{- with .Values.ingress.splitUI.annotations }}
+  {{- with .Values.ingress.admin.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
-  {{- if .Values.ingress.splitUI.className }}
-  ingressClassName: {{ .Values.ingress.splitUI.className }}
+  {{- if .Values.ingress.admin.className }}
+  ingressClassName: {{ .Values.ingress.admin.className }}
   {{- end }}
   rules:
-    {{- range .Values.ingress.splitUI.hosts }}
+    {{- range .Values.ingress.admin.hosts }}
     - host: {{ .host | quote }}
       http:
         paths:
@@ -23,9 +23,9 @@ spec:
             pathType: {{ .pathType }}
             backend:
               service:
-                name: {{ include "blockasaurus.fullname" $ }}-split-ui
+                name: {{ include "blockasaurus.fullname" $ }}-admin
                 port:
-                  name: split-ui
+                  name: admin
           {{- end }}
     {{- end }}
 {{- end }}

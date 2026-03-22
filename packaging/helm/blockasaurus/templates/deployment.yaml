@@ -52,9 +52,9 @@ spec:
             - name: http
               containerPort: {{ .Values.service.http.port }}
               protocol: TCP
-            {{- if .Values.service.splitUIPort.enabled }}
-            - name: split-ui
-              containerPort: {{ .Values.service.splitUIPort.port }}
+            {{- if .Values.service.adminPort.enabled }}
+            - name: admin
+              containerPort: {{ .Values.service.adminPort.port }}
               protocol: TCP
             {{- end }}
             {{- if .Values.tls.enabled }}
