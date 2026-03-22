@@ -175,6 +175,7 @@ service:
     doq: false            # Expose DoQ port 853/UDP on the LB
     http: false           # Expose HTTP (web UI) on the LB
     https: false          # Expose HTTPS (DoH + web UI) on the LB
+    admin: false          # Expose admin port on the LB (requires adminPort to be configured)
 
   # HTTP service — separate ClusterIP for internal access.
   # Not needed if service.dns.http is true (web UI on the LB).

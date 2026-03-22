@@ -50,6 +50,12 @@ spec:
       targetPort: https
       protocol: TCP
     {{- end }}
+    {{- if .Values.service.dns.admin }}
+    - name: admin
+      port: {{ .Values.service.adminPort.port | default 8080 }}
+      targetPort: admin
+      protocol: TCP
+    {{- end }}
   selector:
     {{- include "blockasaurus.selectorLabels" . | nindent 4 }}
 {{- end }}
