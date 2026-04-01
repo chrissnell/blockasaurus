@@ -145,7 +145,13 @@ func (c *Collector) advanceBuckets() {
 }
 
 // OverTime returns all 144 buckets in chronological order (oldest first).
+// It advances the ring buffer first so stale buckets are cleared even when
+// no new queries have been recorded.
 func (c *Collector) OverTime() []TimeBucket {
+	c.mu.Lock()
+	c.advanceBuckets()
+	c.mu.Unlock()
+
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 

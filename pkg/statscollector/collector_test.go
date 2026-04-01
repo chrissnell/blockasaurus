@@ -292,6 +292,46 @@ func TestTopNLargerThanData(t *testing.T) {
 	}
 }
 
+func TestOverTimeClearsStaleWithoutNewQueries(t *testing.T) {
+	baseTime := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := baseTime
+
+	c := New(WithClock(func() time.Time { return now }))
+
+	// Record some traffic
+	c.Record(QueryRecord{Client: "c1", Domain: "a.com", QueryType: "A", ResponseType: "RESOLVED"})
+	c.Record(QueryRecord{Client: "c1", Domain: "b.com", QueryType: "A", ResponseType: "BLOCKED"})
+
+	// Verify data is present
+	buckets := c.OverTime()
+	nonZero := 0
+	for _, b := range buckets {
+		if b.Total > 0 {
+			nonZero++
+		}
+	}
+
+	if nonZero != 1 {
+		t.Fatalf("before gap: non-zero buckets = %d, want 1", nonZero)
+	}
+
+	// Jump forward a week with NO new queries — simulates idle server
+	now = baseTime.Add(7 * 24 * time.Hour)
+
+	// OverTime should return all-zero buckets (stale data cleared)
+	buckets = c.OverTime()
+	nonZero = 0
+	for _, b := range buckets {
+		if b.Total > 0 {
+			nonZero++
+		}
+	}
+
+	if nonZero != 0 {
+		t.Errorf("after 1-week gap with no queries: non-zero buckets = %d, want 0", nonZero)
+	}
+}
+
 func TestClientCountsInBuckets(t *testing.T) {
 	c := New()
 
