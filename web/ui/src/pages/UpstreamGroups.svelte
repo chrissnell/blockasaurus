@@ -347,7 +347,6 @@
   }
   .settings-section {
     margin-top: var(--space-6);
-    max-width: 600px;
   }
   .loading-state {
     opacity: 0.5;
