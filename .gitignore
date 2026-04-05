@@ -19,3 +19,4 @@ blocky
 .context/
 .claude/
 scratch/
+.vscode/settings.json
