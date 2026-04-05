@@ -167,6 +167,30 @@
     }
   }
 
+  async function moveServer(groupName, index, direction) {
+    const list = serversByGroup[groupName] ?? []
+    const target = index + direction
+    if (target < 0 || target >= list.length) return
+    const a = list[index]
+    const b = list[target]
+    try {
+      await upstreamGroups.updateServer(groupName, a.id, {
+        url: a.url,
+        enabled: a.enabled,
+        position: b.position,
+      })
+      await upstreamGroups.updateServer(groupName, b.id, {
+        url: b.url,
+        enabled: b.enabled,
+        position: a.position,
+      })
+      markDirty()
+      await loadGroups()
+    } catch (e) {
+      toast(e.message, 'danger')
+    }
+  }
+
   loadGroups()
   loadSettings()
 </script>
@@ -189,7 +213,7 @@
   {:else}
     {#each groups as g (g.id)}
       <Box title={g.name}>
-        {#snippet actions()}
+        <div class="group-toolbar">
           <Button size="sm" onclick={() => openNewServer(g.name)}>Add Server</Button>
           <Button
             size="sm"
@@ -199,7 +223,7 @@
           >
             Delete Group
           </Button>
-        {/snippet}
+        </div>
         {#if (serversByGroup[g.name]?.length ?? 0) === 0}
           <EmptyState>
             <p>no servers in this group</p>
@@ -210,16 +234,35 @@
             <thead>
               <tr>
                 <th>URL</th>
-                <th>Position</th>
+                <th>Order</th>
                 <th>Status</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              {#each serversByGroup[g.name] as srv (srv.id)}
+              {#each serversByGroup[g.name] as srv, i (srv.id)}
                 <tr>
                   <td><code>{srv.url}</code></td>
-                  <td>{srv.position}</td>
+                  <td>
+                    <div class="pos-controls">
+                      <Button
+                        size="sm"
+                        disabled={i === 0}
+                        onclick={() => moveServer(g.name, i, -1)}
+                        aria-label="Move up"
+                      >
+                        ↑
+                      </Button>
+                      <Button
+                        size="sm"
+                        disabled={i === (serversByGroup[g.name]?.length ?? 0) - 1}
+                        onclick={() => moveServer(g.name, i, 1)}
+                        aria-label="Move down"
+                      >
+                        ↓
+                      </Button>
+                    </div>
+                  </td>
                   <td>{srv.enabled ? '✓' : '—'}</td>
                   <td class="row-actions">
                     <Button size="sm" onclick={() => openEditServer(g.name, srv)}>Edit</Button>
@@ -254,6 +297,12 @@
               { value: 'random', label: 'Random (pick one)' },
             ]}
           />
+          <p class="field-help">
+            How queries are sent to the upstream servers in a group. <strong>Parallel Best</strong>
+            queries every server at once and uses whichever answers first — fastest but chattiest.
+            <strong>Strict</strong> tries servers in order, only moving on if one fails. <strong>Random</strong>
+            picks a single server per query to spread load.
+          </p>
         </div>
         <div class="form-field">
           <Label for="timeout">Timeout</Label>
@@ -270,6 +319,12 @@
               { value: 'fast', label: 'Fast (no probe)' },
             ]}
           />
+          <p class="field-help">
+            What happens when the resolver starts up or a config is applied. <strong>Blocking</strong>
+            probes each upstream and waits for results, logging a warning if any fail but still
+            starting. <strong>Fail on error</strong> refuses to apply the config if any probe fails —
+            safest for production. <strong>Fast</strong> skips probes entirely and starts immediately.
+          </p>
         </div>
         <div class="form-field">
           <Label for="user-agent">DoH User-Agent</Label>
@@ -295,7 +350,9 @@
   </Modal.Body>
   <Modal.Footer>
     <Button onclick={() => (createOpen = false)}>Cancel</Button>
-    <Button variant="primary" onclick={createGroup}>Create</Button>
+    <Button variant="primary" onclick={createGroup} disabled={!createName.trim()}>
+      Create
+    </Button>
   </Modal.Footer>
 </Modal>
 
@@ -344,6 +401,22 @@
     display: flex;
     gap: var(--space-2);
     justify-content: flex-end;
+  }
+  .group-toolbar {
+    display: flex;
+    gap: var(--space-2);
+    justify-content: flex-end;
+    margin-bottom: var(--space-3);
+  }
+  .pos-controls {
+    display: flex;
+    gap: var(--space-1);
+  }
+  .field-help {
+    margin-top: var(--space-2);
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+    line-height: 1.4;
   }
   .settings-section {
     margin-top: var(--space-6);
