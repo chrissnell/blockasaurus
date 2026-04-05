@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/0xERR0R/blocky/config"
 	"github.com/0xERR0R/blocky/configstore"
 	"github.com/go-chi/chi/v5"
 	"gorm.io/gorm"
@@ -438,6 +439,190 @@ func (h *ConfigHandler) PutBlockSettings(_ context.Context, req PutBlockSettings
 	return PutBlockSettings200JSONResponse(blockSettingsToAPI(*bs)), nil
 }
 
+// --- Upstream Groups ---
+
+func (h *ConfigHandler) ListUpstreamGroups(_ context.Context, _ ListUpstreamGroupsRequestObject) (ListUpstreamGroupsResponseObject, error) {
+	groups, err := h.store.ListUpstreamGroups()
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(ListUpstreamGroups200JSONResponse, len(groups))
+	for i, g := range groups {
+		result[i] = upstreamGroupToAPI(g)
+	}
+
+	return result, nil
+}
+
+func (h *ConfigHandler) GetUpstreamGroup(_ context.Context, req GetUpstreamGroupRequestObject) (GetUpstreamGroupResponseObject, error) {
+	g, err := h.store.GetUpstreamGroup(req.Name)
+	if err != nil {
+		if isNotFound(err) {
+			return GetUpstreamGroup404JSONResponse{NotFoundJSONResponse{Message: "upstream group not found"}}, nil
+		}
+
+		return nil, err
+	}
+
+	return GetUpstreamGroup200JSONResponse(upstreamGroupToAPI(*g)), nil
+}
+
+func (h *ConfigHandler) PutUpstreamGroup(_ context.Context, req PutUpstreamGroupRequestObject) (PutUpstreamGroupResponseObject, error) {
+	if strings.TrimSpace(req.Name) == "" {
+		return PutUpstreamGroup400JSONResponse{BadRequestJSONResponse{Message: "upstream group name is required"}}, nil
+	}
+
+	g := &configstore.UpstreamGroup{Name: req.Name}
+
+	if err := h.store.PutUpstreamGroup(g); err != nil {
+		return PutUpstreamGroup400JSONResponse{BadRequestJSONResponse{Message: err.Error()}}, nil
+	}
+
+	return PutUpstreamGroup200JSONResponse(upstreamGroupToAPI(*g)), nil
+}
+
+func (h *ConfigHandler) DeleteUpstreamGroup(_ context.Context, req DeleteUpstreamGroupRequestObject) (DeleteUpstreamGroupResponseObject, error) {
+	if err := h.store.DeleteUpstreamGroup(req.Name); err != nil {
+		if isNotFound(err) {
+			return DeleteUpstreamGroup404JSONResponse{NotFoundJSONResponse{Message: "upstream group not found"}}, nil
+		}
+
+		return DeleteUpstreamGroup400JSONResponse{BadRequestJSONResponse{Message: err.Error()}}, nil
+	}
+
+	return DeleteUpstreamGroup204Response{}, nil
+}
+
+func (h *ConfigHandler) ListUpstreamServers(_ context.Context, req ListUpstreamServersRequestObject) (ListUpstreamServersResponseObject, error) {
+	servers, err := h.store.ListUpstreamServers(req.Name)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(ListUpstreamServers200JSONResponse, len(servers))
+	for i, s := range servers {
+		result[i] = upstreamServerToAPI(s)
+	}
+
+	return result, nil
+}
+
+func (h *ConfigHandler) CreateUpstreamServer(_ context.Context, req CreateUpstreamServerRequestObject) (CreateUpstreamServerResponseObject, error) {
+	if err := validateUpstreamServer(req.Body); err != nil {
+		return CreateUpstreamServer400JSONResponse{BadRequestJSONResponse{Message: err.Error()}}, nil
+	}
+
+	if _, err := h.store.GetUpstreamGroup(req.Name); err != nil {
+		if isNotFound(err) {
+			return CreateUpstreamServer404JSONResponse{NotFoundJSONResponse{Message: "upstream group not found"}}, nil
+		}
+
+		return nil, err
+	}
+
+	pos := 0
+	if req.Body.Position != nil {
+		pos = *req.Body.Position
+	}
+
+	srv := &configstore.UpstreamServer{
+		GroupName: req.Name,
+		URL:       req.Body.Url,
+		Position:  pos,
+		Enabled:   configstore.BoolPtr(req.Body.Enabled),
+	}
+
+	if err := h.store.CreateUpstreamServer(srv); err != nil {
+		return CreateUpstreamServer400JSONResponse{BadRequestJSONResponse{Message: err.Error()}}, nil
+	}
+
+	return CreateUpstreamServer201JSONResponse(upstreamServerToAPI(*srv)), nil
+}
+
+func (h *ConfigHandler) UpdateUpstreamServer(_ context.Context, req UpdateUpstreamServerRequestObject) (UpdateUpstreamServerResponseObject, error) {
+	existing, err := h.store.GetUpstreamServer(uint(req.Id))
+	if err != nil {
+		if isNotFound(err) {
+			return UpdateUpstreamServer404JSONResponse{NotFoundJSONResponse{Message: "upstream server not found"}}, nil
+		}
+
+		return nil, err
+	}
+
+	if existing.GroupName != req.Name {
+		return UpdateUpstreamServer404JSONResponse{NotFoundJSONResponse{Message: "upstream server not in this group"}}, nil
+	}
+
+	if err := validateUpstreamServer(req.Body); err != nil {
+		return UpdateUpstreamServer400JSONResponse{BadRequestJSONResponse{Message: err.Error()}}, nil
+	}
+
+	existing.URL = req.Body.Url
+	existing.Enabled = configstore.BoolPtr(req.Body.Enabled)
+
+	if req.Body.Position != nil {
+		existing.Position = *req.Body.Position
+	}
+
+	if err := h.store.UpdateUpstreamServer(existing); err != nil {
+		return nil, err
+	}
+
+	return UpdateUpstreamServer200JSONResponse(upstreamServerToAPI(*existing)), nil
+}
+
+func (h *ConfigHandler) DeleteUpstreamServer(_ context.Context, req DeleteUpstreamServerRequestObject) (DeleteUpstreamServerResponseObject, error) {
+	existing, err := h.store.GetUpstreamServer(uint(req.Id))
+	if err != nil {
+		if isNotFound(err) {
+			return DeleteUpstreamServer404JSONResponse{NotFoundJSONResponse{Message: "upstream server not found"}}, nil
+		}
+
+		return nil, err
+	}
+
+	if existing.GroupName != req.Name {
+		return DeleteUpstreamServer404JSONResponse{NotFoundJSONResponse{Message: "upstream server not in this group"}}, nil
+	}
+
+	if err := h.store.DeleteUpstreamServer(uint(req.Id)); err != nil {
+		return DeleteUpstreamServer400JSONResponse{BadRequestJSONResponse{Message: err.Error()}}, nil
+	}
+
+	return DeleteUpstreamServer204Response{}, nil
+}
+
+// --- Upstream Settings ---
+
+func (h *ConfigHandler) GetUpstreamSettings(_ context.Context, _ GetUpstreamSettingsRequestObject) (GetUpstreamSettingsResponseObject, error) {
+	us, err := h.store.GetUpstreamSettings()
+	if err != nil {
+		return nil, err
+	}
+
+	return GetUpstreamSettings200JSONResponse(upstreamSettingsToAPI(*us)), nil
+}
+
+func (h *ConfigHandler) PutUpstreamSettings(_ context.Context, req PutUpstreamSettingsRequestObject) (PutUpstreamSettingsResponseObject, error) {
+	if req.Body == nil {
+		return PutUpstreamSettings400JSONResponse{BadRequestJSONResponse{Message: "request body is required"}}, nil
+	}
+
+	us := &configstore.UpstreamSettings{
+		Strategy:     string(req.Body.Strategy),
+		Timeout:      req.Body.Timeout,
+		UserAgent:    req.Body.UserAgent,
+		InitStrategy: string(req.Body.InitStrategy),
+	}
+
+	if err := h.store.PutUpstreamSettings(us); err != nil {
+		return PutUpstreamSettings400JSONResponse{BadRequestJSONResponse{Message: err.Error()}}, nil
+	}
+
+	return PutUpstreamSettings200JSONResponse(upstreamSettingsToAPI(*us)), nil
+}
+
 // --- Apply ---
 
 func (h *ConfigHandler) ApplyConfig(ctx context.Context, _ ApplyConfigRequestObject) (ApplyConfigResponseObject, error) {
@@ -510,6 +695,49 @@ func domainEntryToAPI(e configstore.DomainEntry) DomainEntry {
 		Enabled:   e.IsEnabled(),
 		GroupName: e.GroupName,
 	}
+}
+
+func upstreamGroupToAPI(g configstore.UpstreamGroup) UpstreamGroup {
+	return UpstreamGroup{
+		Id:   int(g.ID),
+		Name: g.Name,
+		Slug: g.Slug,
+	}
+}
+
+func upstreamServerToAPI(s configstore.UpstreamServer) UpstreamServer {
+	return UpstreamServer{
+		Id:        int(s.ID),
+		GroupName: s.GroupName,
+		Url:       s.URL,
+		Position:  s.Position,
+		Enabled:   s.IsEnabled(),
+	}
+}
+
+func upstreamSettingsToAPI(us configstore.UpstreamSettings) UpstreamSettings {
+	return UpstreamSettings{
+		Strategy:     UpstreamSettingsStrategy(us.Strategy),
+		Timeout:      us.Timeout,
+		UserAgent:    us.UserAgent,
+		InitStrategy: UpstreamSettingsInitStrategy(us.InitStrategy),
+	}
+}
+
+func validateUpstreamServer(input *UpstreamServerInput) error {
+	if input == nil {
+		return fmt.Errorf("request body is required")
+	}
+
+	if strings.TrimSpace(input.Url) == "" {
+		return fmt.Errorf("url is required")
+	}
+
+	if _, err := config.ParseUpstream(input.Url); err != nil {
+		return fmt.Errorf("invalid upstream %q: %w", input.Url, err)
+	}
+
+	return nil
 }
 
 func blockSettingsToAPI(bs configstore.BlockSettings) BlockSettings {

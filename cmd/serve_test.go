@@ -32,10 +32,7 @@ var _ = Describe("Serve command", func() {
 		It("should start without error and terminate with signal", func() {
 			By("initialize config", func() {
 				cfgFile := tmpDir.CreateStringFile("config.yaml",
-					"upstreams:",
-					"  groups:",
-					"    default:",
-					"      - 1.1.1.1",
+					"databasePath: "+tmpDir.Path+"/blocky.db",
 					"ports:",
 					"  dns: "+port)
 
@@ -79,10 +76,7 @@ var _ = Describe("Serve command", func() {
 			})
 			By("initialize config with blocked port "+port, func() {
 				cfgFile := tmpDir.CreateStringFile("config.yaml",
-					"upstreams:",
-					"  groups:",
-					"    default:",
-					"      - 1.1.1.1",
+					"databasePath: "+tmpDir.Path+"/blocky.db",
 					"ports:",
 					"  dns: "+port)
 

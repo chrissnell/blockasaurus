@@ -89,7 +89,15 @@ func startServer(_ *cobra.Command, _ []string) error {
 			return fmt.Errorf("build custom DNS config from DB: %w", err)
 		}
 
+		cfg.Upstreams, err = store.BuildUpstreamsConfig(cfg.Upstreams)
+		if err != nil {
+			return fmt.Errorf("build upstreams config from DB: %w", err)
+		}
+
 		log.Log().Info("Using database-backed configuration from ", cfg.DatabasePath)
+	} else {
+		return fmt.Errorf("databasePath is required: upstream configuration now lives in SQLite, " +
+			"set databasePath in your YAML config (see docs/migration-upstreams.md)")
 	}
 
 	// Auto-advertise DNS records for client group endpoint domains

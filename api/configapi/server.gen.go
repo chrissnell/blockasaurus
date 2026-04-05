@@ -82,6 +82,36 @@ type ServerInterface interface {
 	// Update a domain entry
 	// (PUT /domain-entries/{id})
 	UpdateDomainEntry(w http.ResponseWriter, r *http.Request, id ResourceID)
+	// List all upstream groups
+	// (GET /upstream-groups)
+	ListUpstreamGroups(w http.ResponseWriter, r *http.Request)
+	// Delete an upstream group (default group cannot be deleted)
+	// (DELETE /upstream-groups/{name})
+	DeleteUpstreamGroup(w http.ResponseWriter, r *http.Request, name UpstreamGroupName)
+	// Get an upstream group by name
+	// (GET /upstream-groups/{name})
+	GetUpstreamGroup(w http.ResponseWriter, r *http.Request, name UpstreamGroupName)
+	// Create or update an upstream group
+	// (PUT /upstream-groups/{name})
+	PutUpstreamGroup(w http.ResponseWriter, r *http.Request, name UpstreamGroupName)
+	// List servers in an upstream group
+	// (GET /upstream-groups/{name}/servers)
+	ListUpstreamServers(w http.ResponseWriter, r *http.Request, name UpstreamGroupName)
+	// Add a server to an upstream group
+	// (POST /upstream-groups/{name}/servers)
+	CreateUpstreamServer(w http.ResponseWriter, r *http.Request, name UpstreamGroupName)
+	// Delete an upstream server
+	// (DELETE /upstream-groups/{name}/servers/{id})
+	DeleteUpstreamServer(w http.ResponseWriter, r *http.Request, name UpstreamGroupName, id ResourceID)
+	// Update an upstream server
+	// (PUT /upstream-groups/{name}/servers/{id})
+	UpdateUpstreamServer(w http.ResponseWriter, r *http.Request, name UpstreamGroupName, id ResourceID)
+	// Get global upstream settings
+	// (GET /upstream-settings)
+	GetUpstreamSettings(w http.ResponseWriter, r *http.Request)
+	// Update global upstream settings
+	// (PUT /upstream-settings)
+	PutUpstreamSettings(w http.ResponseWriter, r *http.Request)
 }
 
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
@@ -217,6 +247,66 @@ func (_ Unimplemented) GetDomainEntry(w http.ResponseWriter, r *http.Request, id
 // Update a domain entry
 // (PUT /domain-entries/{id})
 func (_ Unimplemented) UpdateDomainEntry(w http.ResponseWriter, r *http.Request, id ResourceID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// List all upstream groups
+// (GET /upstream-groups)
+func (_ Unimplemented) ListUpstreamGroups(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Delete an upstream group (default group cannot be deleted)
+// (DELETE /upstream-groups/{name})
+func (_ Unimplemented) DeleteUpstreamGroup(w http.ResponseWriter, r *http.Request, name UpstreamGroupName) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Get an upstream group by name
+// (GET /upstream-groups/{name})
+func (_ Unimplemented) GetUpstreamGroup(w http.ResponseWriter, r *http.Request, name UpstreamGroupName) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Create or update an upstream group
+// (PUT /upstream-groups/{name})
+func (_ Unimplemented) PutUpstreamGroup(w http.ResponseWriter, r *http.Request, name UpstreamGroupName) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// List servers in an upstream group
+// (GET /upstream-groups/{name}/servers)
+func (_ Unimplemented) ListUpstreamServers(w http.ResponseWriter, r *http.Request, name UpstreamGroupName) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Add a server to an upstream group
+// (POST /upstream-groups/{name}/servers)
+func (_ Unimplemented) CreateUpstreamServer(w http.ResponseWriter, r *http.Request, name UpstreamGroupName) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Delete an upstream server
+// (DELETE /upstream-groups/{name}/servers/{id})
+func (_ Unimplemented) DeleteUpstreamServer(w http.ResponseWriter, r *http.Request, name UpstreamGroupName, id ResourceID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Update an upstream server
+// (PUT /upstream-groups/{name}/servers/{id})
+func (_ Unimplemented) UpdateUpstreamServer(w http.ResponseWriter, r *http.Request, name UpstreamGroupName, id ResourceID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Get global upstream settings
+// (GET /upstream-settings)
+func (_ Unimplemented) GetUpstreamSettings(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Update global upstream settings
+// (PUT /upstream-settings)
+func (_ Unimplemented) PutUpstreamSettings(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -703,6 +793,241 @@ func (siw *ServerInterfaceWrapper) UpdateDomainEntry(w http.ResponseWriter, r *h
 	handler.ServeHTTP(w, r)
 }
 
+// ListUpstreamGroups operation middleware
+func (siw *ServerInterfaceWrapper) ListUpstreamGroups(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListUpstreamGroups(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteUpstreamGroup operation middleware
+func (siw *ServerInterfaceWrapper) DeleteUpstreamGroup(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "name" -------------
+	var name UpstreamGroupName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", chi.URLParam(r, "name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteUpstreamGroup(w, r, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetUpstreamGroup operation middleware
+func (siw *ServerInterfaceWrapper) GetUpstreamGroup(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "name" -------------
+	var name UpstreamGroupName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", chi.URLParam(r, "name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetUpstreamGroup(w, r, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutUpstreamGroup operation middleware
+func (siw *ServerInterfaceWrapper) PutUpstreamGroup(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "name" -------------
+	var name UpstreamGroupName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", chi.URLParam(r, "name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutUpstreamGroup(w, r, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListUpstreamServers operation middleware
+func (siw *ServerInterfaceWrapper) ListUpstreamServers(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "name" -------------
+	var name UpstreamGroupName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", chi.URLParam(r, "name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListUpstreamServers(w, r, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateUpstreamServer operation middleware
+func (siw *ServerInterfaceWrapper) CreateUpstreamServer(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "name" -------------
+	var name UpstreamGroupName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", chi.URLParam(r, "name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateUpstreamServer(w, r, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteUpstreamServer operation middleware
+func (siw *ServerInterfaceWrapper) DeleteUpstreamServer(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "name" -------------
+	var name UpstreamGroupName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", chi.URLParam(r, "name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "id" -------------
+	var id ResourceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteUpstreamServer(w, r, name, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateUpstreamServer operation middleware
+func (siw *ServerInterfaceWrapper) UpdateUpstreamServer(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "name" -------------
+	var name UpstreamGroupName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", chi.URLParam(r, "name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "id" -------------
+	var id ResourceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateUpstreamServer(w, r, name, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetUpstreamSettings operation middleware
+func (siw *ServerInterfaceWrapper) GetUpstreamSettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetUpstreamSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutUpstreamSettings operation middleware
+func (siw *ServerInterfaceWrapper) PutUpstreamSettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutUpstreamSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 type UnescapedCookieParamError struct {
 	ParamName string
 	Err       error
@@ -881,6 +1206,36 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Put(options.BaseURL+"/domain-entries/{id}", wrapper.UpdateDomainEntry)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/upstream-groups", wrapper.ListUpstreamGroups)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/upstream-groups/{name}", wrapper.DeleteUpstreamGroup)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/upstream-groups/{name}", wrapper.GetUpstreamGroup)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/upstream-groups/{name}", wrapper.PutUpstreamGroup)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/upstream-groups/{name}/servers", wrapper.ListUpstreamServers)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/upstream-groups/{name}/servers", wrapper.CreateUpstreamServer)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/upstream-groups/{name}/servers/{id}", wrapper.DeleteUpstreamServer)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/upstream-groups/{name}/servers/{id}", wrapper.UpdateUpstreamServer)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/upstream-settings", wrapper.GetUpstreamSettings)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/upstream-settings", wrapper.PutUpstreamSettings)
 	})
 
 	return r
@@ -1440,6 +1795,275 @@ func (response UpdateDomainEntry404JSONResponse) VisitUpdateDomainEntryResponse(
 	return json.NewEncoder(w).Encode(response)
 }
 
+type ListUpstreamGroupsRequestObject struct {
+}
+
+type ListUpstreamGroupsResponseObject interface {
+	VisitListUpstreamGroupsResponse(w http.ResponseWriter) error
+}
+
+type ListUpstreamGroups200JSONResponse []UpstreamGroup
+
+func (response ListUpstreamGroups200JSONResponse) VisitListUpstreamGroupsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteUpstreamGroupRequestObject struct {
+	Name UpstreamGroupName `json:"name"`
+}
+
+type DeleteUpstreamGroupResponseObject interface {
+	VisitDeleteUpstreamGroupResponse(w http.ResponseWriter) error
+}
+
+type DeleteUpstreamGroup204Response struct {
+}
+
+func (response DeleteUpstreamGroup204Response) VisitDeleteUpstreamGroupResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteUpstreamGroup400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response DeleteUpstreamGroup400JSONResponse) VisitDeleteUpstreamGroupResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteUpstreamGroup404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response DeleteUpstreamGroup404JSONResponse) VisitDeleteUpstreamGroupResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetUpstreamGroupRequestObject struct {
+	Name UpstreamGroupName `json:"name"`
+}
+
+type GetUpstreamGroupResponseObject interface {
+	VisitGetUpstreamGroupResponse(w http.ResponseWriter) error
+}
+
+type GetUpstreamGroup200JSONResponse UpstreamGroup
+
+func (response GetUpstreamGroup200JSONResponse) VisitGetUpstreamGroupResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetUpstreamGroup404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response GetUpstreamGroup404JSONResponse) VisitGetUpstreamGroupResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutUpstreamGroupRequestObject struct {
+	Name UpstreamGroupName `json:"name"`
+}
+
+type PutUpstreamGroupResponseObject interface {
+	VisitPutUpstreamGroupResponse(w http.ResponseWriter) error
+}
+
+type PutUpstreamGroup200JSONResponse UpstreamGroup
+
+func (response PutUpstreamGroup200JSONResponse) VisitPutUpstreamGroupResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutUpstreamGroup400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PutUpstreamGroup400JSONResponse) VisitPutUpstreamGroupResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ListUpstreamServersRequestObject struct {
+	Name UpstreamGroupName `json:"name"`
+}
+
+type ListUpstreamServersResponseObject interface {
+	VisitListUpstreamServersResponse(w http.ResponseWriter) error
+}
+
+type ListUpstreamServers200JSONResponse []UpstreamServer
+
+func (response ListUpstreamServers200JSONResponse) VisitListUpstreamServersResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CreateUpstreamServerRequestObject struct {
+	Name UpstreamGroupName `json:"name"`
+	Body *CreateUpstreamServerJSONRequestBody
+}
+
+type CreateUpstreamServerResponseObject interface {
+	VisitCreateUpstreamServerResponse(w http.ResponseWriter) error
+}
+
+type CreateUpstreamServer201JSONResponse UpstreamServer
+
+func (response CreateUpstreamServer201JSONResponse) VisitCreateUpstreamServerResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CreateUpstreamServer400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response CreateUpstreamServer400JSONResponse) VisitCreateUpstreamServerResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type CreateUpstreamServer404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response CreateUpstreamServer404JSONResponse) VisitCreateUpstreamServerResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteUpstreamServerRequestObject struct {
+	Name UpstreamGroupName `json:"name"`
+	Id   ResourceID        `json:"id"`
+}
+
+type DeleteUpstreamServerResponseObject interface {
+	VisitDeleteUpstreamServerResponse(w http.ResponseWriter) error
+}
+
+type DeleteUpstreamServer204Response struct {
+}
+
+func (response DeleteUpstreamServer204Response) VisitDeleteUpstreamServerResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteUpstreamServer400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response DeleteUpstreamServer400JSONResponse) VisitDeleteUpstreamServerResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type DeleteUpstreamServer404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response DeleteUpstreamServer404JSONResponse) VisitDeleteUpstreamServerResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type UpdateUpstreamServerRequestObject struct {
+	Name UpstreamGroupName `json:"name"`
+	Id   ResourceID        `json:"id"`
+	Body *UpdateUpstreamServerJSONRequestBody
+}
+
+type UpdateUpstreamServerResponseObject interface {
+	VisitUpdateUpstreamServerResponse(w http.ResponseWriter) error
+}
+
+type UpdateUpstreamServer200JSONResponse UpstreamServer
+
+func (response UpdateUpstreamServer200JSONResponse) VisitUpdateUpstreamServerResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type UpdateUpstreamServer400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response UpdateUpstreamServer400JSONResponse) VisitUpdateUpstreamServerResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type UpdateUpstreamServer404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response UpdateUpstreamServer404JSONResponse) VisitUpdateUpstreamServerResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetUpstreamSettingsRequestObject struct {
+}
+
+type GetUpstreamSettingsResponseObject interface {
+	VisitGetUpstreamSettingsResponse(w http.ResponseWriter) error
+}
+
+type GetUpstreamSettings200JSONResponse UpstreamSettings
+
+func (response GetUpstreamSettings200JSONResponse) VisitGetUpstreamSettingsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutUpstreamSettingsRequestObject struct {
+	Body *PutUpstreamSettingsJSONRequestBody
+}
+
+type PutUpstreamSettingsResponseObject interface {
+	VisitPutUpstreamSettingsResponse(w http.ResponseWriter) error
+}
+
+type PutUpstreamSettings200JSONResponse UpstreamSettings
+
+func (response PutUpstreamSettings200JSONResponse) VisitPutUpstreamSettingsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PutUpstreamSettings400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PutUpstreamSettings400JSONResponse) VisitPutUpstreamSettingsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
 	// Apply pending configuration changes
@@ -1508,6 +2132,36 @@ type StrictServerInterface interface {
 	// Update a domain entry
 	// (PUT /domain-entries/{id})
 	UpdateDomainEntry(ctx context.Context, request UpdateDomainEntryRequestObject) (UpdateDomainEntryResponseObject, error)
+	// List all upstream groups
+	// (GET /upstream-groups)
+	ListUpstreamGroups(ctx context.Context, request ListUpstreamGroupsRequestObject) (ListUpstreamGroupsResponseObject, error)
+	// Delete an upstream group (default group cannot be deleted)
+	// (DELETE /upstream-groups/{name})
+	DeleteUpstreamGroup(ctx context.Context, request DeleteUpstreamGroupRequestObject) (DeleteUpstreamGroupResponseObject, error)
+	// Get an upstream group by name
+	// (GET /upstream-groups/{name})
+	GetUpstreamGroup(ctx context.Context, request GetUpstreamGroupRequestObject) (GetUpstreamGroupResponseObject, error)
+	// Create or update an upstream group
+	// (PUT /upstream-groups/{name})
+	PutUpstreamGroup(ctx context.Context, request PutUpstreamGroupRequestObject) (PutUpstreamGroupResponseObject, error)
+	// List servers in an upstream group
+	// (GET /upstream-groups/{name}/servers)
+	ListUpstreamServers(ctx context.Context, request ListUpstreamServersRequestObject) (ListUpstreamServersResponseObject, error)
+	// Add a server to an upstream group
+	// (POST /upstream-groups/{name}/servers)
+	CreateUpstreamServer(ctx context.Context, request CreateUpstreamServerRequestObject) (CreateUpstreamServerResponseObject, error)
+	// Delete an upstream server
+	// (DELETE /upstream-groups/{name}/servers/{id})
+	DeleteUpstreamServer(ctx context.Context, request DeleteUpstreamServerRequestObject) (DeleteUpstreamServerResponseObject, error)
+	// Update an upstream server
+	// (PUT /upstream-groups/{name}/servers/{id})
+	UpdateUpstreamServer(ctx context.Context, request UpdateUpstreamServerRequestObject) (UpdateUpstreamServerResponseObject, error)
+	// Get global upstream settings
+	// (GET /upstream-settings)
+	GetUpstreamSettings(ctx context.Context, request GetUpstreamSettingsRequestObject) (GetUpstreamSettingsResponseObject, error)
+	// Update global upstream settings
+	// (PUT /upstream-settings)
+	PutUpstreamSettings(ctx context.Context, request PutUpstreamSettingsRequestObject) (PutUpstreamSettingsResponseObject, error)
 }
 
 type StrictHandlerFunc = strictnethttp.StrictHTTPHandlerFunc
@@ -2144,6 +2798,283 @@ func (sh *strictHandler) UpdateDomainEntry(w http.ResponseWriter, r *http.Reques
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(UpdateDomainEntryResponseObject); ok {
 		if err := validResponse.VisitUpdateDomainEntryResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListUpstreamGroups operation middleware
+func (sh *strictHandler) ListUpstreamGroups(w http.ResponseWriter, r *http.Request) {
+	var request ListUpstreamGroupsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListUpstreamGroups(ctx, request.(ListUpstreamGroupsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListUpstreamGroups")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListUpstreamGroupsResponseObject); ok {
+		if err := validResponse.VisitListUpstreamGroupsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteUpstreamGroup operation middleware
+func (sh *strictHandler) DeleteUpstreamGroup(w http.ResponseWriter, r *http.Request, name UpstreamGroupName) {
+	var request DeleteUpstreamGroupRequestObject
+
+	request.Name = name
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteUpstreamGroup(ctx, request.(DeleteUpstreamGroupRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteUpstreamGroup")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteUpstreamGroupResponseObject); ok {
+		if err := validResponse.VisitDeleteUpstreamGroupResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetUpstreamGroup operation middleware
+func (sh *strictHandler) GetUpstreamGroup(w http.ResponseWriter, r *http.Request, name UpstreamGroupName) {
+	var request GetUpstreamGroupRequestObject
+
+	request.Name = name
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetUpstreamGroup(ctx, request.(GetUpstreamGroupRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetUpstreamGroup")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetUpstreamGroupResponseObject); ok {
+		if err := validResponse.VisitGetUpstreamGroupResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutUpstreamGroup operation middleware
+func (sh *strictHandler) PutUpstreamGroup(w http.ResponseWriter, r *http.Request, name UpstreamGroupName) {
+	var request PutUpstreamGroupRequestObject
+
+	request.Name = name
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutUpstreamGroup(ctx, request.(PutUpstreamGroupRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutUpstreamGroup")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutUpstreamGroupResponseObject); ok {
+		if err := validResponse.VisitPutUpstreamGroupResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListUpstreamServers operation middleware
+func (sh *strictHandler) ListUpstreamServers(w http.ResponseWriter, r *http.Request, name UpstreamGroupName) {
+	var request ListUpstreamServersRequestObject
+
+	request.Name = name
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListUpstreamServers(ctx, request.(ListUpstreamServersRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListUpstreamServers")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListUpstreamServersResponseObject); ok {
+		if err := validResponse.VisitListUpstreamServersResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateUpstreamServer operation middleware
+func (sh *strictHandler) CreateUpstreamServer(w http.ResponseWriter, r *http.Request, name UpstreamGroupName) {
+	var request CreateUpstreamServerRequestObject
+
+	request.Name = name
+
+	var body CreateUpstreamServerJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateUpstreamServer(ctx, request.(CreateUpstreamServerRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateUpstreamServer")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateUpstreamServerResponseObject); ok {
+		if err := validResponse.VisitCreateUpstreamServerResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteUpstreamServer operation middleware
+func (sh *strictHandler) DeleteUpstreamServer(w http.ResponseWriter, r *http.Request, name UpstreamGroupName, id ResourceID) {
+	var request DeleteUpstreamServerRequestObject
+
+	request.Name = name
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteUpstreamServer(ctx, request.(DeleteUpstreamServerRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteUpstreamServer")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteUpstreamServerResponseObject); ok {
+		if err := validResponse.VisitDeleteUpstreamServerResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateUpstreamServer operation middleware
+func (sh *strictHandler) UpdateUpstreamServer(w http.ResponseWriter, r *http.Request, name UpstreamGroupName, id ResourceID) {
+	var request UpdateUpstreamServerRequestObject
+
+	request.Name = name
+	request.Id = id
+
+	var body UpdateUpstreamServerJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateUpstreamServer(ctx, request.(UpdateUpstreamServerRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateUpstreamServer")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateUpstreamServerResponseObject); ok {
+		if err := validResponse.VisitUpdateUpstreamServerResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetUpstreamSettings operation middleware
+func (sh *strictHandler) GetUpstreamSettings(w http.ResponseWriter, r *http.Request) {
+	var request GetUpstreamSettingsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetUpstreamSettings(ctx, request.(GetUpstreamSettingsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetUpstreamSettings")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetUpstreamSettingsResponseObject); ok {
+		if err := validResponse.VisitGetUpstreamSettingsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutUpstreamSettings operation middleware
+func (sh *strictHandler) PutUpstreamSettings(w http.ResponseWriter, r *http.Request) {
+	var request PutUpstreamSettingsRequestObject
+
+	var body PutUpstreamSettingsJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutUpstreamSettings(ctx, request.(PutUpstreamSettingsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutUpstreamSettings")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutUpstreamSettingsResponseObject); ok {
+		if err := validResponse.VisitPutUpstreamSettingsResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

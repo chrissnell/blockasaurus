@@ -252,7 +252,11 @@ func (b *BootstrappedUpstream) UnmarshalYAML(unmarshal func(any) error) error {
 
 // Config main configuration
 type Config struct {
-	Upstreams        Upstreams           `yaml:"upstreams"`
+	Upstreams        Upstreams           `yaml:"-"`
+	// UpstreamsYAML is a write-only sentinel that rejects any legacy `upstreams:`
+	// section in YAML. Upstream configuration lives in the SQLite config store and
+	// is managed via the web UI. See docs/migration-upstreams.md.
+	UpstreamsYAML    upstreamsYAMLSentinel `yaml:"upstreams,omitempty"`
 	ConnectIPVersion IPVersion           `yaml:"connectIPVersion"`
 	CustomDNS        CustomDNS           `yaml:"customDNS"`
 	Conditional      ConditionalUpstream `yaml:"conditional"`

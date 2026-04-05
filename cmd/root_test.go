@@ -50,10 +50,6 @@ var _ = Describe("root command", func() {
 
 			tmpDir = NewTmpFolder("RootCommand")
 			tmpFile = tmpDir.CreateStringFile("config",
-				"upstreams:",
-				"  groups:",
-				"    default:",
-				"      - 1.1.1.1",
 				"blocking:",
 				"  denylists:",
 				"    ads:",
@@ -85,10 +81,6 @@ var _ = Describe("root command", func() {
 
 		It("should handle config with HTTP port", func() {
 			configWithHTTP := tmpDir.CreateStringFile("config_with_http",
-				"upstreams:",
-				"  groups:",
-				"    default:",
-				"      - 1.1.1.1",
 				"ports:",
 				"  http:",
 				"    - 127.0.0.1:8080",
@@ -103,10 +95,6 @@ var _ = Describe("root command", func() {
 
 		It("should handle config with invalid HTTP port", func() {
 			configWithInvalidHTTP := tmpDir.CreateStringFile("config_with_invalid_http",
-				"upstreams:",
-				"  groups:",
-				"    default:",
-				"      - 1.1.1.1",
 				"ports:",
 				"  http:",
 				"    - 127.0.0.1:invalid",

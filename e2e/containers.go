@@ -200,6 +200,12 @@ func buildBlockyContainerRequest(confFile string) testcontainers.ContainerReques
 // createBlockyContainer creates a blocky container with a config provided by the given lines.
 // It is attached to the test network under the alias 'blocky'.
 // It is automatically terminated when the test is finished.
+//
+// Upstream configuration now lives in the SQLite config store, not YAML. To keep
+// existing e2e test fixtures working, any `upstreams:` block in the provided
+// lines is extracted here, stripped from the YAML, and used to pre-seed a
+// temporary SQLite DB that gets mounted into the container at the same path as
+// `databasePath` in the YAML.
 func createBlockyContainer(ctx context.Context, e2eNet *testcontainers.DockerNetwork,
 	lines ...string,
 ) (testcontainers.Container, error) {
@@ -207,7 +213,15 @@ func createBlockyContainer(ctx context.Context, e2eNet *testcontainers.DockerNet
 	ctx, cancel := context.WithTimeout(ctx, 2*startupTimeout)
 	defer cancel()
 
-	confFile := createTempFile(lines...)
+	seed, strippedLines := extractUpstreamYAML(lines)
+	strippedLines = ensureDatabasePath(strippedLines, "/app/config.db")
+
+	confFile := createTempFile(strippedLines...)
+
+	dbFile, err := seedUpstreamDB(seed)
+	if err != nil {
+		return nil, fmt.Errorf("seed e2e upstream db: %w", err)
+	}
 
 	cfg, err := config.LoadConfig(confFile, true)
 	if err != nil {
@@ -215,6 +229,11 @@ func createBlockyContainer(ctx context.Context, e2eNet *testcontainers.DockerNet
 	}
 
 	req := buildBlockyContainerRequest(confFile)
+	req.Files = append(req.Files, testcontainers.ContainerFile{
+		HostFilePath:      dbFile,
+		ContainerFilePath: "/app/config.db",
+		FileMode:          modeOwner,
+	})
 
 	container, err := startContainerWithNetwork(ctx, req, "blocky", e2eNet)
 	if err != nil {

@@ -369,6 +369,176 @@ paths:
         '400':
           $ref: '#/components/responses/BadRequest'
 
+  /upstream-groups:
+    get:
+      operationId: listUpstreamGroups
+      tags: [upstream-groups]
+      summary: List all upstream groups
+      responses:
+        '200':
+          description: List of upstream groups
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UpstreamGroup'
+  /upstream-groups/{name}:
+    get:
+      operationId: getUpstreamGroup
+      tags: [upstream-groups]
+      summary: Get an upstream group by name
+      parameters:
+        - $ref: '#/components/parameters/UpstreamGroupName'
+      responses:
+        '200':
+          description: Upstream group
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpstreamGroup'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      operationId: putUpstreamGroup
+      tags: [upstream-groups]
+      summary: Create or update an upstream group
+      parameters:
+        - $ref: '#/components/parameters/UpstreamGroupName'
+      responses:
+        '200':
+          description: Saved upstream group
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpstreamGroup'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+    delete:
+      operationId: deleteUpstreamGroup
+      tags: [upstream-groups]
+      summary: Delete an upstream group (default group cannot be deleted)
+      parameters:
+        - $ref: '#/components/parameters/UpstreamGroupName'
+      responses:
+        '204':
+          description: Deleted
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /upstream-groups/{name}/servers:
+    get:
+      operationId: listUpstreamServers
+      tags: [upstream-groups]
+      summary: List servers in an upstream group
+      parameters:
+        - $ref: '#/components/parameters/UpstreamGroupName'
+      responses:
+        '200':
+          description: List of upstream servers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UpstreamServer'
+    post:
+      operationId: createUpstreamServer
+      tags: [upstream-groups]
+      summary: Add a server to an upstream group
+      parameters:
+        - $ref: '#/components/parameters/UpstreamGroupName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpstreamServerInput'
+      responses:
+        '201':
+          description: Created upstream server
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpstreamServer'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /upstream-groups/{name}/servers/{id}:
+    put:
+      operationId: updateUpstreamServer
+      tags: [upstream-groups]
+      summary: Update an upstream server
+      parameters:
+        - $ref: '#/components/parameters/UpstreamGroupName'
+        - $ref: '#/components/parameters/ResourceID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpstreamServerInput'
+      responses:
+        '200':
+          description: Updated upstream server
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpstreamServer'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: deleteUpstreamServer
+      tags: [upstream-groups]
+      summary: Delete an upstream server
+      parameters:
+        - $ref: '#/components/parameters/UpstreamGroupName'
+        - $ref: '#/components/parameters/ResourceID'
+      responses:
+        '204':
+          description: Deleted
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /upstream-settings:
+    get:
+      operationId: getUpstreamSettings
+      tags: [upstream-settings]
+      summary: Get global upstream settings
+      responses:
+        '200':
+          description: Current upstream settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpstreamSettings'
+    put:
+      operationId: putUpstreamSettings
+      tags: [upstream-settings]
+      summary: Update global upstream settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpstreamSettingsInput'
+      responses:
+        '200':
+          description: Updated upstream settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpstreamSettings'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
   /apply:
     post:
       operationId: applyConfig
@@ -392,6 +562,12 @@ paths:
 components:
   parameters:
     ClientGroupName:
+      name: name
+      in: path
+      required: true
+      schema:
+        type: string
+    UpstreamGroupName:
       name: name
       in: path
       required: true
@@ -572,6 +748,73 @@ components:
           type: string
         block_ttl:
           type: string
+
+    UpstreamGroup:
+      type: object
+      required: [id, name, slug]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        slug:
+          type: string
+
+    UpstreamServer:
+      type: object
+      required: [id, group_name, url, position, enabled]
+      properties:
+        id:
+          type: integer
+        group_name:
+          type: string
+        url:
+          type: string
+        position:
+          type: integer
+        enabled:
+          type: boolean
+
+    UpstreamServerInput:
+      type: object
+      required: [url, enabled]
+      properties:
+        url:
+          type: string
+        position:
+          type: integer
+        enabled:
+          type: boolean
+
+    UpstreamSettings:
+      type: object
+      required: [strategy, timeout, user_agent, init_strategy]
+      properties:
+        strategy:
+          type: string
+          enum: [parallel_best, strict, random]
+        timeout:
+          type: string
+        user_agent:
+          type: string
+        init_strategy:
+          type: string
+          enum: [blocking, failOnError, fast]
+
+    UpstreamSettingsInput:
+      type: object
+      required: [strategy, timeout, user_agent, init_strategy]
+      properties:
+        strategy:
+          type: string
+          enum: [parallel_best, strict, random]
+        timeout:
+          type: string
+        user_agent:
+          type: string
+        init_strategy:
+          type: string
+          enum: [blocking, failOnError, fast]
 
     ApplyResponse:
       type: object

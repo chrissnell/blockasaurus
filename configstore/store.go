@@ -48,6 +48,9 @@ func Open(path string) (*ConfigStore, error) {
 		&CustomDNSEntry{},
 		&DomainEntry{},
 		&BlockSettings{},
+		&UpstreamGroup{},
+		&UpstreamServer{},
+		&UpstreamSettings{},
 	); err != nil {
 		return nil, fmt.Errorf("auto-migrate config tables: %w", err)
 	}
@@ -68,6 +71,10 @@ func Open(path string) (*ConfigStore, error) {
 
 	if err := store.ensureDomainEntriesInDefaultGroup(); err != nil {
 		return nil, fmt.Errorf("wire domain entries to default group: %w", err)
+	}
+
+	if err := store.seedDefaultUpstreams(); err != nil {
+		return nil, fmt.Errorf("seed default upstreams: %w", err)
 	}
 
 	return store, nil

@@ -65,6 +65,34 @@ const (
 	DomainEntryInputEntryTypeRegexDeny  DomainEntryInputEntryType = "regex_deny"
 )
 
+// Defines values for UpstreamSettingsInitStrategy.
+const (
+	UpstreamSettingsInitStrategyBlocking    UpstreamSettingsInitStrategy = "blocking"
+	UpstreamSettingsInitStrategyFailOnError UpstreamSettingsInitStrategy = "failOnError"
+	UpstreamSettingsInitStrategyFast        UpstreamSettingsInitStrategy = "fast"
+)
+
+// Defines values for UpstreamSettingsStrategy.
+const (
+	UpstreamSettingsStrategyParallelBest UpstreamSettingsStrategy = "parallel_best"
+	UpstreamSettingsStrategyRandom       UpstreamSettingsStrategy = "random"
+	UpstreamSettingsStrategyStrict       UpstreamSettingsStrategy = "strict"
+)
+
+// Defines values for UpstreamSettingsInputInitStrategy.
+const (
+	UpstreamSettingsInputInitStrategyBlocking    UpstreamSettingsInputInitStrategy = "blocking"
+	UpstreamSettingsInputInitStrategyFailOnError UpstreamSettingsInputInitStrategy = "failOnError"
+	UpstreamSettingsInputInitStrategyFast        UpstreamSettingsInputInitStrategy = "fast"
+)
+
+// Defines values for UpstreamSettingsInputStrategy.
+const (
+	UpstreamSettingsInputStrategyParallelBest UpstreamSettingsInputStrategy = "parallel_best"
+	UpstreamSettingsInputStrategyRandom       UpstreamSettingsInputStrategy = "random"
+	UpstreamSettingsInputStrategyStrict       UpstreamSettingsInputStrategy = "strict"
+)
+
 // Defines values for ListBlocklistSourcesParamsListType.
 const (
 	Allow ListBlocklistSourcesParamsListType = "allow"
@@ -201,11 +229,65 @@ type ErrorResponse struct {
 	Message string `json:"message"`
 }
 
+// UpstreamGroup defines model for UpstreamGroup.
+type UpstreamGroup struct {
+	Id   int    `json:"id"`
+	Name string `json:"name"`
+	Slug string `json:"slug"`
+}
+
+// UpstreamServer defines model for UpstreamServer.
+type UpstreamServer struct {
+	Enabled   bool   `json:"enabled"`
+	GroupName string `json:"group_name"`
+	Id        int    `json:"id"`
+	Position  int    `json:"position"`
+	Url       string `json:"url"`
+}
+
+// UpstreamServerInput defines model for UpstreamServerInput.
+type UpstreamServerInput struct {
+	Enabled  bool   `json:"enabled"`
+	Position *int   `json:"position,omitempty"`
+	Url      string `json:"url"`
+}
+
+// UpstreamSettings defines model for UpstreamSettings.
+type UpstreamSettings struct {
+	InitStrategy UpstreamSettingsInitStrategy `json:"init_strategy"`
+	Strategy     UpstreamSettingsStrategy     `json:"strategy"`
+	Timeout      string                       `json:"timeout"`
+	UserAgent    string                       `json:"user_agent"`
+}
+
+// UpstreamSettingsInitStrategy defines model for UpstreamSettings.InitStrategy.
+type UpstreamSettingsInitStrategy string
+
+// UpstreamSettingsStrategy defines model for UpstreamSettings.Strategy.
+type UpstreamSettingsStrategy string
+
+// UpstreamSettingsInput defines model for UpstreamSettingsInput.
+type UpstreamSettingsInput struct {
+	InitStrategy UpstreamSettingsInputInitStrategy `json:"init_strategy"`
+	Strategy     UpstreamSettingsInputStrategy     `json:"strategy"`
+	Timeout      string                            `json:"timeout"`
+	UserAgent    string                            `json:"user_agent"`
+}
+
+// UpstreamSettingsInputInitStrategy defines model for UpstreamSettingsInput.InitStrategy.
+type UpstreamSettingsInputInitStrategy string
+
+// UpstreamSettingsInputStrategy defines model for UpstreamSettingsInput.Strategy.
+type UpstreamSettingsInputStrategy string
+
 // ClientGroupName defines model for ClientGroupName.
 type ClientGroupName = string
 
 // ResourceID defines model for ResourceID.
 type ResourceID = int
+
+// UpstreamGroupName defines model for UpstreamGroupName.
+type UpstreamGroupName = string
 
 // BadRequest defines model for BadRequest.
 type BadRequest = ErrorResponse
@@ -253,3 +335,12 @@ type CreateDomainEntryJSONRequestBody = DomainEntryInput
 
 // UpdateDomainEntryJSONRequestBody defines body for UpdateDomainEntry for application/json ContentType.
 type UpdateDomainEntryJSONRequestBody = DomainEntryInput
+
+// CreateUpstreamServerJSONRequestBody defines body for CreateUpstreamServer for application/json ContentType.
+type CreateUpstreamServerJSONRequestBody = UpstreamServerInput
+
+// UpdateUpstreamServerJSONRequestBody defines body for UpdateUpstreamServer for application/json ContentType.
+type UpdateUpstreamServerJSONRequestBody = UpstreamServerInput
+
+// PutUpstreamSettingsJSONRequestBody defines body for PutUpstreamSettings for application/json ContentType.
+type PutUpstreamSettingsJSONRequestBody = UpstreamSettingsInput

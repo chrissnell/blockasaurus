@@ -15,11 +15,9 @@ config:
   ports:
     dns: 53
     http: 80
-  upstreams:
-    groups:
-      default:
-        - https://dns.cloudflare.com/dns-query
-        - https://dns.google/dns-query
+  # Upstream DNS servers are managed in the SQLite config store via the web UI
+  # (Upstreams / Upstream Settings pages). A fresh DB is seeded with a "default"
+  # group containing 1.1.1.1 and 1.0.0.1.
   # Persistent config store for the web UI
   databasePath: /data/blocky.db
 

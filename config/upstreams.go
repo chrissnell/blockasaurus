@@ -1,11 +1,26 @@
 package config
 
 import (
+	"fmt"
+
 	"github.com/0xERR0R/blocky/log"
 	"github.com/sirupsen/logrus"
 )
 
 const UpstreamDefaultCfgName = "default"
+
+// upstreamsYAMLSentinel rejects any `upstreams:` section in YAML. Upstream
+// configuration lives in the SQLite config store and is managed via the web UI.
+// A hard error is returned with a pointer to the migration docs.
+type upstreamsYAMLSentinel struct{}
+
+func (upstreamsYAMLSentinel) UnmarshalYAML(_ func(any) error) error {
+	return fmt.Errorf(
+		"the 'upstreams:' section has moved to the SQLite config store: " +
+			"remove the 'upstreams:' block from your YAML configuration and manage " +
+			"upstream groups + settings via the web UI (see docs/migration-upstreams.md)",
+	)
+}
 
 // Upstreams upstream servers configuration
 type Upstreams struct {

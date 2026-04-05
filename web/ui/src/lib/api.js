@@ -21,7 +21,7 @@ async function request(method, path, body) {
   const data = await resp.json()
 
   if (!resp.ok) {
-    throw new Error(data.error || `${resp.status} ${resp.statusText}`)
+    throw new Error(data.message || data.error || `${resp.status} ${resp.statusText}`)
   }
 
   return data
@@ -69,6 +69,28 @@ export const domainEntries = {
   create: (body) => request('POST', '/domain-entries', body),
   update: (id, body) => request('PUT', `/domain-entries/${id}`, body),
   delete: (id) => request('DELETE', `/domain-entries/${id}`),
+}
+
+// Upstream Groups
+export const upstreamGroups = {
+  list: () => request('GET', '/upstream-groups'),
+  get: (name) => request('GET', `/upstream-groups/${encodeURIComponent(name)}`),
+  put: (name) => request('PUT', `/upstream-groups/${encodeURIComponent(name)}`),
+  delete: (name) => request('DELETE', `/upstream-groups/${encodeURIComponent(name)}`),
+  listServers: (name) =>
+    request('GET', `/upstream-groups/${encodeURIComponent(name)}/servers`),
+  createServer: (name, body) =>
+    request('POST', `/upstream-groups/${encodeURIComponent(name)}/servers`, body),
+  updateServer: (name, id, body) =>
+    request('PUT', `/upstream-groups/${encodeURIComponent(name)}/servers/${id}`, body),
+  deleteServer: (name, id) =>
+    request('DELETE', `/upstream-groups/${encodeURIComponent(name)}/servers/${id}`),
+}
+
+// Upstream Settings
+export const upstreamSettings = {
+  get: () => request('GET', '/upstream-settings'),
+  update: (body) => request('PUT', '/upstream-settings', body),
 }
 
 // Block Settings

@@ -23,10 +23,8 @@ var _ = Describe("Validate command", func() {
 	When("Validate is called with existing valid configuration file", func() {
 		It("should terminate without error", func() {
 			cfgFile := tmpDir.CreateStringFile("config.yaml",
-				"upstreams:",
-				"  groups:",
-				"    default:",
-				"      - 1.1.1.1")
+				"log:",
+				"  level: warn")
 
 			c := NewRootCommand()
 			c.SetArgs([]string{"validate", "--config", cfgFile.Path})
@@ -38,10 +36,9 @@ var _ = Describe("Validate command", func() {
 	When("Validate is called with existing invalid configuration file", func() {
 		It("should terminate with error", func() {
 			cfgFile := tmpDir.CreateStringFile("config.yaml",
-				"upstreams:",
-				"  groups:",
-				"    default:",
-				"      - 1.broken file")
+				"conditional:",
+				"  mapping:",
+				"    bogus: 1.broken file")
 
 			c := NewRootCommand()
 			c.SetArgs([]string{"validate", "--config", cfgFile.Path})

@@ -42,6 +42,41 @@ type CustomDNSEntry struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
+// UpstreamGroup is a named collection of upstream DNS servers.
+type UpstreamGroup struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Name      string    `gorm:"uniqueIndex;not null" json:"name"`
+	Slug      string    `gorm:"uniqueIndex;not null;default:''" json:"slug"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// UpstreamServer is an individual upstream DNS server URL, belonging to an UpstreamGroup.
+// URL is the same string format consumed by config.ParseUpstream (e.g. "1.1.1.1",
+// "tcp-tls:dns.example.com", "https://dns.google/dns-query", "sdns://...").
+type UpstreamServer struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	GroupName string    `gorm:"index;not null" json:"group_name"`
+	URL       string    `gorm:"not null" json:"url"`
+	Position  int       `gorm:"not null;default:0" json:"position"`
+	Enabled   *bool     `gorm:"not null;default:true" json:"enabled"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// UpstreamSettings holds global upstream configuration (singleton).
+type UpstreamSettings struct {
+	ID           uint      `gorm:"primaryKey" json:"id"`
+	Strategy     string    `gorm:"not null;default:'parallel_best'" json:"strategy"`
+	Timeout      string    `gorm:"not null;default:'2s'" json:"timeout"`
+	UserAgent    string    `gorm:"not null;default:''" json:"user_agent"`
+	InitStrategy string    `gorm:"not null;default:'blocking'" json:"init_strategy"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// IsEnabled returns the Enabled value, defaulting to true if nil.
+func (u *UpstreamServer) IsEnabled() bool { return u.Enabled == nil || *u.Enabled }
+
 type BlockSettings struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
 	BlockType string    `gorm:"not null;default:'ZEROIP'" json:"block_type"`
