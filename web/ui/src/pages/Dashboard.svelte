@@ -3,8 +3,7 @@
 
 <script>
   import { onDestroy } from 'svelte'
-  import StatCard from '../components/StatCard.svelte'
-  import Card from '../components/Card.svelte'
+  import { StatCard, Box } from '@chrissnell/chonky-ui'
   import BarChart from '../components/BarChart.svelte'
   import DoughnutChart from '../components/DoughnutChart.svelte'
   import {
@@ -149,35 +148,35 @@
   {:else}
     <!-- Stat Cards -->
     <div class="stat-grid">
-      <StatCard label="Status" value="Running" color="success" />
-      <StatCard label="Total Queries" value={fmt(stats?.total_queries)} color="info" />
-      <StatCard label="Queries Blocked" value={fmt(stats?.blocked_queries)} color="danger" />
-      <StatCard label="Block Rate" value={stats ? stats.block_rate.toFixed(1) + '%' : '\u2014'} color="primary" />
+      <StatCard label="Status" value="Running" variant="success" />
+      <StatCard label="Total Queries" value={fmt(stats?.total_queries)} variant="info" />
+      <StatCard label="Queries Blocked" value={fmt(stats?.blocked_queries)} variant="danger" />
+      <StatCard label="Block Rate" value={stats ? stats.block_rate.toFixed(1) + '%' : '\u2014'} variant="primary" />
     </div>
 
     <!-- Queries Over Time -->
-    <Card title="Queries over last 24 hours">
+    <Box title="Queries over last 24 hours">
       <BarChart labels={overtimeLabels} datasets={overtimeDatasets()} stacked={true} />
-    </Card>
+    </Box>
 
     <!-- Client Activity -->
-    <Card title="Client activity over last 24 hours">
+    <Box title="Client activity over last 24 hours">
       <BarChart labels={clientLabels} datasets={clientDatasets()} stacked={true} />
-    </Card>
+    </Box>
 
     <!-- Doughnut Charts -->
     <div class="two-col">
-      <Card title="Query Types">
+      <Box title="Query Types">
         <DoughnutChart labels={qtLabels} data={qtData} colors={qtColors()} />
-      </Card>
-      <Card title="Response Types">
+      </Box>
+      <Box title="Response Types">
         <DoughnutChart labels={rtLabels} data={rtData} colors={rtColors()} />
-      </Card>
+      </Box>
     </div>
 
     <!-- Top Domains -->
     <div class="two-col">
-      <Card title="Top Permitted Domains">
+      <Box title="Top Permitted Domains">
         {#if topDomains?.permitted?.length}
           <table class="top-table">
             <thead><tr><th>Domain</th><th class="col-hits">Hits</th><th class="col-freq">Frequency</th></tr></thead>
@@ -198,8 +197,8 @@
         {:else}
           <p class="empty">No data yet</p>
         {/if}
-      </Card>
-      <Card title="Top Blocked Domains">
+      </Box>
+      <Box title="Top Blocked Domains">
         {#if topDomains?.blocked?.length}
           <table class="top-table">
             <thead><tr><th>Domain</th><th class="col-hits">Hits</th><th class="col-freq">Frequency</th></tr></thead>
@@ -220,12 +219,12 @@
         {:else}
           <p class="empty">No data yet</p>
         {/if}
-      </Card>
+      </Box>
     </div>
 
     <!-- Top Clients -->
     <div class="two-col">
-      <Card title="Top Clients (total)">
+      <Box title="Top Clients (total)">
         {#if topClients?.total?.length}
           <table class="top-table">
             <thead><tr><th>Client</th><th class="col-hits">Requests</th><th class="col-freq">Frequency</th></tr></thead>
@@ -246,8 +245,8 @@
         {:else}
           <p class="empty">No data yet</p>
         {/if}
-      </Card>
-      <Card title="Top Clients (blocked)">
+      </Box>
+      <Box title="Top Clients (blocked)">
         {#if topClients?.blocked?.length}
           <table class="top-table">
             <thead><tr><th>Client</th><th class="col-hits">Blocked</th><th class="col-freq">Frequency</th></tr></thead>
@@ -268,7 +267,7 @@
         {:else}
           <p class="empty">No data yet</p>
         {/if}
-      </Card>
+      </Box>
     </div>
   {/if}
 </div>

@@ -1,44 +1,32 @@
 /* Copyright 2026 Chris Snell */
 /* SPDX-License-Identifier: Apache-2.0 */
 
+/*
+ * Blockasaurus token overrides, layered on top of @chrissnell/chonky-ui/css.
+ * Only tokens Chonky does NOT define, or ones we intentionally override for
+ * blockasaurus-specific use, live here. Everything else (core palette,
+ * typography, radius, transitions) comes from Chonky.
+ */
+
+@font-face {
+  font-family: 'Inconsolata';
+  font-style: normal;
+  font-weight: 300 700;
+  font-display: swap;
+  src: url('/ui/fonts/inconsolata.woff2') format('woff2');
+}
+
 :root, [data-theme="light"] {
-  /* Background & Surface */
-  --color-bg: #f5f5f4;
-  --color-surface: #fff;
-  --color-surface-raised: #fff;
-  --color-border: #d4d4d4;
-  --color-border-subtle: #e5e5e5;
-
-  /* Text */
-  --color-text: #1a1a1a;
-  --color-text-muted: #737373;
-  --color-text-dim: #a3a3a3;
-  --color-text-inverse: #f5f5f4;
-
-  /* Action colors */
-  --color-accent: #1a7a1a;
+  /* Primary tuned for blockasaurus light theme (darker than Chonky default) */
   --color-primary: #d48f00;
   --color-primary-hover: #b87c00;
   --color-primary-muted: rgba(212, 143, 0, 0.1);
-  --color-primary-fg: #fff;
-  --color-danger: #c60202;
-  --color-danger-hover: #a80202;
-  --color-danger-muted: rgba(198, 2, 2, 0.08);
-  --color-danger-fg: #fff;
-  --color-success: #1a7a1a;
-  --color-success-fill: #1a7a1a;
-  --color-success-muted: rgba(26, 122, 26, 0.1);
-  --color-success-fg: #fff;
-  --color-warning: #d48f00;
-  --color-warning-muted: rgba(212, 143, 0, 0.1);
-  --color-warning-fg: #fff;
-  --color-info: #1a6f96;
-  --color-info-muted: rgba(26, 111, 150, 0.1);
-  --color-info-fg: #fff;
+
+  /* Blocked domain accent (not in Chonky) */
   --color-blocked: #9333ea;
   --color-blocked-muted: rgba(147, 51, 234, 0.1);
 
-  /* Chart palette */
+  /* Highcharts palette */
   --chart-1: #1a7a1a;
   --chart-2: #1a6f96;
   --chart-3: #d48f00;
@@ -50,55 +38,17 @@
   --chart-9: #db2777;
   --chart-10: #65a30d;
 
-  /* Buttons */
-  --color-btn-bg: #e5e5e5;
-  --color-btn-bg-hover: #d4d4d4;
-  --color-btn-border: #c4c4c4;
-
-  /* Scrollbar */
-  --color-scrollbar-track: #f0f0f0;
-  --color-scrollbar-thumb: #c4c4c4;
-  --color-scrollbar-thumb-hover: #a3a3a3;
 }
 
 [data-theme="dark"] {
-  /* Background & Surface */
-  --color-bg: #0a0a0a;
-  --color-surface: #111;
-  --color-surface-raised: #1a1a1a;
-  --color-border: #222;
-  --color-border-subtle: #1a1a1a;
-
-  /* Text */
-  --color-text: #c8c8c8;
-  --color-text-muted: #555;
-  --color-text-dim: #444;
-  --color-text-inverse: #0a0a0a;
-
-  /* Action colors */
-  --color-accent: #2a8a2a;
   --color-primary: #ffaa00;
   --color-primary-hover: #ffbb33;
   --color-primary-muted: rgba(255, 170, 0, 0.12);
   --color-primary-fg: #000;
-  --color-danger: #d60202;
-  --color-danger-hover: #e52222;
-  --color-danger-muted: rgba(214, 2, 2, 0.12);
-  --color-danger-fg: #fff;
-  --color-success: #2a8a2a;
-  --color-success-fill: #215e21;
-  --color-success-muted: rgba(33, 94, 33, 0.15);
-  --color-success-fg: #fff;
-  --color-warning: #ffaa00;
-  --color-warning-muted: rgba(255, 170, 0, 0.15);
-  --color-warning-fg: #000;
-  --color-info: #2386b0;
-  --color-info-muted: rgba(35, 134, 176, 0.15);
-  --color-info-fg: #fff;
+
   --color-blocked: #a855f7;
   --color-blocked-muted: rgba(168, 85, 247, 0.15);
 
-  /* Chart palette */
   --chart-1: #2a8a2a;
   --chart-2: #2386b0;
   --chart-3: #ffaa00;
@@ -109,37 +59,10 @@
   --chart-8: #818cf8;
   --chart-9: #ec4899;
   --chart-10: #84cc16;
-
-  /* Buttons */
-  --color-btn-bg: #1a1a1a;
-  --color-btn-bg-hover: #252525;
-  --color-btn-border: #333;
-
-  /* Scrollbar */
-  --color-scrollbar-track: #111;
-  --color-scrollbar-thumb: #333;
-  --color-scrollbar-thumb-hover: #444;
-}
-
-@font-face {
-  font-family: 'Inconsolata';
-  font-style: normal;
-  font-weight: 300 700;
-  font-display: swap;
-  src: url('/ui/fonts/inconsolata.woff2') format('woff2');
 }
 
 :root {
-  /* Typography — all mono */
-  --font-mono: 'Inconsolata', 'Courier New', monospace;
-  --text-xs: 0.72rem;
-  --text-sm: 0.8rem;
-  --text-base: 0.9rem;
-  --text-lg: 1rem;
-  --text-xl: 1.1rem;
-  --text-2xl: 1.4rem;
-
-  /* Spacing */
+  /* Spacing scale (not in Chonky) */
   --space-1: 0.25rem;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
@@ -150,11 +73,6 @@
   --space-10: 2.5rem;
   --space-12: 3rem;
 
-  /* Angular — square corners */
-  --radius: 2px;
   --radius-lg: 2px;
-
-  /* Transitions */
-  --transition: 150ms ease;
   --transition-slow: 200ms ease;
 }

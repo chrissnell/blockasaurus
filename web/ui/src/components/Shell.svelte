@@ -2,9 +2,8 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
 <script>
+  import { Tabs, StatusBar, ThemeToggle } from '@chrissnell/chonky-ui'
   import ApplyButton from './ApplyButton.svelte'
-  import StatusBar from './StatusBar.svelte'
-  import ThemeToggle from './ThemeToggle.svelte'
   import { getDirtyCount, clearDirty, onDirtyChange } from '../lib/dirty.svelte.js'
   import { apply, getVersion } from '../lib/api.js'
 
@@ -43,32 +42,44 @@
   ]
 </script>
 
-<div class="shell">
-  <div class="header">
+<Tabs.Root
+  value={currentPath}
+  onValueChange={(v) => { if (v) location.hash = v }}
+  class="shell"
+>
+  <header class="header">
     <a href="#/" class="logo-link">
       <img src="/ui/blockasaurus-logo-face.svg" alt="" class="logo" />
       <h1>blockasaurus</h1>
     </a>
-    <nav class="nav">
+    <Tabs.List class="shell-tabs">
       {#each nav as item}
-        <a
-          href="#{item.path}"
-          class="nav-item"
-          class:active={currentPath === item.path}
-        >{item.label}</a>
+        <Tabs.Trigger value={item.path}>{item.label}</Tabs.Trigger>
       {/each}
-      <ThemeToggle />
-    </nav>
-  </div>
+    </Tabs.List>
+    <ThemeToggle />
+  </header>
+
   <ApplyButton pending={pendingCount} loading={applying} onclick={handleApply} />
+
   <main class="content">
     {@render children()}
   </main>
-  <StatusBar {version} pendingChanges={pendingCount} />
-</div>
+
+  <StatusBar class="shell-status">
+    {#if version}
+      <a href="https://github.com/chrissnell/blockasaurus" target="_blank" rel="noopener">
+        Blockasaurus v{version}
+      </a>
+    {/if}
+    {#if pendingCount > 0}
+      <span class="pending">{pendingCount} unsaved</span>
+    {/if}
+  </StatusBar>
+</Tabs.Root>
 
 <style>
-  .shell {
+  :global(.shell) {
     max-width: 1100px;
     margin: 0 auto;
     padding: 2rem 1rem;
@@ -81,6 +92,7 @@
     margin-bottom: 1.5rem;
     border-bottom: 1px solid var(--color-border);
     padding-bottom: 0.75rem;
+    gap: 1rem;
   }
 
   .logo-link {
@@ -101,30 +113,43 @@
     font-weight: 700;
   }
 
-  .nav {
-    display: flex;
-    gap: 1rem;
-    font-size: var(--text-sm);
-  }
-
-  .nav-item {
-    color: var(--color-text-muted);
-    text-decoration: none;
-    padding: 0.25rem 0;
-    border-bottom: 1px dotted transparent;
-    transition: color var(--transition);
-  }
-
-  .nav-item:hover {
-    color: var(--color-text);
-  }
-
-  .nav-item.active {
-    color: var(--color-accent);
-    border-bottom-color: var(--color-accent);
+  /* Let Chonky style the Tabs.List underline; we only need layout tweaks.
+     translateY aligns tab text baseline with the h1 "blockasaurus" baseline —
+     h1 is 1.4rem and tab triggers are 0.8rem, so centered in the same flex row
+     the tab baseline sits ~6px above the h1 baseline. */
+  :global(.shell-tabs) {
+    flex: 1;
+    border-bottom: none;
+    transform: translateY(3px);
   }
 
   .content {
     min-height: 80vh;
+  }
+
+  :global(.shell-status) {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 0.5rem 1rem;
+    border-top: 1px dotted var(--color-border);
+    font-size: var(--text-sm);
+    color: var(--color-text-dim);
+  }
+
+  :global(.shell-status) a {
+    color: var(--color-text-dim);
+    text-decoration: none;
+    border-bottom: 1px dotted var(--color-border);
+    transition: color var(--transition);
+  }
+
+  :global(.shell-status) a:hover {
+    color: var(--color-text);
+  }
+
+  .pending {
+    margin-left: auto;
+    color: var(--color-warning);
   }
 </style>

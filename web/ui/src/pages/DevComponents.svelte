@@ -2,340 +2,364 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
 <script>
-  import Button from '../components/Button.svelte'
-  import Badge from '../components/Badge.svelte'
-  import Card from '../components/Card.svelte'
-  import TextInput from '../components/TextInput.svelte'
-  import FormField from '../components/FormField.svelte'
-  import Select from '../components/Select.svelte'
-  import Toggle from '../components/Toggle.svelte'
-  import Spinner from '../components/Spinner.svelte'
-  import Modal from '../components/Modal.svelte'
-  import Toast from '../components/Toast.svelte'
-  import EmptyState from '../components/EmptyState.svelte'
-  import DataTable from '../components/DataTable.svelte'
-  import LogViewer from '../components/LogViewer.svelte'
-  import StatusBar from '../components/StatusBar.svelte'
-  import ApplyButton from '../components/ApplyButton.svelte'
-  import RadioGroup from '../components/RadioGroup.svelte'
+  import {
+    Button,
+    Badge,
+    Box,
+    BoxHeader,
+    StatCard,
+    Table,
+    Input,
+    Select,
+    Toggle,
+    Checkbox,
+    Radio,
+    RadioGroup,
+    Combobox,
+    Modal,
+    Spinner,
+    EmptyState,
+    Label,
+    Separator,
+    Dot,
+    Tabs,
+    Tooltip,
+    Popover,
+    ApplyBanner,
+    StatusBar,
+    ThemeToggle,
+    Toaster,
+    toast,
+  } from '@chrissnell/chonky-ui'
 
+  // Local state for interactive examples
   let modalOpen = $state(false)
-  let toastVisible = $state(false)
   let toggleChecked = $state(true)
+  let checkboxChecked = $state(false)
   let inputValue = $state('')
-  let selectValue = $state('opt1')
-  let radioValue = $state('opt1')
+  let selectValue = $state('dns')
+  let radioValue = $state('allow')
+  let comboboxOpen = $state(false)
+  let comboboxValue = $state('')
+  let tabsValue = $state('one')
+  let theme = $state(
+    typeof document !== 'undefined'
+      ? /** @type {'light' | 'dark'} */ (
+          document.documentElement.getAttribute('data-theme') || 'dark'
+        )
+      : 'dark'
+  )
 
-  const tableColumns = [
-    { key: 'name', label: 'name', sortable: true },
-    { key: 'type', label: 'type', sortable: true },
-    { key: 'status', label: 'status' },
+  const selectOptions = [
+    { value: 'dns', label: 'DNS' },
+    { value: 'http', label: 'HTTP' },
+    { value: 'tls', label: 'TLS' },
   ]
 
-  const tableRows = [
-    { name: 'ads', type: 'deny', status: 'active' },
-    { name: 'malware', type: 'deny', status: 'active' },
-    { name: 'whitelist', type: 'allow', status: 'inactive' },
-  ]
-
-  const sampleLogs = [
-    { timestamp: new Date().toISOString(), level: 'info', message: 'Server started on :4000' },
-    { timestamp: new Date().toISOString(), level: 'debug', message: 'Loading blocklist from https://example.com/list.txt' },
-    { timestamp: new Date().toISOString(), level: 'warn', message: 'Slow upstream response: 2.3s' },
-    { timestamp: new Date().toISOString(), level: 'error', message: 'Failed to refresh list: connection timeout' },
-    { timestamp: new Date().toISOString(), level: 'info', message: 'Query google.com from 192.168.1.42 -> RESOLVED (12ms)' },
-    { timestamp: new Date().toISOString(), level: 'info', message: 'Query github.com from 192.168.1.10 -> RESOLVED (8ms)' },
-    { timestamp: new Date().toISOString(), level: 'debug', message: 'Cache hit for cdn.example.com' },
-    { timestamp: new Date().toISOString(), level: 'info', message: 'Query api.stripe.com from 192.168.1.42 -> RESOLVED (15ms)' },
-    { timestamp: new Date().toISOString(), level: 'warn', message: 'Upstream 1.1.1.1 latency: 450ms' },
-    { timestamp: new Date().toISOString(), level: 'error', message: 'Blocklist update failed: DNS resolution error' },
-    { timestamp: new Date().toISOString(), level: 'info', message: 'Query example.org from 192.168.1.55 -> RESOLVED (3ms)' },
-    { timestamp: new Date().toISOString(), level: 'debug', message: 'Refreshing blocklist: ads.txt (24891 entries)' },
-    { timestamp: new Date().toISOString(), level: 'info', message: 'Query fonts.googleapis.com from 192.168.1.10 -> RESOLVED (11ms)' },
-    { timestamp: new Date().toISOString(), level: 'warn', message: 'Rate limit approaching for 192.168.1.99' },
-    { timestamp: new Date().toISOString(), level: 'info', message: 'Blocklist refresh complete: 3 lists, 148201 entries' },
+  const fruits = [
+    { value: 'apple', label: 'Apple' },
+    { value: 'banana', label: 'Banana' },
+    { value: 'cherry', label: 'Cherry' },
+    { value: 'date', label: 'Date' },
   ]
 </script>
 
-<div class="dev">
-  <h1>the blockasaurus style guide</h1>
+<Toaster />
 
-  <!-- Colors -->
-  <div class="box">
-    <h2>colors</h2>
-    <div class="swatch-grid">
-      <div class="swatch" style="background: var(--color-bg); color: var(--color-text-muted)"><span>bg</span></div>
-      <div class="swatch" style="background: var(--color-surface); color: var(--color-text-muted)"><span>surface</span></div>
-      <div class="swatch" style="background: var(--color-surface-raised); color: var(--color-text-muted)"><span>raised</span></div>
-      <div class="swatch" style="background: var(--color-primary); color: var(--color-primary-fg)"><span>primary</span></div>
-      <div class="swatch" style="background: var(--color-accent); color: var(--color-success-fg)"><span>accent</span></div>
-      <div class="swatch" style="background: var(--color-danger); color: var(--color-danger-fg)"><span>danger</span></div>
-      <div class="swatch" style="background: var(--color-warning); color: var(--color-warning-fg)"><span>warning</span></div>
-      <div class="swatch" style="background: var(--color-info); color: var(--color-info-fg)"><span>info</span></div>
+<div class="dev-page">
+  <header class="page-header">
+    <h1>Chonky UI Showcase</h1>
+    <p class="subtitle">Component gallery for @chrissnell/chonky-ui</p>
+  </header>
+
+  <!-- ============ CORE ============ -->
+  <section>
+    <h2>Core</h2>
+    <div class="grid">
+      <Box title="Button — variants">
+        <div class="row">
+          <Button>default</Button>
+          <Button variant="primary">primary</Button>
+          <Button variant="accent">accent</Button>
+          <Button variant="danger">danger</Button>
+          <Button variant="ghost">ghost</Button>
+        </div>
+      </Box>
+
+      <Box title="Button — sizes">
+        <div class="row">
+          <Button size="sm">small</Button>
+          <Button size="md">medium</Button>
+          <Button size="lg">large</Button>
+        </div>
+      </Box>
+
+      <Box title="Badge">
+        <div class="row">
+          <Badge>default</Badge>
+          <Badge variant="success">success</Badge>
+          <Badge variant="warning">warning</Badge>
+          <Badge variant="danger">danger</Badge>
+          <Badge variant="info">info</Badge>
+        </div>
+      </Box>
+
+      <Box title="Box + BoxHeader">
+        <BoxHeader>
+          <strong>Header row</strong>
+          <Badge variant="info">12</Badge>
+        </BoxHeader>
+        <p class="muted">A titled box may also include a BoxHeader row.</p>
+      </Box>
+
+      <Box title="StatCard">
+        <div class="row">
+          <StatCard label="queries" value="1,284" />
+          <StatCard label="blocked" value="73" variant="danger" />
+          <StatCard label="uptime" value="99.9%" variant="success" />
+        </div>
+      </Box>
+
+      <Box title="Table">
+        <Table>
+          <thead>
+            <tr><th>name</th><th>type</th><th>status</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>ads</td><td>deny</td><td><Badge variant="success">active</Badge></td></tr>
+            <tr><td>malware</td><td>deny</td><td><Badge variant="success">active</Badge></td></tr>
+            <tr><td>whitelist</td><td>allow</td><td><Badge>inactive</Badge></td></tr>
+          </tbody>
+        </Table>
+      </Box>
+
+      <Box title="Label, Separator, Dot">
+        <Label for="demo-input">A label</Label>
+        <Separator />
+        <div class="row">
+          <span><Dot /> off</span>
+          <span><Dot on /> on</span>
+        </div>
+      </Box>
     </div>
-  </div>
+  </section>
 
-  <!-- Typography -->
-  <div class="box">
-    <h2>typography</h2>
-    <p style="font-size: var(--text-2xl); font-weight: 700">heading 2xl (1.4rem)</p>
-    <p style="font-size: var(--text-xl); font-weight: 700">heading xl (1.1rem)</p>
-    <p style="font-size: var(--text-lg); font-weight: 700">heading lg (1rem)</p>
-    <p style="font-size: var(--text-base)">body base (0.9rem)</p>
-    <p style="font-size: var(--text-sm); color: var(--color-text-muted)">body small (0.8rem)</p>
-    <p style="font-size: var(--text-xs); color: var(--color-text-dim)">caption (0.72rem)</p>
-    <p style="font-size: var(--text-sm)">all Inconsolata — monospace everywhere</p>
-  </div>
+  <!-- ============ FORM ============ -->
+  <section>
+    <h2>Form</h2>
+    <div class="grid">
+      <Box title="Input">
+        <Label for="demo-input">Name</Label>
+        <Input id="demo-input" bind:value={inputValue} placeholder="type something…" />
+        <p class="muted">value: {inputValue || '(empty)'}</p>
+      </Box>
 
-  <!-- Buttons -->
-  <div class="box">
-    <h2>buttons</h2>
-    <div class="row">
-      <Button>default</Button>
-      <Button variant="primary">primary</Button>
-      <Button variant="accent">accent</Button>
-      <Button variant="danger">danger</Button>
-      <Button variant="ghost">ghost</Button>
+      <Box title="Select">
+        <Select options={selectOptions} bind:value={selectValue} placeholder="Pick a protocol" />
+        <p class="muted">selected: {selectValue}</p>
+      </Box>
+
+      <Box title="Toggle">
+        <Toggle bind:checked={toggleChecked} label="enabled" />
+      </Box>
+
+      <Box title="Checkbox">
+        <Checkbox bind:checked={checkboxChecked} label="I agree" />
+      </Box>
+
+      <Box title="RadioGroup">
+        <RadioGroup bind:value={radioValue} name="demo-radio">
+          <Radio value="allow" label="allow" />
+          <Radio value="deny" label="deny" />
+          <Radio value="log" label="log only" />
+        </RadioGroup>
+        <p class="muted">selected: {radioValue}</p>
+      </Box>
+
+      <Box title="Combobox">
+        <Combobox.Root bind:open={comboboxOpen} bind:value={comboboxValue}>
+          <Combobox.Input placeholder="Pick a fruit…" />
+          <Combobox.Trigger>▾</Combobox.Trigger>
+          <Combobox.Content>
+            {#each fruits as f}
+              <Combobox.Item value={f.value} label={f.label}>{f.label}</Combobox.Item>
+            {/each}
+          </Combobox.Content>
+        </Combobox.Root>
+        <p class="muted">selected: {comboboxValue || '(none)'}</p>
+      </Box>
     </div>
-    <div class="row">
-      <Button loading={true}>loading</Button>
-      <Button disabled={true}>disabled</Button>
+  </section>
+
+  <!-- ============ OVERLAY ============ -->
+  <section>
+    <h2>Overlay</h2>
+    <div class="grid">
+      <Box title="Modal">
+        <Button variant="primary" onclick={() => (modalOpen = true)}>open modal</Button>
+        <Modal bind:open={modalOpen}>
+          <Modal.Header>
+            <strong>Example modal</strong>
+            <Modal.Close />
+          </Modal.Header>
+          <Modal.Body>
+            <p>This is a Chonky modal dialog. Click outside or press escape to close.</p>
+          </Modal.Body>
+          <Modal.Footer>
+            <Button onclick={() => (modalOpen = false)}>cancel</Button>
+            <Button variant="primary" onclick={() => (modalOpen = false)}>ok</Button>
+          </Modal.Footer>
+        </Modal>
+      </Box>
+
+      <Box title="Tooltip">
+        <Tooltip.Root>
+          <Tooltip.Trigger>
+            <Button>hover me</Button>
+          </Tooltip.Trigger>
+          <Tooltip.Content>A helpful hint</Tooltip.Content>
+        </Tooltip.Root>
+      </Box>
+
+      <Box title="Popover">
+        <Popover.Root>
+          <Popover.Trigger>
+            <Button>open popover</Button>
+          </Popover.Trigger>
+          <Popover.Content>
+            <div class="popover-body">
+              <strong>Popover content</strong>
+              <p class="muted">Any markup you like.</p>
+            </div>
+          </Popover.Content>
+        </Popover.Root>
+      </Box>
     </div>
-    <div class="row">
-      <Button size="sm">small</Button>
-      <Button size="md">medium</Button>
-      <Button size="lg">large</Button>
+  </section>
+
+  <!-- ============ NAVIGATION ============ -->
+  <section>
+    <h2>Navigation</h2>
+    <div class="grid">
+      <Box title="Tabs">
+        <Tabs.Root bind:value={tabsValue}>
+          <Tabs.List>
+            <Tabs.Trigger value="one">One</Tabs.Trigger>
+            <Tabs.Trigger value="two">Two</Tabs.Trigger>
+            <Tabs.Trigger value="three">Three</Tabs.Trigger>
+          </Tabs.List>
+          <Tabs.Content value="one">First panel content.</Tabs.Content>
+          <Tabs.Content value="two">Second panel content.</Tabs.Content>
+          <Tabs.Content value="three">Third panel content.</Tabs.Content>
+        </Tabs.Root>
+      </Box>
+
+      <Box title="ThemeToggle">
+        <ThemeToggle bind:theme />
+        <p class="muted">current: {theme}</p>
+      </Box>
     </div>
-  </div>
+  </section>
 
-  <!-- Badges -->
-  <div class="box">
-    <h2>badges</h2>
-    <div class="row">
-      <Badge variant="success">active</Badge>
-      <Badge variant="warning">pending</Badge>
-      <Badge variant="danger">error</Badge>
-      <Badge variant="info">info</Badge>
-      <Badge variant="neutral">default</Badge>
+  <!-- ============ FEEDBACK ============ -->
+  <section>
+    <h2>Feedback</h2>
+    <div class="grid">
+      <Box title="Spinner">
+        <div class="row">
+          <Spinner size={16} />
+          <Spinner size={24} />
+          <Spinner size={32} />
+        </div>
+      </Box>
+
+      <Box title="EmptyState">
+        <EmptyState>
+          <p>Nothing to see here.</p>
+          <Button size="sm">create one</Button>
+        </EmptyState>
+      </Box>
+
+      <Box title="ApplyBanner">
+        <ApplyBanner count={3} onApply={() => toast('applied!')} />
+      </Box>
+
+      <Box title="StatusBar">
+        <StatusBar>
+          <span><Dot on /> connected</span>
+          <span>v0.33.40</span>
+          <span>ready</span>
+        </StatusBar>
+      </Box>
+
+      <Box title="Toast">
+        <div class="row">
+          <Button onclick={() => toast('hello')}>fire toast</Button>
+          <Button variant="primary" onclick={() => toast('saved successfully', 'success')}>
+            success toast
+          </Button>
+          <Button variant="danger" onclick={() => toast('something broke', 'danger')}>
+            danger toast
+          </Button>
+        </div>
+      </Box>
     </div>
-  </div>
-
-  <!-- Form Controls -->
-  <div class="box">
-    <h2>form controls</h2>
-    <div class="grid-2">
-      <div>
-        <FormField label="text input">
-          <TextInput bind:value={inputValue} placeholder="type something..." />
-        </FormField>
-        <FormField label="with error" error="this field is required">
-          <TextInput value="" placeholder="invalid input" />
-        </FormField>
-      </div>
-      <div>
-        <FormField label="select">
-          <Select
-            bind:value={selectValue}
-            options={[
-              { value: 'opt1', label: 'option one' },
-              { value: 'opt2', label: 'option two' },
-              { value: 'opt3', label: 'option three' },
-            ]}
-          />
-        </FormField>
-        <FormField label="toggle">
-          <Toggle bind:checked={toggleChecked} label="enable feature" />
-        </FormField>
-      </div>
-    </div>
-  </div>
-
-  <!-- Radio Buttons -->
-  <div class="box">
-    <h2>radio buttons</h2>
-    <div class="grid-2">
-      <RadioGroup
-        name="demo"
-        bind:value={radioValue}
-        options={[
-          { value: 'opt1', label: 'option one' },
-          { value: 'opt2', label: 'option two' },
-          { value: 'opt3', label: 'option three' },
-        ]}
-      />
-      <RadioGroup
-        name="demo-disabled"
-        value="opt1"
-        disabled={true}
-        options={[
-          { value: 'opt1', label: 'enabled' },
-          { value: 'opt2', label: 'disabled' },
-        ]}
-      />
-    </div>
-  </div>
-
-  <!-- Cards -->
-  <div class="box">
-    <h2>cards (boxes)</h2>
-    <div class="grid-2">
-      <Card title="basic card">
-        <p class="dim">card body content with descriptive text.</p>
-      </Card>
-      <Card title="with actions">
-        {#snippet actions()}
-          <Button size="sm" variant="ghost">edit</Button>
-        {/snippet}
-        <p class="dim">card with action buttons in header.</p>
-      </Card>
-    </div>
-  </div>
-
-  <!-- Data Table -->
-  <div class="box">
-    <h2>data table</h2>
-    <DataTable columns={tableColumns} rows={tableRows}>
-      {#snippet rowActions(row)}
-        <Button size="sm">edit</Button>
-        <Button size="sm" variant="danger">delete</Button>
-      {/snippet}
-    </DataTable>
-  </div>
-
-  <!-- Empty State -->
-  <div class="box">
-    <h2>empty state</h2>
-    <EmptyState message="no results found">
-      <Button size="sm">clear filters</Button>
-    </EmptyState>
-  </div>
-
-  <!-- Log Viewer -->
-  <div class="box">
-    <h2>log viewer</h2>
-    <div class="log-container">
-      <LogViewer entries={sampleLogs} connected={true} />
-    </div>
-  </div>
-
-  <!-- Apply Button -->
-  <div class="box">
-    <h2>apply button</h2>
-    <ApplyButton pending={3} />
-  </div>
-
-  <!-- Modal -->
-  <div class="box">
-    <h2>modal</h2>
-    <Button onclick={() => modalOpen = true}>open modal</Button>
-    <Modal bind:open={modalOpen} title="confirm action">
-      <p>are you sure you want to proceed?</p>
-      {#snippet actions()}
-        <Button onclick={() => modalOpen = false}>cancel</Button>
-        <Button variant="accent" onclick={() => modalOpen = false}>confirm</Button>
-      {/snippet}
-    </Modal>
-  </div>
-
-  <!-- Toast -->
-  <div class="box">
-    <h2>toast</h2>
-    <Button onclick={() => toastVisible = true}>show toast</Button>
-    <Toast bind:visible={toastVisible} variant="success" duration={3000}>
-      changes saved successfully
-    </Toast>
-  </div>
-
-  <!-- Spinner -->
-  <div class="box">
-    <h2>spinner</h2>
-    <div class="row">
-      <Spinner size={12} />
-      <Spinner size={16} />
-      <Spinner size={24} />
-      <Spinner size={32} />
-    </div>
-  </div>
-
-  <!-- Status Bar -->
-  <div class="box">
-    <h2>status bar</h2>
-    <StatusBar connected={true} version="1.0.0" pendingChanges={2} />
-  </div>
+  </section>
 </div>
 
 <style>
-  .dev {
-    max-width: 900px;
+  .dev-page {
+    padding: 1.5rem;
+    max-width: 1200px;
     margin: 0 auto;
   }
 
-  h1 {
-    font-size: var(--text-2xl);
-    font-weight: 700;
-    margin-bottom: 1.5rem;
+  .page-header {
+    margin-bottom: 2rem;
   }
 
-  .box {
-    border: 1px solid var(--color-border);
-    padding: 1.5rem;
-    margin-bottom: 1rem;
-    background: var(--color-surface);
-    border-radius: var(--radius);
+  .page-header h1 {
+    margin: 0 0 0.25rem 0;
   }
 
-  h2 {
-    font-size: var(--text-sm);
-    font-weight: 700;
+  .subtitle {
+    margin: 0;
+    opacity: 0.7;
+  }
+
+  section {
+    margin-bottom: 2.5rem;
+  }
+
+  section h2 {
+    margin: 0 0 1rem 0;
+    font-size: 1.1rem;
     text-transform: uppercase;
-    letter-spacing: 0.1em;
-    color: var(--color-text-muted);
-    margin-bottom: 0.75rem;
-    padding-bottom: 0.25rem;
-    border-bottom: 1px dotted var(--color-border-subtle);
+    letter-spacing: 0.08em;
+    opacity: 0.8;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 1rem;
   }
 
   .row {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 0.5rem;
-    flex-wrap: wrap;
-    margin-bottom: 0.5rem;
   }
 
-  .grid-2 {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1rem;
+  .muted {
+    margin: 0.5rem 0 0 0;
+    opacity: 0.6;
+    font-size: 0.85rem;
   }
 
-  .swatch-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
-    gap: 0.5rem;
-  }
-
-  .swatch {
-    height: 48px;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius);
-    display: flex;
-    align-items: flex-end;
-    padding: 0.25rem;
-  }
-
-  .swatch span {
-    font-size: var(--text-xs);
-    font-weight: 700;
-    color: inherit;
-  }
-
-  .dim {
-    color: var(--color-text-muted);
-    font-size: var(--text-sm);
-  }
-
-  .log-container {
-    height: 220px;
+  .popover-body {
+    padding: 0.5rem 0.75rem;
+    min-width: 180px;
   }
 </style>

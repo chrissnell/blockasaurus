@@ -2,15 +2,17 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
 <script>
-  import Card from '../components/Card.svelte'
-  import Button from '../components/Button.svelte'
+  import {
+    Box,
+    Button,
+    Table,
+    Modal,
+    Label,
+    Input,
+    EmptyState,
+    Combobox,
+  } from '@chrissnell/chonky-ui'
   import CopyButton from '../components/CopyButton.svelte'
-  import DataTable from '../components/DataTable.svelte'
-  import Modal from '../components/Modal.svelte'
-  import FormField from '../components/FormField.svelte'
-  import TextInput from '../components/TextInput.svelte'
-  import EmptyState from '../components/EmptyState.svelte'
-  import Autocomplete from '../components/Autocomplete.svelte'
   import { clientGroups, getDiscoveredClients, getEndpointInfo } from '../lib/api.js'
   import { markDirty } from '../lib/dirty.svelte.js'
 
@@ -32,12 +34,45 @@
   // Endpoint configuration (loaded once)
   let endpointInfo = $state(null)
 
-  // --- List view ---
-  const columns = [
-    { key: 'name', label: 'Name', sortable: true },
-    { key: 'clients', label: 'Clients', render: (r) => `${r.clients?.length || 0}` },
-    { key: 'groups', label: 'Blocklist Groups', render: (r) => `${r.groups?.length || 0}` },
-  ]
+  // --- Combobox state (for Clients add) ---
+  let comboValue = $state('')
+  let comboInputValue = $state('')
+
+  // --- Sort state for groups list ---
+  let sortKey = $state('name')
+  let sortDir = $state('asc')
+
+  let sortedGroups = $derived.by(() => {
+    const arr = [...groups]
+    arr.sort((a, b) => {
+      const av = (a?.[sortKey] ?? '').toString().toLowerCase()
+      const bv = (b?.[sortKey] ?? '').toString().toLowerCase()
+      if (av < bv) return sortDir === 'asc' ? -1 : 1
+      if (av > bv) return sortDir === 'asc' ? 1 : -1
+      return 0
+    })
+    return arr
+  })
+
+  function toggleSort(key) {
+    if (sortKey === key) {
+      sortDir = sortDir === 'asc' ? 'desc' : 'asc'
+    } else {
+      sortKey = key
+      sortDir = 'asc'
+    }
+  }
+
+  // Filtered discovered suggestions based on input text
+  let filteredDiscovered = $derived.by(() => {
+    const q = (comboInputValue || '').toLowerCase()
+    if (!q) return discovered
+    return discovered.filter(s => {
+      return s.ip?.toLowerCase().includes(q)
+        || s.mac?.toLowerCase().includes(q)
+        || s.hostname?.toLowerCase().includes(q)
+    })
+  })
 
   async function load() {
     loading = true
@@ -440,6 +475,32 @@
     load()
   }
 
+  // Combobox: selection via click / keyboard-enter on an item
+  function handleComboValueChange(v) {
+    if (!v) return
+    // v is the IP of a discovered item
+    addClient(v)
+    // Reset combobox state so the user can add another
+    comboValue = ''
+    comboInputValue = ''
+  }
+
+  // Combobox: allow free-form entry via Enter when no item is highlighted/selected
+  function handleComboKeydown(e) {
+    if (e.key === 'Enter') {
+      const raw = (comboInputValue || '').trim()
+      if (!raw) return
+      // If the input text exactly matches a discovered IP, let onValueChange handle it.
+      const match = discovered.find(d => d.ip === raw)
+      if (match) return
+      // Otherwise treat as free-form (CIDR / hostname / arbitrary IP)
+      e.preventDefault()
+      addClient(raw)
+      comboValue = ''
+      comboInputValue = ''
+    }
+  }
+
   load()
 </script>
 
@@ -452,10 +513,10 @@
     </div>
 
     {#if detailLoading}
-      <EmptyState message="Loading..." />
+      <EmptyState>Loading...</EmptyState>
     {:else}
       <!-- Clients Card -->
-      <Card title="Clients">
+      <Box title="Clients">
         <div class="chip-list">
           {#each selected.clients as client}
             <span class="chip">
@@ -467,30 +528,54 @@
           {/each}
         </div>
         <div class="add-section">
-          <Autocomplete
-            suggestions={discovered}
-            placeholder="type IP, CIDR, or hostname — autocomplete from network"
-            onadd={addClient}
-          />
+          <div class="combo-wrapper">
+            <Combobox.Root
+              type="single"
+              bind:value={comboValue}
+              bind:inputValue={comboInputValue}
+              onValueChange={handleComboValueChange}
+            >
+              <Combobox.Input
+                class="combo-input"
+                placeholder="type IP, CIDR, or hostname — autocomplete from network"
+                onkeydown={handleComboKeydown}
+              />
+              {#if filteredDiscovered.length > 0}
+                <Combobox.Content class="combo-content">
+                  {#each filteredDiscovered as item (item.ip)}
+                    <Combobox.Item value={item.ip} label={item.ip}>
+                      <span class="item-ip">{item.ip}</span>
+                      {#if item.mac}
+                        <span class="item-mac">{item.mac}</span>
+                      {/if}
+                      {#if item.hostname}
+                        <span class="item-host">{item.hostname}</span>
+                      {/if}
+                    </Combobox.Item>
+                  {/each}
+                </Combobox.Content>
+              {/if}
+            </Combobox.Root>
+          </div>
           {#if discovered.length > 0}
             <p class="hint">{discovered.length} device{discovered.length === 1 ? '' : 's'} discovered on network</p>
           {/if}
         </div>
-      </Card>
+      </Box>
 
       <!-- Blocklists Card -->
-      <Card title="Blocklists">
+      <Box title="Blocklists">
         <p class="blocklist-hint">
           Go to the <a href="#/blocklists" class="inline-link">blocklists</a> tab and click <strong>Groups</strong> to add individual blocklists to your client group(s).
         </p>
-      </Card>
+      </Box>
 
       <!-- Setup Guide Card -->
       {#if endpointInfo && selected.slug}
         {@const tabs = getSetupTabs(selected.slug, endpointInfo)}
         {@const currentTab = tabs.find(t => t.id === activeTab) ? activeTab : tabs[0]?.id}
         {#if tabs.length > 0}
-          <Card title="Setup Guide">
+          <Box title="Setup Guide">
             <p class="setup-intro">
               Follow the instructions below to set up blockasaurus on your device, browser, or router.
             </p>
@@ -562,53 +647,86 @@
                 </div>
               {/if}
             {/each}
-          </Card>
+          </Box>
         {/if}
       {/if}
 
     {/if}
   {:else}
     <!-- LIST VIEW -->
-    <h1 class="page-title">Client Groups</h1>
+    <div class="page-header">
+      <h1 class="page-title">Client Groups</h1>
+      <Button size="sm" onclick={openCreate}>Add Group</Button>
+    </div>
 
-    <Card>
-      {#snippet actions()}
-        <Button size="sm" onclick={openCreate}>Add Group</Button>
-      {/snippet}
+    <Box>
       {#if loading}
-        <EmptyState message="Loading..." />
+        <EmptyState>Loading...</EmptyState>
       {:else if groups.length === 0}
-        <EmptyState message="no client groups configured">
+        <EmptyState>
+          <p>no client groups configured</p>
           <Button size="sm" onclick={openCreate}>Create your first group</Button>
         </EmptyState>
       {:else}
-        <DataTable {columns} rows={groups}>
-          {#snippet rowActions(row)}
-            <Button size="sm" onclick={() => openDetail(row)}>Manage</Button>
-            {#if row.name !== 'default'}
-              <Button size="sm" variant="danger" onclick={() => remove(row.name)}>Delete</Button>
-            {/if}
-          {/snippet}
-        </DataTable>
+        <Table>
+          <thead>
+            <tr>
+              <th class="sortable" onclick={() => toggleSort('name')}>
+                Name {#if sortKey === 'name'}<span class="sort-ind">{sortDir === 'asc' ? '▲' : '▼'}</span>{/if}
+              </th>
+              <th>Clients</th>
+              <th>Blocklist Groups</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each sortedGroups as row (row.name)}
+              <tr>
+                <td>{row.name}</td>
+                <td>{row.clients?.length || 0}</td>
+                <td>{row.groups?.length || 0}</td>
+                <td>
+                  <Button size="sm" onclick={() => openDetail(row)}>Manage</Button>
+                  {#if row.name !== 'default'}
+                    <Button size="sm" variant="danger" onclick={() => remove(row.name)}>Delete</Button>
+                  {/if}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </Table>
       {/if}
-    </Card>
+    </Box>
   {/if}
 </div>
 
 <!-- Create Group Modal (name only) -->
-<Modal bind:open={createOpen} title="New Client Group">
-  <FormField label="Name">
-    <TextInput bind:value={createName} placeholder="e.g. kids" />
-  </FormField>
-  <p class="modal-hint">You can add clients after creating the group.</p>
-  {#snippet actions()}
+<Modal bind:open={createOpen}>
+  <Modal.Header>
+    <h2>New Client Group</h2>
+  </Modal.Header>
+  <Modal.Body>
+    <Label>
+      Name
+      <Input bind:value={createName} placeholder="e.g. kids" />
+    </Label>
+    <p class="modal-hint">You can add clients after creating the group.</p>
+  </Modal.Body>
+  <Modal.Footer>
     <Button onclick={() => createOpen = false}>Cancel</Button>
-    <Button onclick={create} disabled={!createName.trim()}>Create</Button>
-  {/snippet}
+    <Button variant="primary" onclick={create} disabled={!createName.trim()}>Create</Button>
+  </Modal.Footer>
 </Modal>
 
 <style>
   .page { max-width: 1000px; }
+  .page-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    margin-bottom: var(--space-6);
+  }
   .page-title {
     font-size: var(--text-2xl);
     font-weight: 700;
@@ -703,6 +821,69 @@
     color: var(--color-text-dim);
     margin-top: 0.5rem;
   }
+
+  /* Sortable table headers */
+  th.sortable {
+    cursor: pointer;
+    user-select: none;
+  }
+  th.sortable:hover { color: var(--color-text); }
+  .sort-ind {
+    font-size: 0.7em;
+    margin-left: 0.25em;
+  }
+
+  /* Combobox */
+  .combo-wrapper :global(.chonky-combobox-root) {
+    display: flex;
+    width: 100%;
+  }
+  .combo-wrapper :global(.combo-input) {
+    font-family: inherit;
+    font-size: var(--text-base);
+    width: 100%;
+    padding: 0.5rem;
+    background: var(--color-bg);
+    border: 1px solid var(--color-btn-border);
+    border-radius: var(--radius);
+    color: var(--color-text);
+    outline: none;
+    transition: border-color var(--transition);
+  }
+  .combo-wrapper :global(.combo-input::placeholder) { color: var(--color-text-dim); }
+  .combo-wrapper :global(.combo-input:focus) { border-color: var(--color-accent); }
+
+  :global(.combo-content) {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    max-height: 220px;
+    overflow-y: auto;
+    z-index: 50;
+    min-width: var(--bits-combobox-anchor-width, 20rem);
+    padding: 0.25rem;
+  }
+  :global(.combo-content [data-combobox-item]) {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+    width: 100%;
+    padding: 0.4rem 0.5rem;
+    border-radius: var(--radius);
+    color: var(--color-text);
+    font-family: inherit;
+    font-size: var(--text-sm);
+    text-align: left;
+    cursor: pointer;
+    outline: none;
+  }
+  :global(.combo-content [data-combobox-item][data-highlighted]),
+  :global(.combo-content [data-combobox-item]:hover) {
+    background: var(--color-btn-bg-hover);
+  }
+  .item-ip { font-weight: 600; min-width: 8em; }
+  .item-mac { color: var(--color-text-dim); font-family: var(--font-mono); font-size: var(--text-xs); }
+  .item-host { color: var(--color-text-muted); font-size: var(--text-xs); }
 
   /* Setup Guide */
 

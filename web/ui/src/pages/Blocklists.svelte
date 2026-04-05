@@ -2,14 +2,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
 <script>
-  import Card from '../components/Card.svelte'
-  import Button from '../components/Button.svelte'
-  import DataTable from '../components/DataTable.svelte'
-  import Modal from '../components/Modal.svelte'
-  import FormField from '../components/FormField.svelte'
-  import TextInput from '../components/TextInput.svelte'
-  import Toggle from '../components/Toggle.svelte'
-  import EmptyState from '../components/EmptyState.svelte'
+  import { Button, Box, Table, Modal, EmptyState, Input, Label, Toggle } from '@chrissnell/chonky-ui'
   import { blocklistSources, clientGroups } from '../lib/api.js'
   import { markDirty } from '../lib/dirty.svelte.js'
 
@@ -43,12 +36,6 @@
   function groupCount(groupName) {
     return groups.filter(g => g.groups?.includes(groupName)).length
   }
-
-  const columns = [
-    { key: 'source', label: 'Source' },
-    { key: 'enabled', label: 'Status', render: (r) => r.enabled ? '✓' : '—' },
-    { key: 'group_name', label: 'Client Groups', render: (r) => `${groupCount(r.group_name)}` },
-  ]
 
   async function load() {
     loading = true
@@ -149,76 +136,126 @@
 </script>
 
 <div class="page">
-  <h1 class="page-title">Blocklist Sources</h1>
+  <div class="page-header">
+    <h1 class="page-title">Blocklist Sources</h1>
+    <Button size="sm" onclick={openNew}>Add Source</Button>
+  </div>
 
-  <Card>
-    {#snippet actions()}
-      <Button size="sm" onclick={openNew}>Add Source</Button>
-    {/snippet}
+  <Box>
     {#if loading}
-      <EmptyState message="Loading..." />
+      <EmptyState>Loading...</EmptyState>
     {:else if sources.length === 0}
-      <EmptyState message="no blocklist sources configured">
+      <EmptyState>
+        <p>no blocklist sources configured</p>
         <Button size="sm" onclick={openNew}>Add your first source</Button>
       </EmptyState>
     {:else}
-      <DataTable {columns} rows={sources}>
-        {#snippet rowActions(row)}
-          <Button size="sm" onclick={() => openAssign(row)}>Groups</Button>
-          <Button size="sm" onclick={() => openEdit(row)}>Edit</Button>
-          <Button size="sm" variant="danger" onclick={() => remove(row.id)}>Delete</Button>
-        {/snippet}
-      </DataTable>
+      <Table>
+          <thead>
+            <tr>
+              <th>Source</th>
+              <th>Status</th>
+              <th>Client Groups</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+          {#each sources as row}
+            <tr>
+              <td>{row.source}</td>
+              <td>{row.enabled ? '✓' : '—'}</td>
+              <td>{groupCount(row.group_name)}</td>
+              <td>
+                <div class="row-actions">
+                  <Button size="sm" onclick={() => openAssign(row)}>Groups</Button>
+                  <Button size="sm" onclick={() => openEdit(row)}>Edit</Button>
+                  <Button size="sm" variant="danger" onclick={() => remove(row.id)}>Delete</Button>
+                </div>
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </Table>
     {/if}
-  </Card>
+  </Box>
 </div>
 
 <!-- Create/Edit Source Modal -->
-<Modal bind:open={editOpen} title={editId ? 'Edit Source' : 'New Blocklist Source'}>
-  <FormField label="Source">
-    <TextInput bind:value={form.source} placeholder="https://example.com/blocklist.txt" />
-  </FormField>
-  <FormField label="Enabled">
-    <Toggle bind:checked={form.enabled} />
-  </FormField>
-  {#snippet actions()}
+<Modal bind:open={editOpen}>
+  <Modal.Header>
+    <h2>{editId ? 'Edit Source' : 'New Blocklist Source'}</h2>
+  </Modal.Header>
+  <Modal.Body>
+    <div class="field">
+      <Label>Source</Label>
+      <Input bind:value={form.source} placeholder="https://example.com/blocklist.txt" />
+    </div>
+    <div class="field">
+      <Label>Enabled</Label>
+      <Toggle bind:checked={form.enabled} />
+    </div>
+  </Modal.Body>
+  <Modal.Footer>
     <Button onclick={() => editOpen = false}>Cancel</Button>
     <Button onclick={save}>Save</Button>
-  {/snippet}
+  </Modal.Footer>
 </Modal>
 
 <!-- Group Assignment Modal -->
-<Modal bind:open={assignOpen} title="Assign to Client Groups">
-  {#if groups.length === 0}
-    <p class="empty-hint">No client groups exist yet. Create one from the Client Groups page.</p>
-  {:else}
-    <div class="assign-actions">
-      <Button size="sm" onclick={selectAll}>All</Button>
-      <Button size="sm" onclick={selectNone}>None</Button>
-    </div>
-    <div class="assign-list">
-      {#each groups as g}
-        <label class="assign-row">
-          <input type="checkbox" bind:checked={assignChecked[g.name]} />
-          <span>{g.name}</span>
-        </label>
-      {/each}
-    </div>
-  {/if}
-  {#snippet actions()}
+<Modal bind:open={assignOpen}>
+  <Modal.Header>
+    <h2>Assign to Client Groups</h2>
+  </Modal.Header>
+  <Modal.Body>
+    {#if groups.length === 0}
+      <p class="empty-hint">No client groups exist yet. Create one from the Client Groups page.</p>
+    {:else}
+      <div class="assign-actions">
+        <Button size="sm" onclick={selectAll}>All</Button>
+        <Button size="sm" onclick={selectNone}>None</Button>
+      </div>
+      <div class="assign-list">
+        {#each groups as g}
+          <label class="assign-row">
+            <input type="checkbox" bind:checked={assignChecked[g.name]} />
+            <span>{g.name}</span>
+          </label>
+        {/each}
+      </div>
+    {/if}
+  </Modal.Body>
+  <Modal.Footer>
     <Button onclick={() => assignOpen = false}>Cancel</Button>
     {#if groups.length > 0}
       <Button onclick={saveAssignments}>Save</Button>
     {/if}
-  {/snippet}
+  </Modal.Footer>
 </Modal>
 
 <style>
   .page { max-width: 1000px; }
+  .page-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    margin-bottom: var(--space-6);
+  }
   .page-title {
     font-size: var(--text-2xl);
     font-weight: 700;
-    margin-bottom: var(--space-6);
+  }
+
+  .row-actions {
+    display: flex;
+    gap: var(--space-2);
+  }
+
+  .field {
+    margin-bottom: var(--space-4);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
   }
 
   .empty-hint {

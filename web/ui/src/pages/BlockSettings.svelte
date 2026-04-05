@@ -2,12 +2,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
 <script>
-  import Card from '../components/Card.svelte'
-  import Button from '../components/Button.svelte'
-  import FormField from '../components/FormField.svelte'
-  import Select from '../components/Select.svelte'
-  import TextInput from '../components/TextInput.svelte'
-  import Toast from '../components/Toast.svelte'
+  import { Box, Button, Label, Select, Input, Toaster, toast } from '@chrissnell/chonky-ui'
   import { blockSettings } from '../lib/api.js'
   import { markDirty } from '../lib/dirty.svelte.js'
 
@@ -15,9 +10,6 @@
   let blockTTL = $state('1m')
   let loading = $state(true)
   let saving = $state(false)
-  let toastVisible = $state(false)
-  let toastMessage = $state('')
-  let toastVariant = $state('success')
 
   async function load() {
     loading = true
@@ -34,14 +26,11 @@
     try {
       await blockSettings.update({ block_type: blockType, block_ttl: blockTTL })
       markDirty()
-      toastVariant = 'success'
-      toastMessage = 'Block settings saved'
+      toast('Block settings saved', 'success')
     } catch (e) {
-      toastVariant = 'danger'
-      toastMessage = e.message
+      toast(e.message, 'danger')
     }
     saving = false
-    toastVisible = true
   }
 
   load()
@@ -50,25 +39,31 @@
 <div class="page">
   <h1 class="page-title">Block Settings</h1>
 
-  <Card title="Response Behavior" loading={loading}>
-    <div class="form-layout">
-      <FormField label="Block Type">
-        <Select bind:value={blockType} options={[
-          { value: 'ZEROIP', label: 'Zero IP (0.0.0.0)' },
-          { value: 'NXDOMAIN', label: 'NXDOMAIN' },
-        ]} />
-      </FormField>
-      <FormField label="Block TTL">
-        <TextInput bind:value={blockTTL} placeholder="1m, 30s, 1h" />
-      </FormField>
-      <div class="form-actions">
-        <Button onclick={save} loading={saving}>Save Settings</Button>
+  <div class:loading-state={loading}>
+    <Box title="Response Behavior">
+      <div class="form-layout">
+        <div class="form-field">
+          <Label for="block-type">Block Type</Label>
+          <Select id="block-type" bind:value={blockType} options={[
+            { value: 'ZEROIP', label: 'Zero IP (0.0.0.0)' },
+            { value: 'NXDOMAIN', label: 'NXDOMAIN' },
+          ]} />
+        </div>
+        <div class="form-field">
+          <Label for="block-ttl">Block TTL</Label>
+          <Input id="block-ttl" bind:value={blockTTL} placeholder="1m, 30s, 1h" />
+        </div>
+        <div class="form-actions">
+          <Button onclick={save} disabled={saving}>
+            {saving ? 'Saving...' : 'Save Settings'}
+          </Button>
+        </div>
       </div>
-    </div>
-  </Card>
+    </Box>
+  </div>
 </div>
 
-<Toast bind:visible={toastVisible} variant={toastVariant}>{toastMessage}</Toast>
+<Toaster />
 
 <style>
   .page { max-width: 600px; }
@@ -77,10 +72,19 @@
     font-weight: 700;
     margin-bottom: var(--space-6);
   }
+  .loading-state {
+    opacity: 0.5;
+    pointer-events: none;
+  }
   .form-layout {
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
+  }
+  .form-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
   }
   .form-actions {
     display: flex;

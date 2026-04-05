@@ -2,15 +2,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
 <script>
-  import Card from '../components/Card.svelte'
-  import Button from '../components/Button.svelte'
-  import DataTable from '../components/DataTable.svelte'
-  import Modal from '../components/Modal.svelte'
-  import FormField from '../components/FormField.svelte'
-  import TextInput from '../components/TextInput.svelte'
-  import Select from '../components/Select.svelte'
-  import Toggle from '../components/Toggle.svelte'
-  import EmptyState from '../components/EmptyState.svelte'
+  import { Box, Button, Table, Modal, Input, Select, Toggle, EmptyState } from '@chrissnell/chonky-ui'
   import { domainEntries, clientGroups } from '../lib/api.js'
   import { markDirty } from '../lib/dirty.svelte.js'
 
@@ -34,6 +26,10 @@
   let assignEntry = $state(null)
   let assignChecked = $state({})
 
+  // Sort state
+  let sortKey = $state('')
+  let sortDir = $state('asc')
+
   const typeLabels = {
     exact_deny: 'Exact block',
     regex_deny: 'Regex block',
@@ -48,11 +44,33 @@
 
   const columns = [
     { key: 'domain', label: 'Domain/RegEx', sortable: true },
-    { key: 'entry_type', label: 'Type', render: (r) => typeLabels[r.entry_type] ?? r.entry_type },
-    { key: 'enabled', label: 'Status', render: (r) => r.enabled ? '✓' : '—' },
+    { key: 'entry_type', label: 'Type' },
+    { key: 'enabled', label: 'Status' },
     { key: 'comment', label: 'Comment' },
-    { key: 'group_name', label: 'Client Groups', render: (r) => `${groupCount(r.group_name)}` },
+    { key: 'group_name', label: 'Client Groups' },
   ]
+
+  const sortedEntries = $derived.by(() => {
+    if (!sortKey) return entries
+    const arr = [...entries]
+    arr.sort((a, b) => {
+      const av = a[sortKey] ?? ''
+      const bv = b[sortKey] ?? ''
+      if (av < bv) return sortDir === 'asc' ? -1 : 1
+      if (av > bv) return sortDir === 'asc' ? 1 : -1
+      return 0
+    })
+    return arr
+  })
+
+  function handleSort(key) {
+    if (sortKey === key) {
+      sortDir = sortDir === 'asc' ? 'desc' : 'asc'
+    } else {
+      sortKey = key
+      sortDir = 'asc'
+    }
+  }
 
   async function load() {
     loading = true
@@ -185,22 +203,25 @@
   <h1 class="page-title">Domains</h1>
 
   <!-- Add form -->
-  <Card title="Add Entry">
+  <Box title="Add Entry">
     <div class="add-form">
-      <FormField label="Domain">
-        <TextInput bind:value={addDomain} placeholder="example.com" />
-      </FormField>
-      <FormField label="Comment">
-        <TextInput bind:value={addComment} placeholder="optional" />
-      </FormField>
-      <FormField label="Type">
-        <Select bind:value={addEntryType} options={[
+      <div class="field">
+        <label class="label" for="de-add-domain">Domain</label>
+        <Input id="de-add-domain" bind:value={addDomain} placeholder="example.com" />
+      </div>
+      <div class="field">
+        <label class="label" for="de-add-comment">Comment</label>
+        <Input id="de-add-comment" bind:value={addComment} placeholder="optional" />
+      </div>
+      <div class="field">
+        <label class="label" for="de-add-type">Type</label>
+        <Select id="de-add-type" bind:value={addEntryType} options={[
           { value: 'exact_deny', label: 'Exact block' },
           { value: 'regex_deny', label: 'Regex block' },
           { value: 'exact_allow', label: 'Exact allow' },
           { value: 'regex_allow', label: 'Regex allow' },
         ]} />
-      </FormField>
+      </div>
       <div class="add-btn-wrap">
         <Button onclick={addEntry}>Add</Button>
       </div>
@@ -209,79 +230,116 @@
       <input type="checkbox" bind:checked={addWildcard} onchange={onWildcardToggle} />
       <span>Add as wildcard</span>
     </label>
-  </Card>
+  </Box>
 
   <!-- List -->
-  <Card>
+  <Box>
     {#if loading}
-      <EmptyState message="Loading..." />
+      <EmptyState>Loading...</EmptyState>
     {:else if entries.length === 0}
-      <EmptyState message="no domain entries">
+      <EmptyState>
+        <div>no domain entries</div>
         <p class="empty-hint">Add your first entry above</p>
       </EmptyState>
     {:else}
-      <DataTable {columns} rows={entries}>
-        {#snippet rowActions(row)}
-          <Button size="sm" onclick={() => toggleEnabled(row)}>{row.enabled ? 'Disable' : 'Enable'}</Button>
-          <Button size="sm" onclick={() => openAssign(row)}>Groups</Button>
-          <Button size="sm" onclick={() => openEdit(row)}>Edit</Button>
-          <Button size="sm" variant="danger" onclick={() => remove(row.id)}>Delete</Button>
-        {/snippet}
-      </DataTable>
+      <Table class="domain-table">
+        <thead>
+          <tr>
+            {#each columns as col}
+              <th
+                class:sortable={col.sortable}
+                onclick={() => col.sortable && handleSort(col.key)}
+              >
+                {col.label}
+                {#if col.sortable && sortKey === col.key}
+                  <span class="sort-arrow">{sortDir === 'asc' ? '▲' : '▼'}</span>
+                {/if}
+              </th>
+            {/each}
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each sortedEntries as row}
+            <tr>
+              <td>{row.domain}</td>
+              <td>{typeLabels[row.entry_type] ?? row.entry_type}</td>
+              <td>{row.enabled ? '✓' : '—'}</td>
+              <td>{row.comment ?? ''}</td>
+              <td>{groupCount(row.group_name)}</td>
+              <td class="actions">
+                <Button size="sm" onclick={() => toggleEnabled(row)}>{row.enabled ? 'Disable' : 'Enable'}</Button>
+                <Button size="sm" onclick={() => openAssign(row)}>Groups</Button>
+                <Button size="sm" onclick={() => openEdit(row)}>Edit</Button>
+                <Button size="sm" variant="danger" onclick={() => remove(row.id)}>Delete</Button>
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </Table>
     {/if}
-  </Card>
+  </Box>
 </div>
 
 <!-- Edit Modal -->
-<Modal bind:open={editOpen} title="Edit Domain Entry">
-  <FormField label="Domain">
-    <TextInput bind:value={editForm.domain} />
-  </FormField>
-  <FormField label="Type">
-    <Select bind:value={editForm.entry_type} options={[
-      { value: 'exact_deny', label: 'Exact block' },
-      { value: 'regex_deny', label: 'Regex block' },
-      { value: 'exact_allow', label: 'Exact allow' },
-      { value: 'regex_allow', label: 'Regex allow' },
-    ]} />
-  </FormField>
-  <FormField label="Comment">
-    <TextInput bind:value={editForm.comment} />
-  </FormField>
-  <FormField label="Enabled">
-    <Toggle bind:checked={editForm.enabled} />
-  </FormField>
-  {#snippet actions()}
+<Modal.Root bind:open={editOpen}>
+  <Modal.Header>Edit Domain Entry</Modal.Header>
+  <Modal.Body>
+    <div class="field">
+      <label class="label" for="de-edit-domain">Domain</label>
+      <Input id="de-edit-domain" bind:value={editForm.domain} />
+    </div>
+    <div class="field">
+      <label class="label" for="de-edit-type">Type</label>
+      <Select id="de-edit-type" bind:value={editForm.entry_type} options={[
+        { value: 'exact_deny', label: 'Exact block' },
+        { value: 'regex_deny', label: 'Regex block' },
+        { value: 'exact_allow', label: 'Exact allow' },
+        { value: 'regex_allow', label: 'Regex allow' },
+      ]} />
+    </div>
+    <div class="field">
+      <label class="label" for="de-edit-comment">Comment</label>
+      <Input id="de-edit-comment" bind:value={editForm.comment} />
+    </div>
+    <div class="field">
+      <Toggle label="Enabled" bind:checked={editForm.enabled} />
+    </div>
+  </Modal.Body>
+  <Modal.Footer>
     <Button onclick={() => editOpen = false}>Cancel</Button>
     <Button onclick={saveEdit}>Save</Button>
-  {/snippet}
-</Modal>
+  </Modal.Footer>
+</Modal.Root>
 
 <!-- Group Assignment Modal -->
-<Modal bind:open={assignOpen} title="Assign to Client Groups">
-  {#if groups.length === 0}
-    <p class="empty-hint">No client groups exist yet. Create one from the Client Groups page.</p>
-  {:else}
-    <div class="assign-actions">
-      <Button size="sm" onclick={selectAll}>All</Button>
-      <Button size="sm" onclick={selectNone}>None</Button>
-    </div>
-    <div class="assign-list">
-      {#each groups as g}
-        <label class="assign-row">
-          <input type="checkbox" bind:checked={assignChecked[g.name]} />
-          <span>{g.name}</span>
-        </label>
-      {/each}
-    </div>
-  {/if}
-  {#snippet actions()}
+<Modal.Root bind:open={assignOpen}>
+  <Modal.Header>Assign to Client Groups</Modal.Header>
+  <Modal.Body>
+    {#if groups.length === 0}
+      <p class="empty-hint">No client groups exist yet. Create one from the Client Groups page.</p>
+    {:else}
+      <div class="assign-actions">
+        <Button size="sm" onclick={selectAll}>All</Button>
+        <Button size="sm" onclick={selectNone}>None</Button>
+      </div>
+      <div class="assign-list">
+        {#each groups as g}
+          <label class="assign-row">
+            <input type="checkbox" bind:checked={assignChecked[g.name]} />
+            <span>{g.name}</span>
+          </label>
+        {/each}
+      </div>
+    {/if}
+  </Modal.Body>
+  <Modal.Footer>
     <Button onclick={() => assignOpen = false}>Cancel</Button>
     {#if groups.length > 0}
       <Button onclick={saveAssignments}>Save</Button>
     {/if}
-  {/snippet}
-</Modal>
+  </Modal.Footer>
+</Modal.Root>
 
 <style>
   .page { max-width: 1000px; }
@@ -300,6 +358,17 @@
 
   .add-btn-wrap {
     margin-bottom: 1rem;
+  }
+
+  .field {
+    margin-bottom: 1rem;
+  }
+
+  .label {
+    display: block;
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+    margin-bottom: 0.25rem;
   }
 
   .wildcard-check {
@@ -349,5 +418,43 @@
 
   .assign-row input[type="checkbox"] {
     accent-color: var(--color-accent, currentColor);
+  }
+
+  :global(.domain-table) {
+    width: 100%;
+    font-size: var(--text-sm);
+    border-collapse: collapse;
+  }
+
+  :global(.domain-table th) {
+    text-align: left;
+    color: var(--color-text-dim);
+    font-weight: 400;
+    padding: 0.25rem 0.75rem 0.25rem 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  :global(.domain-table th.sortable) {
+    cursor: pointer;
+    user-select: none;
+  }
+
+  :global(.domain-table th.sortable:hover) {
+    color: var(--color-text);
+  }
+
+  :global(.domain-table .sort-arrow) {
+    font-size: 0.6rem;
+    margin-left: 0.25rem;
+  }
+
+  :global(.domain-table td) {
+    padding: 0.35rem 0.75rem 0.35rem 0;
+    border-bottom: 1px dotted var(--color-border-subtle);
+  }
+
+  :global(.domain-table td.actions) {
+    text-align: right;
+    white-space: nowrap;
   }
 </style>

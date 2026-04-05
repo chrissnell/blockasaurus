@@ -2,15 +2,17 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
 <script>
-  import Card from '../components/Card.svelte'
-  import Button from '../components/Button.svelte'
-  import DataTable from '../components/DataTable.svelte'
-  import Modal from '../components/Modal.svelte'
-  import FormField from '../components/FormField.svelte'
-  import TextInput from '../components/TextInput.svelte'
-  import Select from '../components/Select.svelte'
-  import Toggle from '../components/Toggle.svelte'
-  import EmptyState from '../components/EmptyState.svelte'
+  import {
+    Box,
+    Button,
+    Table,
+    Modal,
+    Label,
+    Input,
+    Select,
+    Toggle,
+    EmptyState,
+  } from '@chrissnell/chonky-ui'
   import { customDNS } from '../lib/api.js'
   import { markDirty } from '../lib/dirty.svelte.js'
 
@@ -19,14 +21,6 @@
   let editOpen = $state(false)
   let editId = $state(null)
   let form = $state({ domain: '', record_type: 'A', value: '', ttl: 3600, enabled: true })
-
-  const columns = [
-    { key: 'domain', label: 'Domain', sortable: true },
-    { key: 'record_type', label: 'Type' },
-    { key: 'value', label: 'Value' },
-    { key: 'ttl', label: 'TTL' },
-    { key: 'enabled', label: 'Status', render: (r) => r.enabled ? '✓' : '—' },
-  ]
 
   async function load() {
     loading = true
@@ -67,60 +61,95 @@
 </script>
 
 <div class="page">
-  <h1 class="page-title">Custom DNS</h1>
+  <div class="page-header">
+    <h1 class="page-title">Custom DNS</h1>
+    <Button size="sm" onclick={openNew}>Add Entry</Button>
+  </div>
 
-  <Card>
-    {#snippet actions()}
-      <Button size="sm" onclick={openNew}>Add Entry</Button>
-    {/snippet}
+  <Box>
     {#if loading}
-      <EmptyState message="Loading..." />
+      <EmptyState>Loading...</EmptyState>
     {:else if entries.length === 0}
-      <EmptyState message="no custom dns entries">
+      <EmptyState>
+        <p>no custom dns entries</p>
         <Button size="sm" onclick={openNew}>Add your first entry</Button>
       </EmptyState>
     {:else}
-      <DataTable {columns} rows={entries}>
-        {#snippet rowActions(row)}
-          <Button size="sm" onclick={() => openEdit(row)}>Edit</Button>
-          <Button size="sm" variant="danger" onclick={() => remove(row.id)}>Delete</Button>
-        {/snippet}
-      </DataTable>
+      <Table>
+        <thead>
+          <tr>
+            <th>Domain</th>
+            <th>Type</th>
+            <th>Value</th>
+            <th>TTL</th>
+            <th>Status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each entries as row (row.id)}
+            <tr>
+              <td>{row.domain}</td>
+              <td>{row.record_type}</td>
+              <td>{row.value}</td>
+              <td>{row.ttl}</td>
+              <td>{row.enabled ? '✓' : '—'}</td>
+              <td>
+                <Button size="sm" onclick={() => openEdit(row)}>Edit</Button>
+                <Button size="sm" variant="danger" onclick={() => remove(row.id)}>Delete</Button>
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </Table>
     {/if}
-  </Card>
+  </Box>
 </div>
 
-<Modal bind:open={editOpen} title={editId ? 'Edit DNS Entry' : 'New DNS Entry'}>
-  <FormField label="Domain">
-    <TextInput bind:value={form.domain} placeholder="myhost.lan" />
-  </FormField>
-  <FormField label="Record Type">
-    <Select bind:value={form.record_type} options={[
-      { value: 'A', label: 'A (IPv4)' },
-      { value: 'AAAA', label: 'AAAA (IPv6)' },
-      { value: 'CNAME', label: 'CNAME' },
-    ]} />
-  </FormField>
-  <FormField label="Value">
-    <TextInput bind:value={form.value} placeholder="192.168.1.100" />
-  </FormField>
-  <FormField label="TTL (seconds)">
-    <TextInput bind:value={form.ttl} type="number" placeholder="3600" />
-  </FormField>
-  <FormField label="Enabled">
-    <Toggle bind:checked={form.enabled} />
-  </FormField>
-  {#snippet actions()}
+<Modal bind:open={editOpen}>
+  <Modal.Header>
+    <h2>{editId ? 'Edit DNS Entry' : 'New DNS Entry'}</h2>
+  </Modal.Header>
+  <Modal.Body>
+    <Label>
+      Domain
+      <Input bind:value={form.domain} placeholder="myhost.lan" />
+    </Label>
+    <Label>
+      Record Type
+      <Select bind:value={form.record_type} options={[
+        { value: 'A', label: 'A (IPv4)' },
+        { value: 'AAAA', label: 'AAAA (IPv6)' },
+        { value: 'CNAME', label: 'CNAME' },
+      ]} />
+    </Label>
+    <Label>
+      Value
+      <Input bind:value={form.value} placeholder="192.168.1.100" />
+    </Label>
+    <Label>
+      TTL (seconds)
+      <Input bind:value={form.ttl} type="number" placeholder="3600" />
+    </Label>
+    <Toggle bind:checked={form.enabled} label="Enabled" />
+  </Modal.Body>
+  <Modal.Footer>
     <Button onclick={() => editOpen = false}>Cancel</Button>
-    <Button onclick={save}>Save</Button>
-  {/snippet}
+    <Button variant="primary" onclick={save}>Save</Button>
+  </Modal.Footer>
 </Modal>
 
 <style>
   .page { max-width: 1000px; }
+  .page-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    margin-bottom: var(--space-6);
+  }
   .page-title {
     font-size: var(--text-2xl);
     font-weight: 700;
-    margin-bottom: var(--space-6);
   }
 </style>
