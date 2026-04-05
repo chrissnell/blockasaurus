@@ -8,7 +8,7 @@ Blockasaurus is a blocking DNS server with a modern web UI for blocklist and use
 
 ## Features
 
-- **Modern Web UI** - Manage blocklists, users, and settings from your browser
+- **Modern Web UI** - Manage blocklists, users, and settings from your browser, powered by [Chonky](https://github.com/chrissnell/chonky)
 
 - **Blocking** - Block DNS queries with external lists (ad-block, malware) and allowlisting
 
