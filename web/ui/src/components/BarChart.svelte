@@ -68,6 +68,7 @@
           borderWidth: 0,
           pointPadding: 0.05,
           groupPadding: 0.05,
+          crisp: false,
         },
       },
       series: datasets.map((ds, i) => ({
