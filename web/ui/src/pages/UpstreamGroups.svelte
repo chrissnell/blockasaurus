@@ -72,7 +72,25 @@
   let serverOpen = $state(false)
   let serverEditId = $state(null)
   let serverGroup = $state('')
-  let serverForm = $state({ url: '', enabled: true, position: 0 })
+  let serverForm = $state({ protocol: 'plain', host: '', enabled: true, position: 0 })
+
+  // Split a stored upstream URL into (protocol, host).
+  //   "1.1.1.1"                        -> plain,   "1.1.1.1"
+  //   "tcp-tls:dns.example.com"        -> tcp-tls, "dns.example.com"
+  //   "https://dns.google/dns-query"   -> https,   "dns.google/dns-query"
+  function splitUrl(url) {
+    const u = (url ?? '').trim()
+    if (u.startsWith('https://')) return { protocol: 'https', host: u.slice('https://'.length) }
+    if (u.startsWith('tcp-tls:')) return { protocol: 'tcp-tls', host: u.slice('tcp-tls:'.length) }
+    return { protocol: 'plain', host: u }
+  }
+
+  function joinUrl(protocol, host) {
+    const h = (host ?? '').trim()
+    if (protocol === 'https') return `https://${h.replace(/^https:\/\//, '')}`
+    if (protocol === 'tcp-tls') return `tcp-tls:${h.replace(/^tcp-tls:/, '')}`
+    return h
+  }
 
   async function loadGroups() {
     loading = true
@@ -126,21 +144,22 @@
     serverEditId = null
     serverGroup = groupName
     const existing = serversByGroup[groupName] ?? []
-    serverForm = { url: '', enabled: true, position: existing.length }
+    serverForm = { protocol: 'plain', host: '', enabled: true, position: existing.length }
     serverOpen = true
   }
 
   function openEditServer(groupName, row) {
     serverEditId = row.id
     serverGroup = groupName
-    serverForm = { url: row.url, enabled: row.enabled, position: row.position }
+    const { protocol, host } = splitUrl(row.url)
+    serverForm = { protocol, host, enabled: row.enabled, position: row.position }
     serverOpen = true
   }
 
   async function saveServer() {
     try {
       const body = {
-        url: serverForm.url.trim(),
+        url: joinUrl(serverForm.protocol, serverForm.host),
         enabled: serverForm.enabled,
         position: Number(serverForm.position) || 0,
       }
@@ -361,13 +380,34 @@
     <h2>{serverEditId ? 'Edit Upstream Server' : 'New Upstream Server'}</h2>
   </Modal.Header>
   <Modal.Body>
-    <Label>
-      URL
-      <Input
-        bind:value={serverForm.url}
-        placeholder="1.1.1.1  |  tcp-tls:dns.example.com  |  https://dns.google/dns-query"
-      />
-    </Label>
+    <div class="server-form-row">
+      <div class="server-form-protocol">
+        <Label for="server-protocol">Protocol</Label>
+        <Select
+          id="server-protocol"
+          bind:value={serverForm.protocol}
+          options={[
+            { value: 'plain', label: 'plain' },
+            { value: 'tcp-tls', label: 'tcp-tls' },
+            { value: 'https', label: 'https' },
+          ]}
+        />
+      </div>
+      <div class="server-form-host">
+        <Label for="server-host">
+          {serverForm.protocol === 'https' ? 'Host / path' : 'Host or IP'}
+        </Label>
+        <Input
+          id="server-host"
+          bind:value={serverForm.host}
+          placeholder={serverForm.protocol === 'https'
+            ? 'dns.google/dns-query'
+            : serverForm.protocol === 'tcp-tls'
+              ? 'dns.example.com'
+              : '1.1.1.1'}
+        />
+      </div>
+    </div>
     <Label>
       Position
       <Input bind:value={serverForm.position} type="number" />
@@ -439,5 +479,18 @@
     display: flex;
     justify-content: flex-end;
     padding-top: var(--space-2);
+  }
+  .server-form-row {
+    display: flex;
+    gap: var(--space-3);
+    align-items: flex-end;
+    margin-bottom: var(--space-3);
+  }
+  .server-form-protocol {
+    flex: 0 0 auto;
+  }
+  .server-form-host {
+    flex: 1 1 auto;
+    min-width: 0;
   }
 </style>
