@@ -85,5 +85,20 @@
   .log-wrap {
     flex: 1;
     min-height: 0;
+    display: flex;
+  }
+  /* LogViewer's outer wrapper has no intrinsic height; without this its
+     inner .log-body (height:100%) resolves against content size and the
+     list overflows the page, painting over the status bar footer. */
+  .log-wrap :global(.log-viewer) {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .log-wrap :global(.log-viewer .log-body) {
+    flex: 1;
+    min-height: 0;
+    height: auto;
   }
 </style>
