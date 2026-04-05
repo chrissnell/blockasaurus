@@ -356,6 +356,10 @@
     flex-wrap: wrap;
   }
 
+  .add-form :global(input[type="text"]) {
+    margin-bottom: 0;
+  }
+
   .add-btn-wrap {
     margin-bottom: 1rem;
   }
