@@ -99,6 +99,8 @@
   .log-wrap :global(.log-viewer .log-body) {
     flex: 1;
     min-height: 0;
-    height: auto;
+    /* !important needed: LogViewer sets height:100% as inline style,
+       which otherwise wins over flex sizing here. */
+    height: auto !important;
   }
 </style>
