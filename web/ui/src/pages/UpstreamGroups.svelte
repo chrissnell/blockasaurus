@@ -9,13 +9,53 @@
     Modal,
     Label,
     Input,
+    Select,
     Toggle,
     EmptyState,
     Toaster,
     toast,
   } from '@chrissnell/chonky-ui'
-  import { upstreamGroups } from '../lib/api.js'
+  import { upstreamGroups, upstreamSettings } from '../lib/api.js'
   import { markDirty } from '../lib/dirty.svelte.js'
+
+  // --- Settings ---
+  let strategy = $state('parallel_best')
+  let timeout = $state('2s')
+  let userAgent = $state('')
+  let initStrategy = $state('blocking')
+  let settingsLoading = $state(true)
+  let settingsSaving = $state(false)
+
+  async function loadSettings() {
+    settingsLoading = true
+    try {
+      const data = await upstreamSettings.get()
+      strategy = data.strategy || 'parallel_best'
+      timeout = data.timeout || '2s'
+      userAgent = data.user_agent || ''
+      initStrategy = data.init_strategy || 'blocking'
+    } catch (e) {
+      toast(e.message, 'danger')
+    }
+    settingsLoading = false
+  }
+
+  async function saveSettings() {
+    settingsSaving = true
+    try {
+      await upstreamSettings.update({
+        strategy,
+        timeout,
+        user_agent: userAgent,
+        init_strategy: initStrategy,
+      })
+      markDirty()
+      toast('Upstream settings saved', 'success')
+    } catch (e) {
+      toast(e.message, 'danger')
+    }
+    settingsSaving = false
+  }
 
   // --- Groups list ---
   let groups = $state([])
@@ -128,6 +168,7 @@
   }
 
   loadGroups()
+  loadSettings()
 </script>
 
 <div class="page">
@@ -198,6 +239,50 @@
       </Box>
     {/each}
   {/if}
+
+  <div class="settings-section" class:loading-state={settingsLoading}>
+    <Box title="Resolver Behavior">
+      <div class="form-layout">
+        <div class="form-field">
+          <Label for="strategy">Resolution Strategy</Label>
+          <Select
+            id="strategy"
+            bind:value={strategy}
+            options={[
+              { value: 'parallel_best', label: 'Parallel Best (query all, use fastest)' },
+              { value: 'strict', label: 'Strict (try in order)' },
+              { value: 'random', label: 'Random (pick one)' },
+            ]}
+          />
+        </div>
+        <div class="form-field">
+          <Label for="timeout">Timeout</Label>
+          <Input id="timeout" bind:value={timeout} placeholder="2s, 500ms, 1s" />
+        </div>
+        <div class="form-field">
+          <Label for="init-strategy">Init Strategy</Label>
+          <Select
+            id="init-strategy"
+            bind:value={initStrategy}
+            options={[
+              { value: 'blocking', label: 'Blocking (probe on apply, warn on failure)' },
+              { value: 'failOnError', label: 'Fail on error (reject apply if any probe fails)' },
+              { value: 'fast', label: 'Fast (no probe)' },
+            ]}
+          />
+        </div>
+        <div class="form-field">
+          <Label for="user-agent">DoH User-Agent</Label>
+          <Input id="user-agent" bind:value={userAgent} placeholder="(optional)" />
+        </div>
+        <div class="form-actions">
+          <Button onclick={saveSettings} disabled={settingsSaving}>
+            {settingsSaving ? 'Saving...' : 'Save Settings'}
+          </Button>
+        </div>
+      </div>
+    </Box>
+  </div>
 </div>
 
 <Modal bind:open={createOpen}>
@@ -259,5 +344,28 @@
     display: flex;
     gap: var(--space-2);
     justify-content: flex-end;
+  }
+  .settings-section {
+    margin-top: var(--space-6);
+    max-width: 600px;
+  }
+  .loading-state {
+    opacity: 0.5;
+    pointer-events: none;
+  }
+  .form-layout {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+  }
+  .form-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+  .form-actions {
+    display: flex;
+    justify-content: flex-end;
+    padding-top: var(--space-2);
   }
 </style>

@@ -39,7 +39,6 @@
     { path: '/domains', label: 'domains' },
     { path: '/custom-dns', label: 'custom dns' },
     { path: '/upstream-groups', label: 'upstreams' },
-    { path: '/upstream-settings', label: 'upstream settings' },
     { path: '/settings', label: 'settings' },
   ]
 </script>
