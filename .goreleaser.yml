@@ -56,6 +56,15 @@ nfpms:
       - deb
       - rpm
     bindir: /usr/bin
+    contents:
+      - src: packaging/systemd/blockasaurus.service
+        dst: /usr/lib/systemd/system/blockasaurus.service
+      - src: packaging/config/config.yml
+        dst: /etc/blockasaurus/config.yml
+        type: config|noreplace
+    scripts:
+      postinstall: packaging/scripts/postinstall.sh
+      preremove: packaging/scripts/preremove.sh
 
 dockers:
   - image_templates:

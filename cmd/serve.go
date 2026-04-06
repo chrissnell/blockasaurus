@@ -19,6 +19,7 @@ import (
 	"github.com/0xERR0R/blocky/evt"
 	"github.com/0xERR0R/blocky/log"
 	"github.com/0xERR0R/blocky/pkg/advertise"
+	"github.com/0xERR0R/blocky/pkg/winservice"
 	"github.com/0xERR0R/blocky/server"
 	"github.com/0xERR0R/blocky/util"
 
@@ -27,7 +28,6 @@ import (
 
 //nolint:gochecknoglobals
 var (
-	done              = make(chan bool, 1)
 	isConfigMandatory = true
 	signals           = make(chan os.Signal, 1)
 )
@@ -46,13 +46,19 @@ func newServeCommand() *cobra.Command {
 }
 
 func startServer(_ *cobra.Command, _ []string) error {
-	// If GOMEMLIMIT env var isn't set, default to 90% of any cgroup memory
-	// limit. Without this, Go's GC doesn't know about container limits and
-	// allows RSS to grow past the cgroup boundary, causing OOM kills.
+	if winservice.IsService() {
+		return winservice.Run(runServer)
+	}
+
+	return runInteractive()
+}
+
+// runServer is the core server lifecycle, controlled by the given context.
+// When ctx is cancelled, the server shuts down gracefully.
+func runServer(ctx context.Context) error {
 	if os.Getenv("GOMEMLIMIT") == "" {
 		if limit := readCgroupMemoryLimit(); limit > 0 {
-			softLimit := limit * 9 / 10
-			debug.SetMemoryLimit(softLimit)
+			debug.SetMemoryLimit(limit * 9 / 10)
 		}
 	}
 
@@ -65,7 +71,6 @@ func startServer(_ *cobra.Command, _ []string) error {
 
 	log.Configure(&cfg.Log)
 
-	// If databasePath is set, open ConfigStore and apply DB-backed config
 	var store *configstore.ConfigStore
 
 	if cfg.DatabasePath != "" {
@@ -78,7 +83,6 @@ func startServer(_ *cobra.Command, _ []string) error {
 
 		defer store.Close()
 
-		// DB replaces dynamic sections
 		cfg.Blocking, err = store.BuildBlockingConfig(cfg.Blocking)
 		if err != nil {
 			return fmt.Errorf("build blocking config from DB: %w", err)
@@ -100,17 +104,14 @@ func startServer(_ *cobra.Command, _ []string) error {
 			"set databasePath in your YAML config (see docs/migration-upstreams.md)")
 	}
 
-	// Auto-advertise DNS records for client group endpoint domains
 	if err := injectAdvertiseRecords(cfg); err != nil {
 		return fmt.Errorf("advertise DNS records: %w", err)
 	}
 
-	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+	serverCtx, cancelServer := context.WithCancel(ctx)
+	defer cancelServer()
 
-	ctx, cancelFn := context.WithCancel(context.Background())
-	defer cancelFn()
-
-	srv, err := server.NewServer(ctx, cfg, store)
+	srv, err := server.NewServer(serverCtx, cfg, store)
 	if err != nil {
 		return fmt.Errorf("can't start server: %w", err)
 	}
@@ -118,36 +119,43 @@ func startServer(_ *cobra.Command, _ []string) error {
 	const errChanSize = 10
 	errChan := make(chan error, errChanSize)
 
-	srv.Start(ctx, errChan)
-
-	var terminationErr error
-
-	go func() {
-		select {
-		case <-signals:
-			log.Log().Infof("Terminating...")
-
-			// Cancel background operations (periodic refresh, etc.)
-			cancelFn()
-
-			// Create timeout context for graceful shutdown
-			stopCtx, stopCancel := context.WithTimeout(context.Background(), shutdownTimeout)
-			defer stopCancel()
-
-			util.LogOnError(stopCtx, "can't stop server: ", srv.Stop(stopCtx))
-			done <- true
-
-		case err := <-errChan:
-			log.Log().Error("server start failed: ", err)
-			terminationErr = err
-			done <- true
-		}
-	}()
+	srv.Start(serverCtx, errChan)
 
 	evt.Bus().Publish(evt.ApplicationStarted, util.Version, util.BuildTime)
-	<-done
 
-	return terminationErr
+	// Wait for context cancellation (service stop / signal) or fatal error
+	select {
+	case <-ctx.Done():
+		log.Log().Infof("Terminating...")
+
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer stopCancel()
+
+		util.LogOnError(stopCtx, "can't stop server: ", srv.Stop(stopCtx))
+
+		return nil
+
+	case err := <-errChan:
+		log.Log().Error("server start failed: ", err)
+
+		return err
+	}
+}
+
+// runInteractive runs the server in interactive (non-service) mode,
+// responding to OS signals for shutdown.
+func runInteractive() error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		<-signals
+		cancel()
+	}()
+
+	return runServer(ctx)
 }
 
 // readCgroupMemoryLimit reads the memory limit from cgroup v2 or v1.
