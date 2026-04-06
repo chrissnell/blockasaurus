@@ -3,8 +3,8 @@
 # ----------- stage: ui
 FROM node:22-alpine AS ui
 WORKDIR /ui
-COPY web/ui/package.json web/ui/package-lock.json ./
-RUN npm ci
+COPY web/ui/package.json ./
+RUN npm install
 COPY web/ui/ .
 RUN npx vite build
 
