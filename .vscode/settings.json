@@ -8,7 +8,9 @@
     "source.organizeImports": "explicit",
     "source.fixAll": "explicit"
   },
-  "editor.rulers": [120],
+  "editor.rulers": [
+    120
+  ],
   "go.showWelcome": false,
   "go.survey.prompt": false,
   "go.useLanguageServer": true,
@@ -18,6 +20,29 @@
   "gopls": {
     "ui.semanticTokens": true,
     "formatting.gofumpt": true,
-    "build.standaloneTags": ["ignore", "tools"]
-  }
+    "build.standaloneTags": [
+      "ignore",
+      "tools"
+    ]
+  },
+  "workbench.colorCustomizations": {
+    "activityBar.activeBackground": "#65c89b",
+    "activityBar.background": "#65c89b",
+    "activityBar.foreground": "#15202b",
+    "activityBar.inactiveForeground": "#15202b99",
+    "activityBarBadge.background": "#945bc4",
+    "activityBarBadge.foreground": "#e7e7e7",
+    "commandCenter.border": "#15202b99",
+    "sash.hoverBorder": "#65c89b",
+    "statusBar.background": "#42b883",
+    "statusBar.foreground": "#15202b",
+    "statusBarItem.hoverBackground": "#359268",
+    "statusBarItem.remoteBackground": "#42b883",
+    "statusBarItem.remoteForeground": "#15202b",
+    "titleBar.activeBackground": "#42b883",
+    "titleBar.activeForeground": "#15202b",
+    "titleBar.inactiveBackground": "#42b88399",
+    "titleBar.inactiveForeground": "#15202b99"
+  },
+  "peacock.color": "#42b883"
 }

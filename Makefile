@@ -1,4 +1,4 @@
-.PHONY: all clean generate build test e2e-test e2e-test-coverage lint run fmt docker-build docker-push bump-minor bump-point deploy version help check-tools
+.PHONY: all clean generate build test e2e-test e2e-test-coverage lint run fmt docker-build docker-push bump-minor bump-point deploy helm-deploy version help check-tools
 .DEFAULT_GOAL:=help
 
 VERSION:=$(shell cat VERSION)
@@ -197,7 +197,14 @@ bump-point: ## Bump point version, commit, tag, and push
 	git tag "v$(NEW_VERSION)"
 	git push $(GIT_REMOTE) && git push $(GIT_REMOTE) "v$(NEW_VERSION)"
 
-deploy: docker-push ## Build, push, and deploy to Kubernetes via Helm
+deploy: docker-push ## Build locally, push, and deploy to Kubernetes via Helm
+	helm upgrade --install $(HELM_RELEASE) $(HELM_CHART) \
+		-n $(HELM_NAMESPACE) \
+		-f $(HELM_VALUES) \
+		--set image.tag=$(DOCKER_TAG)
+	@echo "Deployed $(DOCKER_REGISTRY)/blockasaurus:$(DOCKER_TAG)"
+
+helm-deploy: ## Deploy to Kubernetes via Helm (image already built by CI)
 	helm upgrade --install $(HELM_RELEASE) $(HELM_CHART) \
 		-n $(HELM_NAMESPACE) \
 		-f $(HELM_VALUES) \

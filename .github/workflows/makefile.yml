@@ -2,6 +2,10 @@ name: Makefile
 
 on:
   push:
+    branches:
+      - '**'
+    tags-ignore:
+      - '**'
     paths:
       - .github/workflows/makefile.yml
       - Dockerfile
