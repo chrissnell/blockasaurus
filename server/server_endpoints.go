@@ -354,7 +354,7 @@ func configureRootHandler(cfg *config.Config, router *chi.Mux) {
 			BuildTime: util.BuildTime,
 			Links: []HandlerLink{
 				{URL: "/ui/", Title: "Web UI", Icon: "◆", Primary: true},
-				{URL: "/docs/openapi.yaml", Title: "REST API docs (OpenAPI)", Icon: "{ }"},
+				{URL: "/docs/openapi.yaml", Title: "REST API docs (OpenAPI)", Icon: "○"},
 				{URL: "/static/rapidoc.html", Title: "Interactive API explorer", Icon: "⚙"},
 				{URL: "/debug/", Title: "Go profiler (pprof)", Icon: "⏲"},
 			},
