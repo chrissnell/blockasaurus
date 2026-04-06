@@ -11,7 +11,19 @@
 
   onMount(() => {
     const disconnect = connectLogStream(
-      (entry) => { entries = [...entries, entry] },
+      (raw) => {
+        const f = raw.fields || {}
+        const isBlocked = f.response_type === 'BLOCKED'
+        entries = [...entries, {
+          level: isBlocked ? 'error' : mapLevel(raw.level),
+          timestamp: raw.timestamp,
+          duration_ms: f.duration_ms,
+          question_type: f.question_type,
+          question_name: f.question_name || raw.message,
+          response_code: f.response_code,
+          response_reason: f.response_reason,
+        }]
+      },
       (status) => { connected = status },
     )
     return disconnect
@@ -32,35 +44,29 @@
   }
 
   const columns = [
-    { key: 'time', label: 'Time', width: '90px' },
-    { key: 'duration', label: 'Duration', width: '90px' },
+    { key: 'timestamp', label: 'Time', width: '90px', render: renderTime },
+    { key: 'duration_ms', label: 'Duration', width: '90px', render: renderDuration },
     { key: 'level', label: 'Level', width: '70px' },
-    { key: 'type', label: 'Type', width: '70px' },
-    { key: 'name', label: 'Name', width: '2fr' },
-    { key: 'code', label: 'Code', width: '100px' },
-    { key: 'reason', label: 'Reason', width: '2fr' },
+    { key: 'question_type', label: 'Type', width: '70px' },
+    { key: 'question_name', label: 'Name', width: '2fr' },
+    { key: 'response_code', label: 'Code', width: '100px' },
+    { key: 'response_reason', label: 'Reason', width: '2fr' },
   ]
-
-  const rows = $derived(entries.map((entry) => {
-    const f = entry.fields || {}
-    const isBlocked = f.response_type === 'BLOCKED'
-    return {
-      level: isBlocked ? 'error' : mapLevel(entry.level),
-      time: formatTime(entry.timestamp),
-      duration: f.duration_ms != null ? `${f.duration_ms}ms` : '',
-      type: f.question_type || '',
-      name: f.question_name || entry.message || '',
-      code: f.response_code || '',
-      reason: f.response_reason || '',
-    }
-  }))
 </script>
+
+{#snippet renderTime(value)}
+  {formatTime(value)}
+{/snippet}
+
+{#snippet renderDuration(value)}
+  {value != null ? `${value}ms` : ''}
+{/snippet}
 
 <div class="page">
   <h1 class="page-title">Live Logs</h1>
   <div class="log-wrap">
     <LogViewer
-      entries={rows}
+      {entries}
       {columns}
       showHeader
       live={connected}
