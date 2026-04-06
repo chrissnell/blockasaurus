@@ -1,5 +1,8 @@
 project_name: blockasaurus
 
+git:
+  allow_dirty: true
+
 before:
   hooks:
     - go mod tidy
