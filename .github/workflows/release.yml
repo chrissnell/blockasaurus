@@ -52,3 +52,44 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Windows binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-amd64-binary
+          path: dist/blockasaurus_windows_amd64_v1/blockasaurus.exe
+          retention-days: 1
+
+  msi:
+    name: Build Windows Installer
+    runs-on: windows-latest
+    needs: release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Windows binary
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-amd64-binary
+          path: bin
+
+      - name: Install WiX
+        run: dotnet tool install --global wix
+
+      - name: Build MSI
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          $binaryPath = (Resolve-Path "bin/blockasaurus.exe").Path
+          $outFile = "blockasaurus_${version}_Windows_x86_64.msi"
+          wix build -d Version=$version -d BinaryPath=$binaryPath -o $outFile packaging/wix/blockasaurus.wxs
+
+      - name: Upload MSI to release
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          gh release upload "${{ github.ref_name }}" "blockasaurus_${VERSION}_Windows_x86_64.msi"
