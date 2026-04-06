@@ -483,8 +483,13 @@
   .server-form-row {
     display: flex;
     gap: var(--space-3);
-    align-items: flex-end;
     margin-bottom: var(--space-3);
+  }
+  .server-form-protocol,
+  .server-form-host {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
   }
   .server-form-protocol {
     flex: 0 0 auto;
