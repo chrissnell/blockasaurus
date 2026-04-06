@@ -26,7 +26,7 @@ jobs:
           node-version: 22
 
       - name: Build frontend
-        run: cd web/ui && npm ci && npx vite build
+        run: cd web/ui && npm install && npx vite build
 
       - name: Set up Go
         uses: actions/setup-go@v6
