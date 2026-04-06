@@ -337,8 +337,10 @@ func configureRootHandler(cfg *config.Config, router *chi.Mux) {
 		_, _ = t.Parse(web.IndexTmpl)
 
 		type HandlerLink struct {
-			URL   string
-			Title string
+			URL     string
+			Title   string
+			Icon    string
+			Primary bool
 		}
 
 		type PageData struct {
@@ -348,34 +350,21 @@ func configureRootHandler(cfg *config.Config, router *chi.Mux) {
 		}
 
 		pd := PageData{
-			Links:     nil,
 			Version:   util.Version,
 			BuildTime: util.BuildTime,
-		}
-
-		pd.Links = []HandlerLink{
-			{
-				URL:   "/ui/",
-				Title: "Web UI",
-			},
-			{
-				URL:   "/docs/openapi.yaml",
-				Title: "Rest API Documentation (OpenAPI)",
-			},
-			{
-				URL:   "/static/rapidoc.html",
-				Title: "Interactive Rest API Documentation (RapiDoc)",
-			},
-			{
-				URL:   "/debug/",
-				Title: "Go Profiler",
+			Links: []HandlerLink{
+				{URL: "/ui/", Title: "Web UI", Icon: "&#9670;", Primary: true},
+				{URL: "/docs/openapi.yaml", Title: "REST API docs (OpenAPI)", Icon: "&#123;&#125;"},
+				{URL: "/static/rapidoc.html", Title: "Interactive API explorer", Icon: "&#9881;"},
+				{URL: "/debug/", Title: "Go profiler (pprof)", Icon: "&#9202;"},
 			},
 		}
 
 		if cfg.Prometheus.Enable {
 			pd.Links = append(pd.Links, HandlerLink{
 				URL:   cfg.Prometheus.Path,
-				Title: "Prometheus endpoint",
+				Title: "Prometheus metrics",
+				Icon:  "&#9776;",
 			})
 		}
 
