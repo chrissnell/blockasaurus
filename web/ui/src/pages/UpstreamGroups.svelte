@@ -92,6 +92,18 @@
     return h
   }
 
+  // Detect a pasted full URL in the host field and auto-split into protocol + host.
+  function cleanHostInput() {
+    const h = (serverForm.host ?? '').trim()
+    if (h.startsWith('https://')) {
+      serverForm.protocol = 'https'
+      serverForm.host = h.slice('https://'.length)
+    } else if (h.startsWith('tcp-tls:')) {
+      serverForm.protocol = 'tcp-tls'
+      serverForm.host = h.slice('tcp-tls:'.length)
+    }
+  }
+
   async function loadGroups() {
     loading = true
     try {
@@ -400,6 +412,7 @@
         <Input
           id="server-host"
           bind:value={serverForm.host}
+          oninput={cleanHostInput}
           placeholder={serverForm.protocol === 'https'
             ? 'dns.google/dns-query'
             : serverForm.protocol === 'tcp-tls'
