@@ -353,10 +353,10 @@ func configureRootHandler(cfg *config.Config, router *chi.Mux) {
 			Version:   util.Version,
 			BuildTime: util.BuildTime,
 			Links: []HandlerLink{
-				{URL: "/ui/", Title: "Web UI", Icon: "&#9670;", Primary: true},
-				{URL: "/docs/openapi.yaml", Title: "REST API docs (OpenAPI)", Icon: "&#123;&#125;"},
-				{URL: "/static/rapidoc.html", Title: "Interactive API explorer", Icon: "&#9881;"},
-				{URL: "/debug/", Title: "Go profiler (pprof)", Icon: "&#9202;"},
+				{URL: "/ui/", Title: "Web UI", Icon: "◆", Primary: true},
+				{URL: "/docs/openapi.yaml", Title: "REST API docs (OpenAPI)", Icon: "{ }"},
+				{URL: "/static/rapidoc.html", Title: "Interactive API explorer", Icon: "⚙"},
+				{URL: "/debug/", Title: "Go profiler (pprof)", Icon: "⏲"},
 			},
 		}
 
@@ -364,7 +364,7 @@ func configureRootHandler(cfg *config.Config, router *chi.Mux) {
 			pd.Links = append(pd.Links, HandlerLink{
 				URL:   cfg.Prometheus.Path,
 				Title: "Prometheus metrics",
-				Icon:  "&#9776;",
+				Icon:  "☰",
 			})
 		}
 
