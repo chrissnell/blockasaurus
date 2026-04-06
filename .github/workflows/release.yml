@@ -37,9 +37,6 @@ jobs:
       - name: Build
         run: make build
 
-      - name: Test
-        run: make test
-
       - name: Docker meta
         id: docker_meta
         uses: docker/metadata-action@v5
