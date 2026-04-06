@@ -1,0 +1,12 @@
+# Blockasaurus default configuration
+# See https://github.com/chrissnell/blockasaurus for full documentation
+
+# SQLite database for upstream, blocking, and custom DNS configuration
+databasePath: /var/lib/blockasaurus/blockasaurus.db
+
+ports:
+  dns: 53
+  http: 4000
+
+log:
+  level: info
