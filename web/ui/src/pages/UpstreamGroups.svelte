@@ -403,7 +403,7 @@
           placeholder={serverForm.protocol === 'https'
             ? 'dns.google/dns-query'
             : serverForm.protocol === 'tcp-tls'
-              ? 'dns.example.com'
+              ? 'dns.example.com:853'
               : '1.1.1.1'}
         />
       </div>
