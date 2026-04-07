@@ -79,14 +79,12 @@ jobs:
 
       - name: Build MSI
         shell: pwsh
-        env:
-          WIX_ACCEPT_OSMF: "true"
         run: |
           $version = "${{ github.ref_name }}" -replace '^v', ''
           $binaryPath = (Resolve-Path "bin/blockasaurus.exe").Path
           $configPath = (Resolve-Path "packaging/config/config-windows.yml").Path
           $outFile = "blockasaurus_${version}_Windows_x86_64.msi"
-          wix build -d Version=$version -d BinaryPath=$binaryPath -d ConfigPath=$configPath -o $outFile packaging/wix/blockasaurus.wxs
+          wix build -acceptEula wix7 -d Version=$version -d BinaryPath=$binaryPath -d ConfigPath=$configPath -o $outFile packaging/wix/blockasaurus.wxs
 
       - name: Upload MSI to release
         shell: bash
