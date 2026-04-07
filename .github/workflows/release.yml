@@ -76,6 +76,8 @@ jobs:
 
       - name: Install WiX
         run: dotnet tool install --global wix
+        env:
+          WIX_ACCEPT_OSMF: true
 
       - name: Build MSI
         shell: pwsh
