@@ -161,7 +161,12 @@ func NewServer(ctx context.Context, cfg *config.Config, store *configstore.Confi
 	broadcaster := logstream.NewBroadcaster(ctx, 1000)
 	log.Log().AddHook(logstream.NewHook(broadcaster))
 
-	sc := statscollector.New()
+	var scOpts []statscollector.Option
+	if store != nil {
+		scOpts = append(scOpts, statscollector.WithStore(store))
+	}
+
+	sc := statscollector.New(scOpts...)
 
 	chainCtx, chainCancel := context.WithCancel(ctx)
 
@@ -528,6 +533,10 @@ func (s *Server) Start(ctx context.Context, errCh chan<- error) {
 // Stop stops the server
 func (s *Server) Stop(ctx context.Context) error {
 	logger().Info("Stopping server")
+
+	if s.statsCollector != nil {
+		s.statsCollector.Close()
+	}
 
 	if s.broadcaster != nil {
 		s.broadcaster.Shutdown()

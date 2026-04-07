@@ -51,6 +51,8 @@ func Open(path string) (*ConfigStore, error) {
 		&UpstreamGroup{},
 		&UpstreamServer{},
 		&UpstreamSettings{},
+		&StatsBucket{},
+		&StatsCounter{},
 	); err != nil {
 		return nil, fmt.Errorf("auto-migrate config tables: %w", err)
 	}

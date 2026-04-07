@@ -149,3 +149,24 @@ func (e *CustomDNSEntry) IsEnabled() bool { return e.Enabled == nil || *e.Enable
 
 // IsEnabled returns the Enabled value, defaulting to true if nil.
 func (d *DomainEntry) IsEnabled() bool { return d.Enabled == nil || *d.Enabled }
+
+// --- Stats persistence models ---
+
+// StatsBucket stores a single 10-minute aggregation window.
+type StatsBucket struct {
+	Timestamp    int64  `gorm:"primaryKey"` // Unix seconds, truncated to 10min
+	Total        int    `gorm:"not null;default:0"`
+	Blocked      int    `gorm:"not null;default:0"`
+	ClientCounts string `gorm:"type:text;not null;default:'{}'"` // JSON map[string]int
+}
+
+func (StatsBucket) TableName() string { return "stats_buckets" }
+
+// StatsCounter stores a running counter for a given category and key.
+type StatsCounter struct {
+	Category string `gorm:"primaryKey;not null"` // domain_permitted, domain_blocked, client_total, client_blocked, query_type, response_type
+	Key      string `gorm:"primaryKey;not null"`
+	Count    int    `gorm:"not null;default:0"`
+}
+
+func (StatsCounter) TableName() string { return "stats_counters" }

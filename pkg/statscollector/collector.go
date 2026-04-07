@@ -4,12 +4,15 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 )
 
 const (
-	BucketCount    = 144 // 24h / 10min
-	BucketDuration = 10 * time.Minute
-	DefaultTopN    = 10
+	BucketCount       = 144 // 24h / 10min
+	BucketDuration    = 10 * time.Minute
+	DefaultTopN       = 10
+	DefaultMaxCounter = 10000
 )
 
 // QueryRecord is the data captured per DNS query.
@@ -41,6 +44,27 @@ type ClientCount struct {
 	Count  int    `json:"count"`
 }
 
+// Store is the persistence interface for stats data.
+type Store interface {
+	SaveStats(snap *StatsSnapshot) error
+	LoadStats() (*StatsSnapshot, error)
+	PruneStatsBefore(t time.Time) error
+}
+
+// StatsSnapshot is the full in-memory state for persistence.
+type StatsSnapshot struct {
+	Buckets  []BucketSnapshot
+	Counters map[string]map[string]int // category -> key -> count
+}
+
+// BucketSnapshot is a single time bucket for persistence.
+type BucketSnapshot struct {
+	Timestamp    time.Time
+	Total        int
+	Blocked      int
+	ClientCounts map[string]int
+}
+
 // Collector accumulates query stats in memory using a ring buffer.
 type Collector struct {
 	mu      sync.RWMutex
@@ -55,8 +79,17 @@ type Collector struct {
 	queryTypes      map[string]int
 	responseTypes   map[string]int
 
+	dirty        bool // set on Record(), cleared after snapshot
+	flushCount   int  // counts flushes for periodic counter pruning
+	maxCounterKeys int
+
 	// Allow injecting time for testing
 	now func() time.Time
+
+	// Persistence
+	store  Store
+	stopCh chan struct{}
+	done   chan struct{}
 }
 
 // Option configures a Collector.
@@ -67,7 +100,18 @@ func WithClock(fn func() time.Time) Option {
 	return func(c *Collector) { c.now = fn }
 }
 
+// WithStore enables SQLite persistence with batched flushing.
+func WithStore(s Store) Option {
+	return func(c *Collector) { c.store = s }
+}
+
+// WithMaxCounterKeys sets the cap for each counter map (default 10,000).
+func WithMaxCounterKeys(n int) Option {
+	return func(c *Collector) { c.maxCounterKeys = n }
+}
+
 // New creates a Collector ready to receive query records.
+// If a Store is provided, it loads persisted state and starts a background flush goroutine.
 func New(opts ...Option) *Collector {
 	c := &Collector{
 		domainPermitted: make(map[string]int),
@@ -76,7 +120,10 @@ func New(opts ...Option) *Collector {
 		clientBlocked:   make(map[string]int),
 		queryTypes:      make(map[string]int),
 		responseTypes:   make(map[string]int),
+		maxCounterKeys:  DefaultMaxCounter,
 		now:             time.Now,
+		stopCh:          make(chan struct{}),
+		done:            make(chan struct{}),
 	}
 
 	for _, o := range opts {
@@ -89,7 +136,188 @@ func New(opts ...Option) *Collector {
 		ClientCounts: make(map[string]int),
 	}
 
+	if c.store != nil {
+		c.loadFromStore()
+		go c.flushLoop()
+	} else {
+		close(c.done)
+	}
+
 	return c
+}
+
+// Close stops the background flush loop and performs a final flush.
+func (c *Collector) Close() {
+	if c.store == nil {
+		return
+	}
+
+	close(c.stopCh)
+	<-c.done
+
+	if err := c.flush(); err != nil {
+		log.WithError(err).Error("Final stats flush failed")
+	}
+}
+
+const flushInterval = 30 * time.Second
+
+func (c *Collector) flushLoop() {
+	defer close(c.done)
+
+	ticker := time.NewTicker(flushInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.stopCh:
+			return
+		case <-ticker.C:
+			if err := c.flush(); err != nil {
+				log.WithError(err).Warn("Stats flush failed")
+			}
+		}
+	}
+}
+
+func (c *Collector) flush() error {
+	c.mu.RLock()
+	dirty := c.dirty
+	c.mu.RUnlock()
+
+	if !dirty {
+		return nil
+	}
+
+	snap := c.snapshot()
+
+	if err := c.store.SaveStats(snap); err != nil {
+		return err
+	}
+
+	// Prune counters every 6th flush (~3 minutes at 30s interval)
+	c.flushCount++
+	if c.flushCount%6 == 0 {
+		c.pruneCounters()
+	}
+
+	// Prune buckets older than 24h
+	cutoff := c.now().Add(-BucketCount * BucketDuration)
+
+	return c.store.PruneStatsBefore(cutoff)
+}
+
+// snapshot captures the current state for persistence and clears dirty.
+func (c *Collector) snapshot() *StatsSnapshot {
+	c.mu.Lock()
+	c.dirty = false
+	c.mu.Unlock()
+
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	snap := &StatsSnapshot{
+		Counters: map[string]map[string]int{
+			"domain_permitted": copyMap(c.domainPermitted),
+			"domain_blocked":   copyMap(c.domainBlocked),
+			"client_total":     copyMap(c.clientTotal),
+			"client_blocked":   copyMap(c.clientBlocked),
+			"query_type":       copyMap(c.queryTypes),
+			"response_type":    copyMap(c.responseTypes),
+		},
+	}
+
+	for i := range BucketCount {
+		b := c.buckets[i]
+		if b.Total == 0 && b.Blocked == 0 {
+			continue
+		}
+
+		bs := BucketSnapshot{
+			Timestamp: b.Timestamp,
+			Total:     b.Total,
+			Blocked:   b.Blocked,
+		}
+
+		if b.ClientCounts != nil {
+			bs.ClientCounts = make(map[string]int, len(b.ClientCounts))
+			for k, v := range b.ClientCounts {
+				bs.ClientCounts[k] = v
+			}
+		}
+
+		snap.Buckets = append(snap.Buckets, bs)
+	}
+
+	return snap
+}
+
+func (c *Collector) loadFromStore() {
+	snap, err := c.store.LoadStats()
+	if err != nil {
+		log.WithError(err).Warn("Failed to load persisted stats, starting fresh")
+		return
+	}
+
+	if snap == nil {
+		return
+	}
+
+	now := c.now().Truncate(BucketDuration)
+	cutoff := now.Add(-BucketCount * BucketDuration)
+
+	// Restore buckets into the ring buffer
+	for _, bs := range snap.Buckets {
+		ts := bs.Timestamp.Truncate(BucketDuration)
+		if ts.Before(cutoff) {
+			continue // too old
+		}
+
+		// Ring index relative to head. This assumes c.head == 0,
+		// which is guaranteed because loadFromStore runs only from New().
+		offset := int(now.Sub(ts) / BucketDuration)
+		if offset < 0 || offset >= BucketCount {
+			continue
+		}
+
+		idx := (c.head - offset + BucketCount) % BucketCount
+		c.buckets[idx] = TimeBucket{
+			Timestamp:    ts,
+			Total:        bs.Total,
+			Blocked:      bs.Blocked,
+			ClientCounts: bs.ClientCounts,
+		}
+
+		if c.buckets[idx].ClientCounts == nil {
+			c.buckets[idx].ClientCounts = make(map[string]int)
+		}
+	}
+
+	// Restore running counters
+	if m, ok := snap.Counters["domain_permitted"]; ok {
+		c.domainPermitted = m
+	}
+	if m, ok := snap.Counters["domain_blocked"]; ok {
+		c.domainBlocked = m
+	}
+	if m, ok := snap.Counters["client_total"]; ok {
+		c.clientTotal = m
+	}
+	if m, ok := snap.Counters["client_blocked"]; ok {
+		c.clientBlocked = m
+	}
+	if m, ok := snap.Counters["query_type"]; ok {
+		c.queryTypes = m
+	}
+	if m, ok := snap.Counters["response_type"]; ok {
+		c.responseTypes = m
+	}
+
+	total := 0
+	for _, v := range c.clientTotal {
+		total += v
+	}
+	log.Infof("Restored %d persisted stats counters and %d time buckets", total, len(snap.Buckets))
 }
 
 // Record ingests a single query observation.
@@ -122,6 +350,50 @@ func (c *Collector) Record(q QueryRecord) {
 	c.clientTotal[q.Client]++
 	c.queryTypes[q.QueryType]++
 	c.responseTypes[q.ResponseType]++
+	c.dirty = true
+}
+
+// pruneCounters caps each counter map to maxCounterKeys, keeping top-N by count.
+func (c *Collector) pruneCounters() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	maps := []*map[string]int{
+		&c.domainPermitted,
+		&c.domainBlocked,
+		&c.clientTotal,
+		&c.clientBlocked,
+		&c.queryTypes,
+		&c.responseTypes,
+	}
+
+	for _, mp := range maps {
+		m := *mp
+		if len(m) <= c.maxCounterKeys {
+			continue
+		}
+
+		type kv struct {
+			key string
+			val int
+		}
+
+		items := make([]kv, 0, len(m))
+		for k, v := range m {
+			items = append(items, kv{k, v})
+		}
+
+		sort.Slice(items, func(i, j int) bool {
+			return items[i].val > items[j].val
+		})
+
+		pruned := make(map[string]int, c.maxCounterKeys)
+		for _, item := range items[:c.maxCounterKeys] {
+			pruned[item.key] = item.val
+		}
+
+		*mp = pruned
+	}
 }
 
 // advanceBuckets moves the ring head forward to cover the current time window.
