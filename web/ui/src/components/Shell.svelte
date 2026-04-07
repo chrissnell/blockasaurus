@@ -79,7 +79,7 @@
       <ThemeToggle />
       <button
         class="menu-toggle"
-        onclick={() => menuOpen = !menuOpen}
+        onclick={(e) => { e.stopPropagation(); menuOpen = !menuOpen }}
         aria-expanded={menuOpen}
         aria-label={menuOpen ? 'Close menu' : 'Open menu'}
       >
