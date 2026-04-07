@@ -8,6 +8,15 @@
 
   let entries = $state([])
   let connected = $state(false)
+  let isMobile = $state(false)
+
+  onMount(() => {
+    const mql = window.matchMedia('(max-width: 768px)')
+    isMobile = mql.matches
+    const onMqlChange = (e) => { isMobile = e.matches }
+    mql.addEventListener('change', onMqlChange)
+    return () => mql.removeEventListener('change', onMqlChange)
+  })
 
   onMount(() => {
     const disconnect = connectLogStream(
@@ -45,17 +54,21 @@
     return 'info'
   }
 
-  const columns = [
-    { key: 'timestamp', label: 'Time', width: '90px', render: renderTime },
-    { key: 'client_ip', label: 'Client', width: '120px' },
-    { key: 'client_group', label: 'Group', width: '120px' },
-    { key: 'duration_ms', label: 'Duration', width: '90px', render: renderDuration },
-    { key: 'level', label: 'Level', width: '70px' },
-    { key: 'question_type', label: 'Type', width: '70px' },
-    { key: 'question_name', label: 'Name', width: '2fr' },
-    { key: 'response_code', label: 'Code', width: '100px' },
-    { key: 'response_reason', label: 'Reason', width: '2fr' },
+  const allColumns = [
+    { key: 'timestamp', label: 'Time', width: '90px', render: renderTime, mobile: true },
+    { key: 'client_ip', label: 'Client', width: '120px', mobile: true },
+    { key: 'client_group', label: 'Group', width: '120px', mobile: false },
+    { key: 'duration_ms', label: 'Duration', width: '90px', render: renderDuration, mobile: false },
+    { key: 'level', label: 'Level', width: '70px', mobile: true },
+    { key: 'question_type', label: 'Type', width: '70px', mobile: false },
+    { key: 'question_name', label: 'Name', width: '2fr', mobile: true },
+    { key: 'response_code', label: 'Code', width: '100px', mobile: false },
+    { key: 'response_reason', label: 'Reason', width: '2fr', mobile: true },
   ]
+
+  const columns = $derived(
+    isMobile ? allColumns.filter(c => c.mobile) : allColumns
+  )
 </script>
 
 {#snippet renderTime(value)}

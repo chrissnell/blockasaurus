@@ -11,6 +11,7 @@
   let pendingCount = $state(getDirtyCount())
   let applying = $state(false)
   let version = $state('')
+  let menuOpen = $state(false)
 
   $effect(() => {
     getVersion().then(v => { version = v })
@@ -18,6 +19,22 @@
 
   $effect(() => {
     return onDirtyChange((n) => { pendingCount = n })
+  })
+
+  $effect(() => {
+    if (!menuOpen) return
+    function handleClick(e) {
+      if (!e.target.closest('.header')) menuOpen = false
+    }
+    function handleKey(e) {
+      if (e.key === 'Escape') menuOpen = false
+    }
+    document.addEventListener('click', handleClick)
+    document.addEventListener('keydown', handleKey)
+    return () => {
+      document.removeEventListener('click', handleClick)
+      document.removeEventListener('keydown', handleKey)
+    }
   })
 
   async function handleApply() {
@@ -45,7 +62,7 @@
 
 <Tabs.Root
   value={currentPath}
-  onValueChange={(v) => { if (v) location.hash = v }}
+  onValueChange={(v) => { if (v) location.hash = v; menuOpen = false }}
   class="shell"
 >
   <header class="header">
@@ -53,12 +70,33 @@
       <img src="/ui/blockasaurus-logo-face.svg" alt="" class="logo" />
       <h1>blockasaurus</h1>
     </a>
-    <Tabs.List class="shell-tabs">
+    <Tabs.List class="shell-tabs {menuOpen ? 'mobile-open' : ''}">
       {#each nav as item}
         <Tabs.Trigger value={item.path}>{item.label}</Tabs.Trigger>
       {/each}
     </Tabs.List>
-    <ThemeToggle />
+    <div class="header-actions">
+      <ThemeToggle />
+      <button
+        class="menu-toggle"
+        onclick={() => menuOpen = !menuOpen}
+        aria-expanded={menuOpen}
+        aria-label={menuOpen ? 'Close menu' : 'Open menu'}
+      >
+        {#if menuOpen}
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="4" y1="4" x2="16" y2="16" />
+            <line x1="16" y1="4" x2="4" y2="16" />
+          </svg>
+        {:else}
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="3" y1="5" x2="17" y2="5" />
+            <line x1="3" y1="10" x2="17" y2="10" />
+            <line x1="3" y1="15" x2="17" y2="15" />
+          </svg>
+        {/if}
+      </button>
+    </div>
   </header>
 
   <ApplyButton pending={pendingCount} loading={applying} onclick={handleApply} />
@@ -152,5 +190,70 @@
   .pending {
     margin-left: auto;
     color: var(--color-warning);
+  }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .menu-toggle {
+    display: none;
+  }
+
+  @media (max-width: 767px) {
+    .menu-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: none;
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius);
+      color: var(--color-text);
+      padding: 0.4rem;
+      cursor: pointer;
+    }
+
+    .logo-link h1 {
+      display: none;
+    }
+
+    .header {
+      position: relative;
+    }
+
+    :global(.shell-tabs) {
+      flex: unset;
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      flex-direction: column;
+      background: var(--color-bg);
+      border: 1px solid var(--color-border);
+      border-top: none;
+      border-radius: 0 0 var(--radius) var(--radius);
+      z-index: 50;
+      display: none;
+      transform: unset;
+    }
+
+    :global(.shell-tabs.mobile-open) {
+      display: flex;
+    }
+
+    :global(.shell-tabs) :global([data-tabs-trigger]) {
+      padding: 0.75rem 1rem;
+      text-align: left;
+      border-bottom: none;
+      border-left: 3px solid transparent;
+    }
+
+    :global(.shell-tabs) :global([data-tabs-trigger][data-state="active"]) {
+      border-bottom: none;
+      border-left-color: var(--color-primary);
+      background: var(--color-surface);
+    }
   }
 </style>
