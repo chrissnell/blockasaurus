@@ -197,6 +197,7 @@ func (r *QueryLoggingResolver) createLogEntry(request *model.Request, response *
 		Start:          start,
 		ClientIP:       "0.0.0.0",
 		ClientNames:    []string{"none"},
+		ClientGroup:    request.ClientGroup,
 		BlockyInstance: r.instanceID,
 	}
 

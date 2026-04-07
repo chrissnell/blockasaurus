@@ -8,6 +8,7 @@ type LogEntry struct {
 	Start          time.Time
 	ClientIP       string
 	ClientNames    []string
+	ClientGroup    string
 	DurationMs     int64
 	ResponseReason string
 	ResponseType   string

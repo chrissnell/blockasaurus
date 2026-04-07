@@ -68,6 +68,7 @@ type Request struct {
 	RequestClientID string
 	Protocol        RequestProtocol
 	ClientNames     []string
+	ClientGroup     string
 	Req             *dns.Msg
 	RequestTS       time.Time
 }

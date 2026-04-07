@@ -228,6 +228,7 @@ var _ = Describe("DatabaseWriter", func() {
 				By("create indexes", func() {
 					mock.ExpectExec(`CREATE INDEX IF NOT EXISTS "idx_log_entries_response_type"`).WillReturnResult(sqlmock.NewResult(0, 0))
 					mock.ExpectExec(`CREATE INDEX IF NOT EXISTS "idx_log_entries_client_name"`).WillReturnResult(sqlmock.NewResult(0, 0))
+					mock.ExpectExec(`CREATE INDEX IF NOT EXISTS "idx_log_entries_client_group"`).WillReturnResult(sqlmock.NewResult(0, 0))
 					mock.ExpectExec(`CREATE INDEX IF NOT EXISTS "idx_log_entries_request_ts"`).WillReturnResult(sqlmock.NewResult(0, 0))
 				})
 
@@ -259,7 +260,7 @@ var _ = Describe("DatabaseWriter", func() {
 			Context("Happy path", func() {
 				It("should create the database schema automatically", func() {
 					By("create table with indexes", func() {
-						mock.ExpectExec("CREATE TABLE `log_entries`.*INDEX (`idx_log_entries_request_ts`|`idx_log_entries_client_name`|`idx_log_entries_response_type`)").WillReturnResult(sqlmock.NewResult(0, 0))
+						mock.ExpectExec("CREATE TABLE `log_entries`.*INDEX (`idx_log_entries_request_ts`|`idx_log_entries_client_name`|`idx_log_entries_client_group`|`idx_log_entries_response_type`)").WillReturnResult(sqlmock.NewResult(0, 0))
 					})
 
 					By("create mysql specific manually defined primary key", func() {
@@ -274,7 +275,7 @@ var _ = Describe("DatabaseWriter", func() {
 			Context("primary index creation", func() {
 				It("should create the database schema automatically without errors even if primary idex exists", func() {
 					By("create table with indexes", func() {
-						mock.ExpectExec("CREATE TABLE `log_entries`.*INDEX (`idx_log_entries_request_ts`|`idx_log_entries_client_name`|`idx_log_entries_response_type`)").WillReturnResult(sqlmock.NewResult(0, 0))
+						mock.ExpectExec("CREATE TABLE `log_entries`.*INDEX (`idx_log_entries_request_ts`|`idx_log_entries_client_name`|`idx_log_entries_client_group`|`idx_log_entries_response_type`)").WillReturnResult(sqlmock.NewResult(0, 0))
 					})
 
 					By("create mysql specific manually defined primary key should be skipped if already exists (error 1060)", func() {
@@ -287,7 +288,7 @@ var _ = Describe("DatabaseWriter", func() {
 
 				It("should fail if manually defined index can't be created", func() {
 					By("create table with indexes", func() {
-						mock.ExpectExec("CREATE TABLE `log_entries`.*INDEX (`idx_log_entries_request_ts`|`idx_log_entries_client_name`|`idx_log_entries_response_type`)").WillReturnResult(sqlmock.NewResult(0, 0))
+						mock.ExpectExec("CREATE TABLE `log_entries`.*INDEX (`idx_log_entries_request_ts`|`idx_log_entries_client_name`|`idx_log_entries_client_group`|`idx_log_entries_response_type`)").WillReturnResult(sqlmock.NewResult(0, 0))
 					})
 
 					By("create mysql specific manually defined primary key should be skipped if already exists", func() {

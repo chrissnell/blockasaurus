@@ -26,6 +26,7 @@ type logEntry struct {
 	RequestTS     time.Time `gorm:"not null;index"`
 	ClientIP      string
 	ClientName    string `gorm:"index"`
+	ClientGroup   string `gorm:"index"`
 	DurationMs    int64
 	Reason        string
 	ResponseType  string `gorm:"index"`
@@ -168,6 +169,7 @@ func (d *DatabaseWriter) Write(entry *LogEntry) {
 		RequestTS:     entry.Start,
 		ClientIP:      entry.ClientIP,
 		ClientName:    strings.Join(entry.ClientNames, "; "),
+		ClientGroup:   entry.ClientGroup,
 		DurationMs:    entry.DurationMs,
 		Reason:        entry.ResponseReason,
 		ResponseType:  entry.ResponseType,

@@ -18,7 +18,7 @@
           level: isBlocked ? 'error' : mapLevel(raw.level),
           timestamp: raw.timestamp,
           client_ip: f.client_ip,
-          client_names: f.client_names,
+          client_group: f.client_group,
           duration_ms: f.duration_ms,
           question_type: f.question_type,
           question_name: f.question_name || raw.message,
@@ -48,7 +48,7 @@
   const columns = [
     { key: 'timestamp', label: 'Time', width: '90px', render: renderTime },
     { key: 'client_ip', label: 'Client', width: '120px' },
-    { key: 'client_names', label: 'Group', width: '120px' },
+    { key: 'client_group', label: 'Group', width: '120px' },
     { key: 'duration_ms', label: 'Duration', width: '90px', render: renderDuration },
     { key: 'level', label: 'Level', width: '70px' },
     { key: 'question_type', label: 'Type', width: '70px' },

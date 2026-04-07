@@ -60,6 +60,7 @@ func LogEntryFields(entry *LogEntry) logrus.Fields {
 	return withoutZeroes(logrus.Fields{
 		"client_ip":       entry.ClientIP,
 		"client_names":    strings.Join(entry.ClientNames, "; "),
+		"client_group":    entry.ClientGroup,
 		"response_reason": entry.ResponseReason,
 		"response_type":   entry.ResponseType,
 		"response_code":   entry.ResponseCode,

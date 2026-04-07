@@ -468,32 +468,52 @@ func (r *BlockingResolver) groupsToCheckForClient(request *model.Request) []stri
 	defer r.status.lock.RUnlock()
 
 	var groups []string
+	var matchedClient string
+
 	// try client names
 	for _, cName := range request.ClientNames {
 		for blockGroup, groupsByName := range r.clientGroupsBlock {
 			if util.ClientNameMatchesGroupName(blockGroup, cName) {
 				groups = append(groups, groupsByName...)
+
+				if matchedClient == "" {
+					matchedClient = blockGroup
+				}
 			}
 		}
 	}
 
 	// try IP
-	groupsByIP, found := r.clientGroupsBlock[request.ClientIP.String()]
+	ipStr := request.ClientIP.String()
+
+	groupsByIP, found := r.clientGroupsBlock[ipStr]
 
 	if found {
 		groups = append(groups, groupsByIP...)
+
+		if matchedClient == "" {
+			matchedClient = ipStr
+		}
 	}
 
 	for clientIdentifier, groupsByCidr := range r.clientGroupsBlock {
 		// try CIDR
 		if util.CidrContainsIP(clientIdentifier, request.ClientIP) {
 			groups = append(groups, groupsByCidr...)
+
+			if matchedClient == "" {
+				matchedClient = clientIdentifier
+			}
 		} else if isFQDN(clientIdentifier) && r.fqdnIPCache != nil {
 			ips, _ := r.fqdnIPCache.Get(clientIdentifier)
 			if ips != nil {
 				for _, ip := range *ips {
 					if ip.Equal(request.ClientIP) {
 						groups = append(groups, groupsByCidr...)
+
+						if matchedClient == "" {
+							matchedClient = clientIdentifier
+						}
 					}
 				}
 			}
@@ -503,7 +523,10 @@ func (r *BlockingResolver) groupsToCheckForClient(request *model.Request) []stri
 	if len(groups) == 0 {
 		// return default
 		groups = r.clientGroupsBlock["default"]
+		matchedClient = "default"
 	}
+
+	request.ClientGroup = matchedClient
 
 	var result []string
 
