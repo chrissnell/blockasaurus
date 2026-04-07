@@ -18,7 +18,14 @@ async function request(method, path, body) {
 
   if (resp.status === 204) return null
 
-  const data = await resp.json()
+  const text = await resp.text()
+  let data
+  try {
+    data = JSON.parse(text)
+  } catch {
+    if (!resp.ok) throw new Error(text || `${resp.status} ${resp.statusText}`)
+    throw new Error(`unexpected response: ${text.slice(0, 200)}`)
+  }
 
   if (!resp.ok) {
     throw new Error(data.message || data.error || `${resp.status} ${resp.statusText}`)

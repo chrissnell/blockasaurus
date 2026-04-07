@@ -324,19 +324,18 @@ func (h *ConfigHandler) CreateDomainEntry(_ context.Context, req CreateDomainEnt
 	}
 
 	if err := h.store.CreateDomainEntry(e); err != nil {
-		return nil, err
+		return CreateDomainEntry400JSONResponse{BadRequestJSONResponse{Message: err.Error()}}, nil
 	}
 
 	// Auto-generate group name from ID (like blocklist sources get from URLs)
 	e.GroupName = fmt.Sprintf("_d_%d", e.ID)
 	if err := h.store.UpdateDomainEntry(e); err != nil {
-		return nil, err
+		return CreateDomainEntry400JSONResponse{BadRequestJSONResponse{Message: err.Error()}}, nil
 	}
 
-	// Auto-add to default client group so entries work immediately
-	if err := h.store.AddGroupToClientGroup("default", e.GroupName); err != nil {
-		return nil, err
-	}
+	// Auto-add to default client group so entries work immediately.
+	// Non-fatal: if no default group exists, entry is still created.
+	_ = h.store.AddGroupToClientGroup("default", e.GroupName)
 
 	return CreateDomainEntry201JSONResponse(domainEntryToAPI(*e)), nil
 }
@@ -380,7 +379,7 @@ func (h *ConfigHandler) UpdateDomainEntry(_ context.Context, req UpdateDomainEnt
 	// GroupName is immutable — set on create, managed via client group assignments
 
 	if err := h.store.UpdateDomainEntry(existing); err != nil {
-		return nil, err
+		return UpdateDomainEntry400JSONResponse{BadRequestJSONResponse{Message: err.Error()}}, nil
 	}
 
 	return UpdateDomainEntry200JSONResponse(domainEntryToAPI(*existing)), nil

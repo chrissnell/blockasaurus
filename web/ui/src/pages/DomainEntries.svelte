@@ -90,8 +90,10 @@
     if (addWildcard) {
       const val = addDomain.trim()
       if (val) {
-        const escaped = val.replace(/\./g, '\\.')
-        addDomain = `(\\.|^)${escaped}$`
+        // Strip glob-style wildcards and dots from edges, then build a proper regex
+        const clean = val.replace(/^\*\.?/, '').replace(/\.?\*$/, '')
+        const escaped = clean.replace(/\./g, '\\.')
+        addDomain = `(\\.|^)${escaped}(\\.|$)`
       }
       if (addEntryType === 'exact_deny') addEntryType = 'regex_deny'
       else if (addEntryType === 'exact_allow') addEntryType = 'regex_allow'
@@ -101,12 +103,17 @@
   async function addEntry() {
     if (!addDomain.trim()) return
 
-    await domainEntries.create({
-      domain: addDomain.trim(),
-      entry_type: addEntryType,
-      comment: addComment,
-      enabled: true,
-    })
+    try {
+      await domainEntries.create({
+        domain: addDomain.trim(),
+        entry_type: addEntryType,
+        comment: addComment,
+        enabled: true,
+      })
+    } catch (err) {
+      alert(err.message)
+      return
+    }
 
     addDomain = ''
     addComment = ''
