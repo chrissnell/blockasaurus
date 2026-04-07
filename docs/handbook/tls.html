@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TLS Configuration &mdash; Blockasaurus Handbook</title>
+  <link rel="stylesheet" href="handbook.css" />
+</head>
+<body>
+
+<header class="site-header">
+  <div class="site-header-inner">
+    <a href="index.html" class="site-logo">
+      <img src="img/blockasaurus-logo-face.svg" alt="" />
+      <span>blockasaurus <span class="handbook-label">handbook</span></span>
+    </a>
+    <div class="header-actions">
+      <button class="theme-toggle" aria-label="Toggle theme">[ dark ]</button>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar">
+    <nav>
+      <div class="sidebar-section">Getting Started</div>
+      <a href="index.html">Introduction</a>
+      <a href="installation.html">Installation</a>
+      <a href="tls.html">TLS Configuration</a>
+      <div class="sidebar-section">Configuration</div>
+      <a href="upstreams.html">Upstream DNS</a>
+      <a href="client-groups.html">Client Groups</a>
+      <a href="blocklists.html">Blocklists</a>
+      <a href="domains.html">Domain Allow/Deny</a>
+      <a href="custom-dns.html">Custom DNS</a>
+      <a href="settings.html">Settings</a>
+      <div class="sidebar-section">Operations</div>
+      <a href="testing.html">Testing</a>
+    </nav>
+  </aside>
+
+  <main class="content">
+    <h1>TLS Configuration</h1>
+    <p class="subtitle">Enable encrypted DNS with DoT and DoH</p>
+
+    <p>
+      Blockasaurus supports DNS-over-TLS (DoT, port 853) and DNS-over-HTTPS (DoH)
+      for encrypted DNS resolution. TLS configuration depends on your deployment
+      scenario. Choose the one that matches your setup:
+    </p>
+
+    <div class="box">
+      <div class="box-body">
+        <table>
+          <thead>
+            <tr><th>Scenario</th><th>TLS?</th><th>Certificate</th><th>Use Case</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>1. No TLS</strong></td>
+              <td>No</td>
+              <td>None</td>
+              <td>Simple homelab, LAN only</td>
+            </tr>
+            <tr>
+              <td><strong>2. Self-signed cert</strong></td>
+              <td>Yes</td>
+              <td>Self-signed wildcard</td>
+              <td>Homelab with DoT/DoH, no public domain</td>
+            </tr>
+            <tr>
+              <td><strong>3. Let&rsquo;s Encrypt</strong></td>
+              <td>Yes</td>
+              <td>Wildcard via DNS-01</td>
+              <td>Custom domain, production deployment</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── Scenario 1 ── -->
+    <h2>Scenario 1: No TLS</h2>
+
+    <p>
+      The simplest setup. Clients send plain DNS queries over UDP/TCP to port 53.
+      No certificates needed. Client identification uses source IP or EDNS CPE-ID.
+    </p>
+
+    <h3>Standalone config.yml</h3>
+
+    <div class="code-file">config.yml</div>
+<pre><code>databasePath: /var/lib/blockasaurus/blockasaurus.db
+
+ports:
+  dns: 53
+  http: 4000
+
+log:
+  level: info</code></pre>
+
+    <h3>Helm values.yaml</h3>
+
+    <div class="code-file">values.yaml</div>
+<pre><code>config:
+  ports:
+    dns: 53
+    http: 80
+  databasePath: /data/blocky.db
+  # Optional: enable CPE-ID for per-client identification
+  # without needing TLS or subdomains
+  clientGroupEndpoints:
+    cpeId: true
+
+service:
+  dns:
+    enabled: true
+    type: LoadBalancer</code></pre>
+
+    <div class="callout info">
+      <span class="callout-icon">&#9432;</span>
+      <div class="callout-body">
+        <p>
+          Without TLS, DNS queries are sent in plain text. This is fine for a
+          home network where you trust the local transport, but not suitable
+          for remote clients or networks you don&rsquo;t control.
+        </p>
+      </div>
+    </div>
+
+    <!-- ── Scenario 2 ── -->
+    <h2>Scenario 2: Self-Signed Certificate</h2>
+
+    <p>
+      For homelabs that want DoT and DoH but don&rsquo;t have a public domain.
+      You generate a self-signed wildcard certificate and distribute the CA to
+      your devices.
+    </p>
+
+    <h3>Generate the Certificate</h3>
+
+    <p>Create a self-signed CA and wildcard certificate for your local domain:</p>
+
+<pre><code># Generate CA key and certificate
+openssl genrsa -out ca.key 4096
+openssl req -x509 -new -nodes -key ca.key \
+  -sha256 -days 3650 -out ca.crt \
+  -subj "/CN=Blockasaurus CA"
+
+# Generate server key
+openssl genrsa -out tls.key 2048
+
+# Create certificate signing request with SANs
+cat &gt; san.cnf &lt;&lt;EOF
+[req]
+distinguished_name = req_dn
+req_extensions = v3_req
+prompt = no
+
+[req_dn]
+CN = blockasaurus.local
+
+[v3_req]
+subjectAltName = @alt_names
+
+[alt_names]
+DNS.1 = blockasaurus.local
+DNS.2 = *.blockasaurus.local
+EOF
+
+openssl req -new -key tls.key -out tls.csr -config san.cnf
+
+# Sign with CA
+openssl x509 -req -in tls.csr -CA ca.crt -CAkey ca.key \
+  -CAcreateserial -out tls.crt -days 825 \
+  -extfile san.cnf -extensions v3_req</code></pre>
+
+    <div class="callout warn">
+      <span class="callout-icon">&#9888;</span>
+      <div class="callout-body">
+        <p>
+          The wildcard <code>*.blockasaurus.local</code> is required for
+          per-client-group subdomains (e.g., <code>kids.blockasaurus.local</code>).
+          Include both the bare domain and the wildcard in the certificate&rsquo;s
+          Subject Alternative Names.
+        </p>
+      </div>
+    </div>
+
+    <h3>Standalone config.yml</h3>
+
+    <div class="code-file">config.yml</div>
+<pre><code>databasePath: /var/lib/blockasaurus/blockasaurus.db
+
+certFile: /etc/blockasaurus/tls.crt
+keyFile: /etc/blockasaurus/tls.key
+
+ports:
+  dns: 53
+  http: 4000
+  https: 443
+  tls: 853
+
+clientGroupEndpoints:
+  domains:
+    - blockasaurus.local
+  cpeId: true
+
+log:
+  level: info</code></pre>
+
+    <h3>Helm values.yaml</h3>
+
+    <p>
+      First, create the TLS secret in your cluster:
+    </p>
+
+<pre><code>kubectl create secret tls blockasaurus-tls \
+  --cert=tls.crt --key=tls.key \
+  -n blockasaurus</code></pre>
+
+    <div class="code-file">values.yaml</div>
+<pre><code>tls:
+  enabled: true
+  secretName: blockasaurus-tls
+
+config:
+  ports:
+    dns: 53
+    http: 80
+    https: 443
+    tls: 853
+  databasePath: /data/blocky.db
+  certFile: /certs/tls.crt
+  keyFile: /certs/tls.key
+  clientGroupEndpoints:
+    domains:
+      - blockasaurus.local
+    advertiseAddress: auto
+    cpeId: true
+
+service:
+  dns:
+    enabled: true
+    type: LoadBalancer
+    dot: true
+    http: true
+    https: true</code></pre>
+
+    <h3>Trust the CA on Clients</h3>
+
+    <p>
+      Since the certificate is self-signed, each client device needs to trust
+      your CA certificate (<code>ca.crt</code>). The web UI&rsquo;s Client Groups
+      setup guide provides platform-specific instructions, and iOS/macOS
+      configuration profiles can include the CA automatically.
+    </p>
+
+    <div class="box">
+      <div class="box-header">Client CA Trust</div>
+      <div class="box-body">
+        <table>
+          <tr>
+            <td><strong>macOS</strong></td>
+            <td>Import <code>ca.crt</code> into Keychain Access, mark as trusted</td>
+          </tr>
+          <tr>
+            <td><strong>iOS</strong></td>
+            <td>Install the config profile from the web UI (includes CA)</td>
+          </tr>
+          <tr>
+            <td><strong>Windows</strong></td>
+            <td>Import into Trusted Root Certification Authorities</td>
+          </tr>
+          <tr>
+            <td><strong>Android</strong></td>
+            <td>Settings &rarr; Security &rarr; Install certificate</td>
+          </tr>
+          <tr>
+            <td><strong>Linux</strong></td>
+            <td>Copy to <code>/usr/local/share/ca-certificates/</code> and run <code>update-ca-certificates</code></td>
+          </tr>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── Scenario 3 ── -->
+    <h2>Scenario 3: Let&rsquo;s Encrypt Wildcard Certificate</h2>
+
+    <p>
+      The production setup. You own a domain (e.g., <code>dns.example.com</code>)
+      and use Let&rsquo;s Encrypt with DNS-01 validation to get a trusted wildcard
+      certificate. No CA distribution needed &mdash; clients trust Let&rsquo;s
+      Encrypt by default.
+    </p>
+
+    <h3>Prerequisites</h3>
+
+    <ul>
+      <li>A domain you control (e.g., <code>dns.example.com</code>)</li>
+      <li>DNS hosted by a provider that supports API access (Cloudflare, Route53, etc.)</li>
+      <li>For Kubernetes: <a href="https://cert-manager.io/">cert-manager</a> installed in the cluster</li>
+    </ul>
+
+    <h3>Standalone: certbot</h3>
+
+    <p>Use certbot with a DNS plugin to obtain a wildcard certificate:</p>
+
+<pre><code># Example with Cloudflare DNS plugin
+sudo certbot certonly \
+  --dns-cloudflare \
+  --dns-cloudflare-credentials /etc/cloudflare.ini \
+  -d dns.example.com \
+  -d "*.dns.example.com"</code></pre>
+
+    <div class="code-file">config.yml</div>
+<pre><code>databasePath: /var/lib/blockasaurus/blockasaurus.db
+
+certFile: /etc/letsencrypt/live/dns.example.com/fullchain.pem
+keyFile: /etc/letsencrypt/live/dns.example.com/privkey.pem
+
+ports:
+  dns: 53
+  http: 80
+  https: 443
+  tls: 853
+
+clientGroupEndpoints:
+  domains:
+    - dns.example.com
+  cpeId: true
+
+log:
+  level: info</code></pre>
+
+    <div class="callout tip">
+      <span class="callout-icon">&#10003;</span>
+      <div class="callout-body">
+        <p>
+          Set up a cron job or systemd timer to renew the certificate automatically.
+          Blockasaurus will pick up the new certificate on restart.
+        </p>
+      </div>
+    </div>
+
+    <h3>Kubernetes: cert-manager</h3>
+
+    <p>
+      The Helm chart creates a cert-manager <code>Certificate</code> resource
+      automatically when <code>certificate.enabled: true</code>:
+    </p>
+
+    <div class="code-file">values.yaml</div>
+<pre><code>certificate:
+  enabled: true
+  issuerRef:
+    name: letsencrypt-dns01-cloudflare
+    kind: ClusterIssuer
+  dnsNames:
+    - dns.example.com         # base domain
+    - "*.dns.example.com"     # wildcard for per-group subdomains
+  # secretName defaults to {fullname}-tls
+
+tls:
+  enabled: true
+  secretName: blockasaurus-tls
+
+config:
+  ports:
+    dns: 53
+    http: 80
+    https: 443
+    tls: 853
+  databasePath: /data/blocky.db
+  certFile: /certs/tls.crt
+  keyFile: /certs/tls.key
+  clientGroupEndpoints:
+    domains:
+      - dns.example.com
+    advertiseAddress: auto
+    cpeId: true
+
+service:
+  dns:
+    enabled: true
+    type: LoadBalancer
+    externalTrafficPolicy: Local  # preserves client source IPs
+    dot: true
+    http: true
+    https: true</code></pre>
+
+    <div class="callout danger">
+      <span class="callout-icon">&#9888;</span>
+      <div class="callout-body">
+        <p>
+          <strong>Both the base domain and wildcard are required</strong> in
+          <code>dnsNames</code>. A wildcard cert (<code>*.dns.example.com</code>)
+          does <em>not</em> cover the bare domain (<code>dns.example.com</code>).
+        </p>
+      </div>
+    </div>
+
+    <!-- ── Port reference ── -->
+    <h2>Port Reference</h2>
+
+    <div class="box">
+      <div class="box-body">
+        <table>
+          <thead>
+            <tr><th>Port</th><th>Protocol</th><th>Service</th><th>Requires TLS</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>53</code></td>
+              <td>UDP/TCP</td>
+              <td>Plain DNS</td>
+              <td>No</td>
+            </tr>
+            <tr>
+              <td><code>80</code></td>
+              <td>TCP</td>
+              <td>HTTP (Web UI + DoH fallback)</td>
+              <td>No</td>
+            </tr>
+            <tr>
+              <td><code>443</code></td>
+              <td>TCP</td>
+              <td>HTTPS (DoH + Web UI)</td>
+              <td>Yes</td>
+            </tr>
+            <tr>
+              <td><code>853</code></td>
+              <td>TCP</td>
+              <td>DNS-over-TLS (DoT)</td>
+              <td>Yes</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── Advanced: Separate admin ── -->
+    <h2>Advanced: Separate Admin Port</h2>
+
+    <p>
+      If your DoH endpoint is internet-facing, you may want to restrict the web
+      UI to an internal-only port. Use <code>adminPort</code> to separate the
+      admin UI from the DNS server endpoint:
+    </p>
+
+    <div class="code-file">values.yaml (excerpt)</div>
+<pre><code>config:
+  ports:
+    dns: 53
+    http: 80          # DNS server only (internet-facing DoH)
+    https: 443        # DNS server only (internet-facing DoH)
+    adminPort: 8080   # Web UI, API, metrics (internal only)
+    tls: 853
+
+service:
+  dns:
+    externalTrafficPolicy: Local
+    dot: true
+    http: true        # DoH on the LoadBalancer
+    https: true
+  adminPort:
+    enabled: true     # Admin UI on a separate ClusterIP
+    type: ClusterIP
+    port: 8080</code></pre>
+
+    <div class="callout info">
+      <span class="callout-icon">&#9432;</span>
+      <div class="callout-body">
+        <p>
+          When <code>adminPort</code> is configured, the <code>/metrics</code>
+          Prometheus endpoint moves to the admin port. Update your
+          <code>prometheus.io/port</code> pod annotation accordingly.
+        </p>
+      </div>
+    </div>
+
+    <nav class="page-nav">
+      <a href="installation.html">
+        <span class="label">Previous</span>
+        Installation
+      </a>
+      <a href="upstreams.html" class="next">
+        <span class="label">Next</span>
+        Upstream DNS
+      </a>
+    </nav>
+  </main>
+</div>
+
+<footer class="site-footer">
+  blockasaurus &middot; DNS firewall &amp; ad blocker
+</footer>
+
+<script src="handbook.js"></script>
+</body>
+</html>

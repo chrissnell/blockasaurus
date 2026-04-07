@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Blocklists &mdash; Blockasaurus Handbook</title>
+  <link rel="stylesheet" href="handbook.css" />
+</head>
+<body>
+
+<header class="site-header">
+  <div class="site-header-inner">
+    <a href="index.html" class="site-logo">
+      <img src="img/blockasaurus-logo-face.svg" alt="" />
+      <span>blockasaurus <span class="handbook-label">handbook</span></span>
+    </a>
+    <div class="header-actions">
+      <button class="theme-toggle" aria-label="Toggle theme">[ dark ]</button>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar">
+    <nav>
+      <div class="sidebar-section">Getting Started</div>
+      <a href="index.html">Introduction</a>
+      <a href="installation.html">Installation</a>
+      <a href="tls.html">TLS Configuration</a>
+      <div class="sidebar-section">Configuration</div>
+      <a href="upstreams.html">Upstream DNS</a>
+      <a href="client-groups.html">Client Groups</a>
+      <a href="blocklists.html">Blocklists</a>
+      <a href="domains.html">Domain Allow/Deny</a>
+      <a href="custom-dns.html">Custom DNS</a>
+      <a href="settings.html">Settings</a>
+      <div class="sidebar-section">Operations</div>
+      <a href="testing.html">Testing</a>
+    </nav>
+  </aside>
+
+  <main class="content">
+    <h1>Blocklists</h1>
+    <p class="subtitle">Subscribe to external blocklists for network-wide ad and tracker blocking</p>
+
+    <p>
+      Blocklists are externally-hosted lists of domains known to serve ads,
+      track users, or distribute malware. Blockasaurus downloads these lists
+      periodically and blocks matching DNS queries.
+    </p>
+
+    <h2>The Blocklists Page</h2>
+
+    <p>
+      Navigate to the <strong>Blocklists</strong> tab to manage your subscribed
+      lists.
+    </p>
+
+    <div class="screenshot">
+      <img src="img/blocklists-overview.png" alt="Blocklists page showing subscribed lists with status and group counts" />
+      <div class="caption">Blocklists overview &mdash; each list shows its URL, status, and assigned groups</div>
+    </div>
+
+    <h2>Adding a Blocklist</h2>
+
+    <ol class="steps">
+      <li>
+        Click <strong>&ldquo;Add Source&rdquo;</strong> in the header.
+      </li>
+      <li>
+        Enter the <strong>URL</strong> of the blocklist file. Standard hosts-file
+        format and domain-per-line formats are supported.
+      </li>
+      <li>
+        The list is enabled by default. Toggle it off if you want to add it
+        without activating it immediately.
+      </li>
+      <li>
+        Click <strong>Save</strong>. The list is downloaded on the next apply.
+      </li>
+    </ol>
+
+    <div class="screenshot">
+      <img src="img/blocklists-add.png" alt="Add blocklist dialog with URL field and enabled toggle" />
+      <div class="caption">Adding a new blocklist source</div>
+    </div>
+
+    <div class="callout info">
+      <span class="callout-icon">&#9432;</span>
+      <div class="callout-body">
+        <p>
+          Blockasaurus auto-generates a <strong>group name</strong> from the
+          URL (used internally to track the list). For example, a list at
+          <code>https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts</code>
+          gets the group name <code>raw-githubusercontent-hosts-master-hosts</code>.
+        </p>
+      </div>
+    </div>
+
+    <h2>Recommended Blocklists</h2>
+
+    <div class="box">
+      <div class="box-header">Popular Blocklists</div>
+      <div class="box-body">
+        <table>
+          <thead>
+            <tr><th>List</th><th>Focus</th><th>URL</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>StevenBlack Unified</strong></td>
+              <td>Ads + malware</td>
+              <td><code style="font-size: var(--text-xs)">https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts</code></td>
+            </tr>
+            <tr>
+              <td><strong>OISD Big</strong></td>
+              <td>Comprehensive</td>
+              <td><code style="font-size: var(--text-xs)">https://big.oisd.nl/domainswild</code></td>
+            </tr>
+            <tr>
+              <td><strong>HaGeZi Multi Pro</strong></td>
+              <td>Ads + tracking</td>
+              <td><code style="font-size: var(--text-xs)">https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/pro.txt</code></td>
+            </tr>
+            <tr>
+              <td><strong>1Hosts Lite</strong></td>
+              <td>Minimal, low FP</td>
+              <td><code style="font-size: var(--text-xs)">https://o0.pages.dev/Lite/domains.txt</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <h2>Assigning Blocklists to Client Groups</h2>
+
+    <p>
+      Each blocklist can be assigned to one or more
+      <a href="client-groups.html">client groups</a>. This is how you give
+      different groups different blocking policies.
+    </p>
+
+    <ol class="steps">
+      <li>
+        On the Blocklists page, click the <strong>&ldquo;Groups&rdquo;</strong>
+        button next to a blocklist.
+      </li>
+      <li>
+        A dialog shows all available client groups with checkboxes. Check the
+        groups that should use this blocklist.
+      </li>
+      <li>
+        Use the <strong>&ldquo;All&rdquo;</strong> or
+        <strong>&ldquo;None&rdquo;</strong> buttons for quick selection.
+      </li>
+      <li>
+        Click <strong>Save</strong>, then <strong>Apply</strong> in the header.
+      </li>
+    </ol>
+
+    <div class="screenshot">
+      <img src="img/blocklists-assign-groups.png" alt="Group assignment dialog showing checkboxes for each client group" />
+      <div class="caption">Assigning a blocklist to client groups</div>
+    </div>
+
+    <div class="callout tip">
+      <span class="callout-icon">&#10003;</span>
+      <div class="callout-body">
+        <p>
+          A common pattern: subscribe to a broad blocklist (like StevenBlack)
+          and assign it to all groups, then add stricter lists (adult content,
+          social media) only to the <code>kids</code> group.
+        </p>
+      </div>
+    </div>
+
+    <h2>Editing and Deleting</h2>
+
+    <p>
+      Each blocklist row has <strong>Edit</strong> and <strong>Delete</strong>
+      buttons. Editing lets you change the URL or toggle the enabled status.
+      Deleting removes the list and all its group assignments.
+    </p>
+
+    <h2>How Blocklist Refresh Works</h2>
+
+    <p>
+      Blockasaurus downloads all enabled blocklists when configuration is applied
+      and refreshes them periodically. Domains from all lists assigned to a
+      client group are merged into that group&rsquo;s deny set.
+    </p>
+
+    <nav class="page-nav">
+      <a href="client-groups.html">
+        <span class="label">Previous</span>
+        Client Groups
+      </a>
+      <a href="domains.html" class="next">
+        <span class="label">Next</span>
+        Domain Allow/Deny
+      </a>
+    </nav>
+  </main>
+</div>
+
+<footer class="site-footer">
+  blockasaurus &middot; DNS firewall &amp; ad blocker
+</footer>
+
+<script src="handbook.js"></script>
+</body>
+</html>

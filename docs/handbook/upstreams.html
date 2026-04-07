@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Upstream DNS &mdash; Blockasaurus Handbook</title>
+  <link rel="stylesheet" href="handbook.css" />
+</head>
+<body>
+
+<header class="site-header">
+  <div class="site-header-inner">
+    <a href="index.html" class="site-logo">
+      <img src="img/blockasaurus-logo-face.svg" alt="" />
+      <span>blockasaurus <span class="handbook-label">handbook</span></span>
+    </a>
+    <div class="header-actions">
+      <button class="theme-toggle" aria-label="Toggle theme">[ dark ]</button>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar">
+    <nav>
+      <div class="sidebar-section">Getting Started</div>
+      <a href="index.html">Introduction</a>
+      <a href="installation.html">Installation</a>
+      <a href="tls.html">TLS Configuration</a>
+      <div class="sidebar-section">Configuration</div>
+      <a href="upstreams.html">Upstream DNS</a>
+      <a href="client-groups.html">Client Groups</a>
+      <a href="blocklists.html">Blocklists</a>
+      <a href="domains.html">Domain Allow/Deny</a>
+      <a href="custom-dns.html">Custom DNS</a>
+      <a href="settings.html">Settings</a>
+      <div class="sidebar-section">Operations</div>
+      <a href="testing.html">Testing</a>
+    </nav>
+  </aside>
+
+  <main class="content">
+    <h1>Upstream DNS</h1>
+    <p class="subtitle">Configure where blockasaurus forwards DNS queries</p>
+
+    <p>
+      When blockasaurus receives a DNS query that isn&rsquo;t blocked or served
+      from cache, it forwards the query to one or more <strong>upstream DNS
+      servers</strong>. Upstreams are organized into <strong>groups</strong> and
+      managed entirely through the web UI.
+    </p>
+
+    <div class="callout info">
+      <span class="callout-icon">&#9432;</span>
+      <div class="callout-body">
+        <p>
+          On first start, blockasaurus creates a <code>default</code> upstream
+          group with Cloudflare DNS (<code>1.1.1.1</code> and <code>1.0.0.1</code>).
+        </p>
+      </div>
+    </div>
+
+    <h2>The Upstreams Page</h2>
+
+    <p>
+      Navigate to the <strong>Upstreams</strong> tab in the web UI to manage
+      upstream servers and resolver settings.
+    </p>
+
+    <div class="screenshot">
+      <img src="img/upstreams-overview.png" alt="Upstreams page showing the default group with two servers" />
+      <div class="caption">The Upstreams page showing upstream groups and servers</div>
+    </div>
+
+    <h2>Upstream Groups</h2>
+
+    <p>
+      Upstream servers are organized into named groups. The <code>default</code>
+      group is always present and cannot be deleted. You can create additional
+      groups if you want different resolvers for different use cases.
+    </p>
+
+    <p>Each group contains one or more DNS servers. Within a group, the
+    <strong>resolution strategy</strong> determines how servers are queried.</p>
+
+    <h2>Adding Upstream Servers</h2>
+
+    <p>
+      Click <strong>&ldquo;Add Server&rdquo;</strong> on a group to add a new
+      upstream. The add/edit dialog lets you configure the protocol and address:
+    </p>
+
+    <div class="screenshot">
+      <img src="img/upstreams-add-server.png" alt="Add server dialog showing protocol selector and host field" />
+      <div class="caption">Adding a new upstream server</div>
+    </div>
+
+    <h3>Supported Protocols</h3>
+
+    <div class="box">
+      <div class="box-body">
+        <table>
+          <thead>
+            <tr><th>Protocol</th><th>URL Format</th><th>Example</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Plain DNS</strong> (UDP/TCP)</td>
+              <td><code>IP[:port]</code></td>
+              <td><code>1.1.1.1</code> or <code>9.9.9.9:53</code></td>
+            </tr>
+            <tr>
+              <td><strong>DNS-over-TLS</strong></td>
+              <td><code>tcp-tls:host:port</code></td>
+              <td><code>tcp-tls:dns.google:853</code></td>
+            </tr>
+            <tr>
+              <td><strong>DNS-over-HTTPS</strong></td>
+              <td><code>https://host/path</code></td>
+              <td><code>https://dns.google/dns-query</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="callout tip">
+      <span class="callout-icon">&#10003;</span>
+      <div class="callout-body">
+        <p>
+          If you paste a full URL (e.g., <code>https://cloudflare-dns.com/dns-query</code>)
+          into the host field, the UI auto-detects the protocol and splits the
+          address for you.
+        </p>
+      </div>
+    </div>
+
+    <h2>Server Order</h2>
+
+    <p>
+      Each server in a group has a <strong>position</strong> number. Use the
+      up/down arrows to reorder servers. Position matters most when using the
+      <strong>Strict</strong> resolution strategy (see below).
+    </p>
+
+    <h2>Resolver Settings</h2>
+
+    <p>
+      Below the upstream groups, the <strong>Upstream Settings</strong> section
+      controls global resolver behavior:
+    </p>
+
+    <div class="screenshot">
+      <img src="img/upstreams-settings.png" alt="Upstream settings showing strategy, timeout, and init options" />
+      <div class="caption">Resolver behavior settings</div>
+    </div>
+
+    <h3>Resolution Strategy</h3>
+
+    <div class="box">
+      <div class="box-body">
+        <table>
+          <thead>
+            <tr><th>Strategy</th><th>Behavior</th><th>Best For</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="badge primary">Parallel Best</span></td>
+              <td>Queries <em>all</em> servers simultaneously, returns the fastest response</td>
+              <td>Lowest latency. Default choice.</td>
+            </tr>
+            <tr>
+              <td><span class="badge info">Strict</span></td>
+              <td>Tries servers in position order; uses next only on failure</td>
+              <td>When you have a preferred server with a fallback</td>
+            </tr>
+            <tr>
+              <td><span class="badge accent">Random</span></td>
+              <td>Picks one random server per query</td>
+              <td>Even load distribution across servers</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <h3>Timeout</h3>
+
+    <p>
+      How long to wait for an upstream response before failing. Format is a
+      Go duration string: <code>2s</code>, <code>500ms</code>, <code>1s</code>.
+      Default is <code>2s</code>.
+    </p>
+
+    <h3>Init Strategy</h3>
+
+    <p>Controls what happens when blockasaurus starts or configuration is applied:</p>
+
+    <div class="box">
+      <div class="box-body">
+        <table>
+          <thead>
+            <tr><th>Strategy</th><th>Behavior</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Blocking</strong></td>
+              <td>Probes each upstream on startup; warns on failure but still starts. <span class="badge primary">Default</span></td>
+            </tr>
+            <tr>
+              <td><strong>Fail on error</strong></td>
+              <td>Rejects config apply if any upstream probe fails. Safest for production.</td>
+            </tr>
+            <tr>
+              <td><strong>Fast</strong></td>
+              <td>Skips probes entirely, starts immediately.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <h3>DoH User-Agent</h3>
+
+    <p>
+      Optional custom <code>User-Agent</code> header sent with DNS-over-HTTPS
+      requests. Leave empty to use the default.
+    </p>
+
+    <h2>Common Upstream Configurations</h2>
+
+    <div class="box">
+      <div class="box-header">Popular DNS Providers</div>
+      <div class="box-body">
+        <table>
+          <thead>
+            <tr><th>Provider</th><th>Plain</th><th>DoT</th><th>DoH</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Cloudflare</strong></td>
+              <td><code>1.1.1.1</code></td>
+              <td><code>tcp-tls:one.one.one.one:853</code></td>
+              <td><code>https://cloudflare-dns.com/dns-query</code></td>
+            </tr>
+            <tr>
+              <td><strong>Google</strong></td>
+              <td><code>8.8.8.8</code></td>
+              <td><code>tcp-tls:dns.google:853</code></td>
+              <td><code>https://dns.google/dns-query</code></td>
+            </tr>
+            <tr>
+              <td><strong>Quad9</strong></td>
+              <td><code>9.9.9.9</code></td>
+              <td><code>tcp-tls:dns.quad9.net:853</code></td>
+              <td><code>https://dns.quad9.net/dns-query</code></td>
+            </tr>
+            <tr>
+              <td><strong>Mullvad</strong></td>
+              <td>&mdash;</td>
+              <td><code>tcp-tls:dns.mullvad.net:853</code></td>
+              <td><code>https://dns.mullvad.net/dns-query</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <h2>Applying Changes</h2>
+
+    <p>
+      After modifying upstreams, click the <strong>Apply</strong> button in the
+      header. Blockasaurus will probe the new upstream servers according to the
+      init strategy before putting the new configuration into effect.
+    </p>
+
+    <div class="callout warn">
+      <span class="callout-icon">&#9888;</span>
+      <div class="callout-body">
+        <p>
+          If you use <strong>Fail on error</strong> init strategy and an upstream
+          is unreachable, the configuration apply will be rejected. Make sure
+          your upstreams are reachable before applying.
+        </p>
+      </div>
+    </div>
+
+    <nav class="page-nav">
+      <a href="tls.html">
+        <span class="label">Previous</span>
+        TLS Configuration
+      </a>
+      <a href="client-groups.html" class="next">
+        <span class="label">Next</span>
+        Client Groups
+      </a>
+    </nav>
+  </main>
+</div>
+
+<footer class="site-footer">
+  blockasaurus &middot; DNS firewall &amp; ad blocker
+</footer>
+
+<script src="handbook.js"></script>
+</body>
+</html>

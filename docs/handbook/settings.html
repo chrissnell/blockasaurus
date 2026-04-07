@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Settings &mdash; Blockasaurus Handbook</title>
+  <link rel="stylesheet" href="handbook.css" />
+</head>
+<body>
+
+<header class="site-header">
+  <div class="site-header-inner">
+    <a href="index.html" class="site-logo">
+      <img src="img/blockasaurus-logo-face.svg" alt="" />
+      <span>blockasaurus <span class="handbook-label">handbook</span></span>
+    </a>
+    <div class="header-actions">
+      <button class="theme-toggle" aria-label="Toggle theme">[ dark ]</button>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar">
+    <nav>
+      <div class="sidebar-section">Getting Started</div>
+      <a href="index.html">Introduction</a>
+      <a href="installation.html">Installation</a>
+      <a href="tls.html">TLS Configuration</a>
+      <div class="sidebar-section">Configuration</div>
+      <a href="upstreams.html">Upstream DNS</a>
+      <a href="client-groups.html">Client Groups</a>
+      <a href="blocklists.html">Blocklists</a>
+      <a href="domains.html">Domain Allow/Deny</a>
+      <a href="custom-dns.html">Custom DNS</a>
+      <a href="settings.html">Settings</a>
+      <div class="sidebar-section">Operations</div>
+      <a href="testing.html">Testing</a>
+    </nav>
+  </aside>
+
+  <main class="content">
+    <h1>Settings</h1>
+    <p class="subtitle">Global blocking behavior and miscellaneous options</p>
+
+    <p>
+      The <strong>Settings</strong> tab contains global options that affect how
+      blockasaurus responds to blocked queries.
+    </p>
+
+    <div class="screenshot">
+      <img src="img/settings-overview.png" alt="Settings page showing block type and block TTL options" />
+      <div class="caption">The Settings page</div>
+    </div>
+
+    <h2>Block Type</h2>
+
+    <p>
+      Controls how blockasaurus responds when a query matches a blocked domain.
+    </p>
+
+    <div class="box">
+      <div class="box-body">
+        <table>
+          <thead>
+            <tr><th>Option</th><th>Response</th><th>Behavior</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="badge primary">Zero IP</span></td>
+              <td><code>0.0.0.0</code> (A) / <code>::</code> (AAAA)</td>
+              <td>
+                Returns a null IP address. The client&rsquo;s connection attempt
+                fails immediately. This is the most compatible option and works
+                well with browsers and apps.
+              </td>
+            </tr>
+            <tr>
+              <td><span class="badge info">NXDOMAIN</span></td>
+              <td>NXDOMAIN (name does not exist)</td>
+              <td>
+                Returns a standard &ldquo;domain does not exist&rdquo; DNS error.
+                Some applications handle this more gracefully; others may show
+                confusing error messages.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="callout tip">
+      <span class="callout-icon">&#10003;</span>
+      <div class="callout-body">
+        <p>
+          <strong>Zero IP</strong> is recommended for most setups. It&rsquo;s the
+          default and causes the least confusion for end users &mdash; blocked
+          pages simply fail to load rather than showing DNS error messages.
+        </p>
+      </div>
+    </div>
+
+    <h2>Block TTL</h2>
+
+    <p>
+      The <strong>Time-to-Live</strong> for blocked domain responses. This
+      controls how long the client (and any intermediate caches) remembers that
+      a domain was blocked before querying again.
+    </p>
+
+    <p>
+      Format is a duration string: <code>1m</code> (one minute),
+      <code>30s</code>, <code>1h</code>. The default is <code>1m</code>.
+    </p>
+
+    <div class="box">
+      <div class="box-body">
+        <table>
+          <thead>
+            <tr><th>Value</th><th>Trade-off</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>0s</code></td>
+              <td>Client re-queries every time. Most responsive to unblocking changes, but more load.</td>
+            </tr>
+            <tr>
+              <td><code>1m</code> (default)</td>
+              <td>Good balance. Unblock takes effect within a minute.</td>
+            </tr>
+            <tr>
+              <td><code>1h</code></td>
+              <td>Reduces query load significantly. Changes take up to an hour to propagate.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <h2>Applying Settings</h2>
+
+    <p>
+      Click <strong>Save Settings</strong> on the Settings page, then click
+      <strong>Apply</strong> in the header to put changes into effect.
+    </p>
+
+    <nav class="page-nav">
+      <a href="custom-dns.html">
+        <span class="label">Previous</span>
+        Custom DNS
+      </a>
+      <a href="testing.html" class="next">
+        <span class="label">Next</span>
+        Testing
+      </a>
+    </nav>
+  </main>
+</div>
+
+<footer class="site-footer">
+  blockasaurus &middot; DNS firewall &amp; ad blocker
+</footer>
+
+<script src="handbook.js"></script>
+</body>
+</html>

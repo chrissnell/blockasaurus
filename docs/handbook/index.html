@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Blockasaurus Handbook</title>
+  <link rel="stylesheet" href="handbook.css" />
+</head>
+<body>
+
+<header class="site-header">
+  <div class="site-header-inner">
+    <a href="index.html" class="site-logo">
+      <img src="img/blockasaurus-logo-face.svg" alt="" />
+      <span>blockasaurus <span class="handbook-label">handbook</span></span>
+    </a>
+    <div class="header-actions">
+      <button class="theme-toggle" aria-label="Toggle theme">[ dark ]</button>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar">
+    <nav>
+      <div class="sidebar-section">Getting Started</div>
+      <a href="index.html">Introduction</a>
+      <a href="installation.html">Installation</a>
+      <a href="tls.html">TLS Configuration</a>
+      <div class="sidebar-section">Configuration</div>
+      <a href="upstreams.html">Upstream DNS</a>
+      <a href="client-groups.html">Client Groups</a>
+      <a href="blocklists.html">Blocklists</a>
+      <a href="domains.html">Domain Allow/Deny</a>
+      <a href="custom-dns.html">Custom DNS</a>
+      <a href="settings.html">Settings</a>
+      <div class="sidebar-section">Operations</div>
+      <a href="testing.html">Testing</a>
+    </nav>
+  </aside>
+
+  <main class="content">
+    <h1>Blockasaurus</h1>
+    <p class="subtitle">DNS firewall &amp; ad blocker for your network</p>
+
+    <p>
+      Blockasaurus is a DNS proxy and ad blocker for your home or office network.
+      It intercepts DNS queries and blocks requests to known advertising,
+      tracking, and malware domains &mdash; giving you network-wide protection
+      without installing anything on individual devices.
+    </p>
+
+    <div class="box">
+      <div class="box-header">Key Features</div>
+      <div class="box-body">
+        <table>
+          <tr>
+            <td><strong>Modern DNS</strong></td>
+            <td>DNS-over-TLS (DoT), DNS-over-HTTPS (DoH), and plain UDP/TCP</td>
+          </tr>
+          <tr>
+            <td><strong>Client Groups</strong></td>
+            <td>Different blocking policies per device or group of devices</td>
+          </tr>
+          <tr>
+            <td><strong>External Blocklists</strong></td>
+            <td>Subscribe to community blocklists with automatic periodic refresh</td>
+          </tr>
+          <tr>
+            <td><strong>Domain Rules</strong></td>
+            <td>Per-domain allow/deny with exact match or regex patterns</td>
+          </tr>
+          <tr>
+            <td><strong>Custom DNS</strong></td>
+            <td>A, AAAA, and CNAME records for internal hosts</td>
+          </tr>
+          <tr>
+            <td><strong>Web UI</strong></td>
+            <td>Dashboard, live logs, and full configuration management</td>
+          </tr>
+          <tr>
+            <td><strong>Caching</strong></td>
+            <td>Built-in DNS cache with prefetching for fast responses</td>
+          </tr>
+          <tr>
+            <td><strong>Monitoring</strong></td>
+            <td>Prometheus metrics and Grafana dashboards</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+
+    <h2>How It Works</h2>
+
+    <p>
+      Blockasaurus sits between your devices and the internet&rsquo;s DNS infrastructure.
+      When a device on your network makes a DNS query:
+    </p>
+
+    <ol class="steps">
+      <li>
+        The query arrives at blockasaurus via plain DNS, DoT, or DoH.
+      </li>
+      <li>
+        Blockasaurus identifies which <strong>client group</strong> the request belongs to
+        (by source IP, EDNS CPE-ID, DoH path, or DoT hostname).
+      </li>
+      <li>
+        The domain is checked against that group&rsquo;s <strong>blocklists</strong>
+        and <strong>domain rules</strong>. If blocked, a null response is returned
+        immediately.
+      </li>
+      <li>
+        If allowed, the query is forwarded to your configured <strong>upstream DNS
+        servers</strong> (e.g., Cloudflare, Google, or your own recursive resolver).
+      </li>
+      <li>
+        The response is <strong>cached</strong> and returned to the client.
+      </li>
+    </ol>
+
+    <h2>Deployment Options</h2>
+
+    <div class="box">
+      <div class="box-body">
+        <table>
+          <tr>
+            <td><strong>OS packages</strong> <span class="badge accent">recommended</span></td>
+            <td>
+              Native packages for Debian/Ubuntu, RHEL/Fedora, and Arch Linux.
+              Includes a hardened systemd service. The easiest path for Linux
+              servers, Raspberry Pi, and similar devices.
+            </td>
+          </tr>
+          <tr>
+            <td><strong>Docker</strong></td>
+            <td>Container image at <code>ghcr.io/chrissnell/blockasaurus</code></td>
+          </tr>
+          <tr>
+            <td><strong>Kubernetes + Helm</strong></td>
+            <td>Production-ready Helm chart with TLS, persistence, and RBAC</td>
+          </tr>
+          <tr>
+            <td><strong>Build from source</strong></td>
+            <td>Clone, build, and run &mdash; requires Go 1.26+ and Node.js 22+</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+
+    <h2>Getting Started</h2>
+
+    <p>
+      Head to <a href="installation.html">Installation</a> to get blockasaurus
+      running, then follow the configuration guides in order. If you&rsquo;re
+      deploying with TLS (recommended for DoH/DoT), read
+      <a href="tls.html">TLS Configuration</a> next.
+    </p>
+
+    <nav class="page-nav">
+      <span></span>
+      <a href="installation.html" class="next">
+        <span class="label">Next</span>
+        Installation
+      </a>
+    </nav>
+  </main>
+</div>
+
+<footer class="site-footer">
+  blockasaurus &middot; DNS firewall &amp; ad blocker
+</footer>
+
+<script src="handbook.js"></script>
+</body>
+</html>

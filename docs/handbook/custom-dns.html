@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Custom DNS &mdash; Blockasaurus Handbook</title>
+  <link rel="stylesheet" href="handbook.css" />
+</head>
+<body>
+
+<header class="site-header">
+  <div class="site-header-inner">
+    <a href="index.html" class="site-logo">
+      <img src="img/blockasaurus-logo-face.svg" alt="" />
+      <span>blockasaurus <span class="handbook-label">handbook</span></span>
+    </a>
+    <div class="header-actions">
+      <button class="theme-toggle" aria-label="Toggle theme">[ dark ]</button>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar">
+    <nav>
+      <div class="sidebar-section">Getting Started</div>
+      <a href="index.html">Introduction</a>
+      <a href="installation.html">Installation</a>
+      <a href="tls.html">TLS Configuration</a>
+      <div class="sidebar-section">Configuration</div>
+      <a href="upstreams.html">Upstream DNS</a>
+      <a href="client-groups.html">Client Groups</a>
+      <a href="blocklists.html">Blocklists</a>
+      <a href="domains.html">Domain Allow/Deny</a>
+      <a href="custom-dns.html">Custom DNS</a>
+      <a href="settings.html">Settings</a>
+      <div class="sidebar-section">Operations</div>
+      <a href="testing.html">Testing</a>
+    </nav>
+  </aside>
+
+  <main class="content">
+    <h1>Custom DNS</h1>
+    <p class="subtitle">Create DNS records for internal hosts and services</p>
+
+    <p>
+      The <strong>Custom DNS</strong> page lets you create A, AAAA, and CNAME
+      records for hosts on your local network. This turns blockasaurus into
+      a lightweight authoritative DNS server for your internal names &mdash;
+      no need for a separate DNS zone or <code>/etc/hosts</code> file on every
+      machine.
+    </p>
+
+    <h2>The Custom DNS Page</h2>
+
+    <div class="screenshot">
+      <img src="img/custom-dns-overview.png" alt="Custom DNS page showing a table of DNS records" />
+      <div class="caption">Custom DNS entries &mdash; A, AAAA, and CNAME records for internal hosts</div>
+    </div>
+
+    <h2>Supported Record Types</h2>
+
+    <div class="box">
+      <div class="box-body">
+        <table>
+          <thead>
+            <tr><th>Type</th><th>Value</th><th>Example</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>A</strong></td>
+              <td>IPv4 address</td>
+              <td><code>nas.home</code> &rarr; <code>192.168.1.50</code></td>
+            </tr>
+            <tr>
+              <td><strong>AAAA</strong></td>
+              <td>IPv6 address</td>
+              <td><code>nas.home</code> &rarr; <code>fd12::50</code></td>
+            </tr>
+            <tr>
+              <td><strong>CNAME</strong></td>
+              <td>Alias to another domain</td>
+              <td><code>git.home</code> &rarr; <code>nas.home</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <h2>Adding a Record</h2>
+
+    <p>
+      Click <strong>&ldquo;Add Entry&rdquo;</strong> to open the add dialog.
+    </p>
+
+    <div class="screenshot">
+      <img src="img/custom-dns-add.png" alt="Add custom DNS entry dialog with domain, type, value, and TTL fields" />
+      <div class="caption">Adding a custom DNS entry</div>
+    </div>
+
+    <h3>Fields</h3>
+
+    <table>
+      <thead>
+        <tr><th>Field</th><th>Description</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Domain</strong></td>
+          <td>The hostname to respond to (e.g., <code>printer.home</code>)</td>
+        </tr>
+        <tr>
+          <td><strong>Type</strong></td>
+          <td>A, AAAA, or CNAME</td>
+        </tr>
+        <tr>
+          <td><strong>Value</strong></td>
+          <td>IP address (A/AAAA) or target domain (CNAME)</td>
+        </tr>
+        <tr>
+          <td><strong>TTL</strong></td>
+          <td>Time-to-live in seconds (how long clients cache this record). Default: <code>3600</code> (1 hour)</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>Use Cases</h2>
+
+    <h3>Name Your Home Network Devices</h3>
+
+    <p>
+      Give friendly names to devices on your LAN without configuring each
+      machine&rsquo;s hostname:
+    </p>
+
+    <div class="box">
+      <div class="box-body">
+        <table>
+          <thead>
+            <tr><th>Domain</th><th>Type</th><th>Value</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>nas.home</code></td><td>A</td><td><code>192.168.1.50</code></td></tr>
+            <tr><td><code>printer.home</code></td><td>A</td><td><code>192.168.1.30</code></td></tr>
+            <tr><td><code>plex.home</code></td><td>A</td><td><code>192.168.1.51</code></td></tr>
+            <tr><td><code>grafana.home</code></td><td>CNAME</td><td><code>nas.home</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <h3>Service Aliases with CNAME</h3>
+
+    <p>
+      Use CNAME records to create aliases for services running on the same host.
+      When the host&rsquo;s IP changes, you only update one A record:
+    </p>
+
+    <div class="box">
+      <div class="box-body">
+<pre><code>server.home      A      192.168.1.10
+grafana.home     CNAME  server.home
+prometheus.home  CNAME  server.home
+gitea.home       CNAME  server.home</code></pre>
+      </div>
+    </div>
+
+    <h3>Split-Horizon DNS</h3>
+
+    <p>
+      Return internal IPs for domains that resolve differently from outside
+      your network. Useful when you self-host services behind a reverse proxy:
+    </p>
+
+    <div class="box">
+      <div class="box-body">
+        <table>
+          <thead>
+            <tr><th>Domain</th><th>Type</th><th>Value</th><th>Note</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>nextcloud.example.com</code></td>
+              <td>A</td>
+              <td><code>10.0.0.5</code></td>
+              <td>Internal IP, skips hairpin NAT</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="callout tip">
+      <span class="callout-icon">&#10003;</span>
+      <div class="callout-body">
+        <p>
+          Custom DNS records take priority over upstream resolution. If you
+          create an A record for <code>google.com</code>, clients on your
+          network will get your custom IP instead of Google&rsquo;s real address.
+        </p>
+      </div>
+    </div>
+
+    <h2>Editing and Deleting</h2>
+
+    <p>
+      Each record has <strong>Edit</strong> and <strong>Delete</strong> buttons.
+      Records can also be toggled on and off without deleting them &mdash;
+      useful for temporary overrides.
+    </p>
+
+    <div class="callout warn">
+      <span class="callout-icon">&#9888;</span>
+      <div class="callout-body">
+        <p>
+          Remember to click <strong>Apply</strong> in the header after making
+          changes. Custom DNS changes are staged until you apply.
+        </p>
+      </div>
+    </div>
+
+    <nav class="page-nav">
+      <a href="domains.html">
+        <span class="label">Previous</span>
+        Domain Allow/Deny
+      </a>
+      <a href="settings.html" class="next">
+        <span class="label">Next</span>
+        Settings
+      </a>
+    </nav>
+  </main>
+</div>
+
+<footer class="site-footer">
+  blockasaurus &middot; DNS firewall &amp; ad blocker
+</footer>
+
+<script src="handbook.js"></script>
+</body>
+</html>

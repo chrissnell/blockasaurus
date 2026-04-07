@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Installation &mdash; Blockasaurus Handbook</title>
+  <link rel="stylesheet" href="handbook.css" />
+</head>
+<body>
+
+<header class="site-header">
+  <div class="site-header-inner">
+    <a href="index.html" class="site-logo">
+      <img src="img/blockasaurus-logo-face.svg" alt="" />
+      <span>blockasaurus <span class="handbook-label">handbook</span></span>
+    </a>
+    <div class="header-actions">
+      <button class="theme-toggle" aria-label="Toggle theme">[ dark ]</button>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar">
+    <nav>
+      <div class="sidebar-section">Getting Started</div>
+      <a href="index.html">Introduction</a>
+      <a href="installation.html">Installation</a>
+      <a href="tls.html">TLS Configuration</a>
+      <div class="sidebar-section">Configuration</div>
+      <a href="upstreams.html">Upstream DNS</a>
+      <a href="client-groups.html">Client Groups</a>
+      <a href="blocklists.html">Blocklists</a>
+      <a href="domains.html">Domain Allow/Deny</a>
+      <a href="custom-dns.html">Custom DNS</a>
+      <a href="settings.html">Settings</a>
+      <div class="sidebar-section">Operations</div>
+      <a href="testing.html">Testing</a>
+    </nav>
+  </aside>
+
+  <main class="content">
+    <h1>Installation</h1>
+    <p class="subtitle">Get blockasaurus running on your system</p>
+
+    <div data-tabs>
+      <div class="tabs">
+        <button class="tab active" data-target="tab-binary">Standalone Binary</button>
+        <button class="tab" data-target="tab-docker">Docker</button>
+        <button class="tab" data-target="tab-helm">Kubernetes + Helm</button>
+        <button class="tab" data-target="tab-source">Build from Source</button>
+      </div>
+
+      <!-- ── Standalone Binary ── -->
+      <div class="tab-panel active" id="tab-binary">
+
+        <h2>Download</h2>
+
+        <p>
+          Download the latest release binary for your platform from the
+          <a href="https://github.com/chrissnell/blockasaurus/releases">GitHub Releases</a> page.
+          Binaries are available for Linux (amd64, arm64, armv7), macOS, and Windows.
+        </p>
+
+        <h2>Configuration File</h2>
+
+        <p>
+          Create a minimal configuration file. Blockasaurus stores most of its
+          configuration (upstreams, blocklists, client groups) in a SQLite database
+          managed through the web UI. The YAML config file only needs a few basics:
+        </p>
+
+        <div class="code-file">/etc/blockasaurus/config.yml</div>
+<pre><code># Blockasaurus configuration
+databasePath: /var/lib/blockasaurus/blockasaurus.db
+
+ports:
+  dns: 53
+  http: 4000
+
+log:
+  level: info</code></pre>
+
+        <h2>Run with systemd (Recommended)</h2>
+
+        <p>
+          Copy the binary and configuration into place, then install the systemd
+          service:
+        </p>
+
+<pre><code># Install the binary
+sudo cp blockasaurus /usr/bin/blockasaurus
+sudo chmod 755 /usr/bin/blockasaurus
+
+# Allow binding to privileged ports (53, 853)
+sudo setcap 'cap_net_bind_service=+ep' /usr/bin/blockasaurus
+
+# Create config and data directories
+sudo mkdir -p /etc/blockasaurus /var/lib/blockasaurus
+
+# Copy your config
+sudo cp config.yml /etc/blockasaurus/config.yml</code></pre>
+
+        <p>Install the systemd unit file:</p>
+
+        <div class="code-file">/etc/systemd/system/blockasaurus.service</div>
+<pre><code>[Unit]
+Description=Blockasaurus DNS proxy and ad-blocker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/blockasaurus serve --config /etc/blockasaurus/config.yml
+Restart=on-failure
+RestartSec=5
+
+DynamicUser=yes
+StateDirectory=blockasaurus
+Environment=BLOCKY_CONFIG_FILE=/etc/blockasaurus/config.yml
+
+# Allow binding to privileged ports
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+# Filesystem hardening
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/blockasaurus
+ReadOnlyPaths=/etc/blockasaurus
+
+# Kernel hardening
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectKernelLogs=yes
+NoNewPrivileges=yes
+MemoryDenyWriteExecute=yes
+
+[Install]
+WantedBy=multi-user.target</code></pre>
+
+<pre><code># Enable and start
+sudo systemctl daemon-reload
+sudo systemctl enable --now blockasaurus</code></pre>
+
+        <p>
+          The web UI will be available at
+          <code>http://&lt;your-server-ip&gt;:4000</code>.
+        </p>
+
+        <div class="callout info">
+          <span class="callout-icon">&#9432;</span>
+          <div class="callout-body">
+            <p>
+              On first start, blockasaurus seeds the database with a <code>default</code>
+              upstream group containing Cloudflare DNS (<code>1.1.1.1</code> and
+              <code>1.0.0.1</code>). You can change this in the web UI.
+            </p>
+          </div>
+        </div>
+
+        <h2>Run Directly</h2>
+
+        <p>For testing or quick setup, run the binary directly:</p>
+
+<pre><code>./blockasaurus serve --config config.yml</code></pre>
+
+        <div class="callout warn">
+          <span class="callout-icon">&#9888;</span>
+          <div class="callout-body">
+            <p>
+              To bind to port 53 on Linux without running as root, you must set the
+              <code>CAP_NET_BIND_SERVICE</code> capability on the binary:<br />
+              <code>sudo setcap 'cap_net_bind_service=+ep' ./blockasaurus</code>
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Docker ── -->
+      <div class="tab-panel" id="tab-docker">
+
+        <h2>Container Image</h2>
+
+        <p>
+          The official image is published to GitHub Container Registry:
+        </p>
+
+<pre><code>ghcr.io/chrissnell/blockasaurus:latest</code></pre>
+
+        <h2>Docker Run</h2>
+
+<pre><code>docker run -d \
+  --name blockasaurus \
+  --restart unless-stopped \
+  -p 53:53/udp \
+  -p 53:53/tcp \
+  -p 4000:4000/tcp \
+  -v /path/to/config.yml:/app/config.yml:ro \
+  -v blockasaurus-data:/data \
+  ghcr.io/chrissnell/blockasaurus:latest</code></pre>
+
+        <h2>Docker Compose</h2>
+
+        <div class="code-file">docker-compose.yml</div>
+<pre><code>services:
+  blockasaurus:
+    image: ghcr.io/chrissnell/blockasaurus:latest
+    container_name: blockasaurus
+    restart: unless-stopped
+    ports:
+      - "53:53/tcp"
+      - "53:53/udp"
+      - "4000:4000/tcp"
+    volumes:
+      - ./config.yml:/app/config.yml:ro
+      - blockasaurus-data:/data
+
+volumes:
+  blockasaurus-data:</code></pre>
+
+<pre><code>docker compose up -d</code></pre>
+
+        <div class="callout info">
+          <span class="callout-icon">&#9432;</span>
+          <div class="callout-body">
+            <p>
+              The container runs as UID 100 (non-root) with a read-only root filesystem.
+              The <code>/data</code> volume stores the SQLite configuration database.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Kubernetes + Helm ── -->
+      <div class="tab-panel" id="tab-helm">
+
+        <h2>Prerequisites</h2>
+
+        <ul>
+          <li>Kubernetes cluster (1.24+)</li>
+          <li>Helm 3</li>
+          <li>A LoadBalancer provider (MetalLB, cloud LB, etc.) for exposing DNS</li>
+          <li>Optional: cert-manager for automatic TLS certificates</li>
+        </ul>
+
+        <h2>Install the Chart</h2>
+
+<pre><code># Add the chart (or use the local chart from the repo)
+helm install blockasaurus ./packaging/helm/blockasaurus \
+  --namespace blockasaurus \
+  --create-namespace \
+  -f values.yaml</code></pre>
+
+        <h2>Minimal values.yaml</h2>
+
+        <div class="code-file">values.yaml</div>
+<pre><code>config:
+  ports:
+    dns: 53
+    http: 80
+  databasePath: /data/blocky.db
+
+persistence:
+  enabled: true
+  size: 256Mi
+
+service:
+  dns:
+    enabled: true
+    type: LoadBalancer</code></pre>
+
+        <p>
+          This gives you plain DNS on port 53 via a LoadBalancer IP, with the
+          web UI accessible via the ClusterIP HTTP service on port 80.
+        </p>
+
+        <h2>Exposing the Web UI</h2>
+
+        <p>To access the web UI, either:</p>
+
+        <ul>
+          <li>
+            <strong>Port-forward:</strong>
+            <code>kubectl port-forward svc/blockasaurus 4000:80 -n blockasaurus</code>
+          </li>
+          <li>
+            <strong>Ingress:</strong> Enable the ingress section in values.yaml
+          </li>
+          <li>
+            <strong>LoadBalancer:</strong> Set <code>service.dns.http: true</code>
+            to expose HTTP on the DNS LoadBalancer
+          </li>
+        </ul>
+
+        <div class="callout tip">
+          <span class="callout-icon">&#10003;</span>
+          <div class="callout-body">
+            <p>
+              For TLS setups (DoH, DoT), see the
+              <a href="tls.html">TLS Configuration</a> page. The Helm chart
+              integrates with cert-manager to automatically provision certificates.
+            </p>
+          </div>
+        </div>
+
+        <h2>Key Helm Values</h2>
+
+        <table>
+          <thead>
+            <tr><th>Value</th><th>Description</th><th>Default</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>config.ports.dns</code></td>
+              <td>DNS listen port</td>
+              <td><code>53</code></td>
+            </tr>
+            <tr>
+              <td><code>config.ports.http</code></td>
+              <td>HTTP (web UI + DoH) port</td>
+              <td><code>80</code></td>
+            </tr>
+            <tr>
+              <td><code>config.databasePath</code></td>
+              <td>SQLite config database path</td>
+              <td><code>/data/blocky.db</code></td>
+            </tr>
+            <tr>
+              <td><code>persistence.enabled</code></td>
+              <td>Enable PVC for database</td>
+              <td><code>true</code></td>
+            </tr>
+            <tr>
+              <td><code>service.dns.type</code></td>
+              <td>DNS service type</td>
+              <td><code>LoadBalancer</code></td>
+            </tr>
+            <tr>
+              <td><code>service.dns.loadBalancerIP</code></td>
+              <td>Fixed LB IP (MetalLB)</td>
+              <td><em>empty</em></td>
+            </tr>
+            <tr>
+              <td><code>tls.enabled</code></td>
+              <td>Mount TLS certs for DoT/DoH</td>
+              <td><code>false</code></td>
+            </tr>
+            <tr>
+              <td><code>certificate.enabled</code></td>
+              <td>Create cert-manager Certificate</td>
+              <td><code>false</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- ── Build from Source ── -->
+      <div class="tab-panel" id="tab-source">
+
+        <h2>Requirements</h2>
+
+        <ul>
+          <li>Go 1.26+</li>
+          <li>Node.js 22+ and npm (for the web UI)</li>
+          <li>GNU Make</li>
+        </ul>
+
+        <h2>Build</h2>
+
+<pre><code># Clone the repository
+git clone https://github.com/chrissnell/blockasaurus.git
+cd blockasaurus
+
+# Build the web UI
+cd web/ui
+npm install
+npx vite build
+cd ../..
+
+# Build the Go binary
+make build</code></pre>
+
+        <p>
+          The binary is written to <code>bin/blockasaurus</code>.
+        </p>
+
+        <h2>Build the Docker Image</h2>
+
+<pre><code>docker buildx build -t blockasaurus:local .</code></pre>
+
+        <p>
+          The multi-stage Dockerfile handles both the UI build (Node) and Go
+          compilation. The final image is based on <code>scratch</code> &mdash;
+          no shell, no OS packages, just the binary.
+        </p>
+
+        <h2>Makefile Targets</h2>
+
+        <table>
+          <thead>
+            <tr><th>Target</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>make build</code></td><td>Build the binary</td></tr>
+            <tr><td><code>make test</code></td><td>Run unit tests</td></tr>
+            <tr><td><code>make lint</code></td><td>Run linter</td></tr>
+            <tr><td><code>make docker-build</code></td><td>Build Docker image</td></tr>
+            <tr><td><code>make e2e-test</code></td><td>Run end-to-end tests</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <nav class="page-nav">
+      <a href="index.html">
+        <span class="label">Previous</span>
+        Introduction
+      </a>
+      <a href="tls.html" class="next">
+        <span class="label">Next</span>
+        TLS Configuration
+      </a>
+    </nav>
+  </main>
+</div>
+
+<footer class="site-footer">
+  blockasaurus &middot; DNS firewall &amp; ad blocker
+</footer>
+
+<script src="handbook.js"></script>
+</body>
+</html>

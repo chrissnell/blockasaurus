@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Client Groups &mdash; Blockasaurus Handbook</title>
+  <link rel="stylesheet" href="handbook.css" />
+</head>
+<body>
+
+<header class="site-header">
+  <div class="site-header-inner">
+    <a href="index.html" class="site-logo">
+      <img src="img/blockasaurus-logo-face.svg" alt="" />
+      <span>blockasaurus <span class="handbook-label">handbook</span></span>
+    </a>
+    <div class="header-actions">
+      <button class="theme-toggle" aria-label="Toggle theme">[ dark ]</button>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar">
+    <nav>
+      <div class="sidebar-section">Getting Started</div>
+      <a href="index.html">Introduction</a>
+      <a href="installation.html">Installation</a>
+      <a href="tls.html">TLS Configuration</a>
+      <div class="sidebar-section">Configuration</div>
+      <a href="upstreams.html">Upstream DNS</a>
+      <a href="client-groups.html">Client Groups</a>
+      <a href="blocklists.html">Blocklists</a>
+      <a href="domains.html">Domain Allow/Deny</a>
+      <a href="custom-dns.html">Custom DNS</a>
+      <a href="settings.html">Settings</a>
+      <div class="sidebar-section">Operations</div>
+      <a href="testing.html">Testing</a>
+    </nav>
+  </aside>
+
+  <main class="content">
+    <h1>Client Groups</h1>
+    <p class="subtitle">Organize devices and apply per-group blocking policies</p>
+
+    <p>
+      Client groups let you apply different blocking policies to different devices
+      on your network. A children&rsquo;s tablet can have stricter filtering than
+      your workstation. IoT devices can be locked down to a minimal allowlist.
+    </p>
+
+    <h2>The Default Group</h2>
+
+    <div class="callout info">
+      <span class="callout-icon">&#9432;</span>
+      <div class="callout-body">
+        <p>
+          The <code>default</code> group is special. It <strong>always exists</strong>
+          and <strong>cannot be deleted</strong>. Any device that doesn&rsquo;t
+          match a specific group falls into <code>default</code>.
+        </p>
+        <p>
+          Think of it as your baseline policy: if you only ever use the
+          <code>default</code> group, every device on your network gets the
+          same blocking rules &mdash; which is perfectly fine for simple setups.
+        </p>
+      </div>
+    </div>
+
+    <h2>Client Groups Overview</h2>
+
+    <p>
+      Navigate to the <strong>Client Groups</strong> tab to see all groups.
+      The overview shows each group with its client count and number of assigned
+      blocklists.
+    </p>
+
+    <div class="screenshot">
+      <img src="img/client-groups-list.png" alt="Client Groups list view showing default and custom groups" />
+      <div class="caption">Client Groups overview &mdash; click &ldquo;Manage&rdquo; to configure a group</div>
+    </div>
+
+    <h2>Creating a Group</h2>
+
+    <p>
+      Click <strong>&ldquo;Create Group&rdquo;</strong> and give it a name
+      (e.g., &ldquo;Kids&rdquo;, &ldquo;IoT&rdquo;, &ldquo;Guest&rdquo;).
+      The name is converted to a DNS-safe slug (e.g., &ldquo;Kids Devices&rdquo;
+      becomes <code>kids-devices</code>) used for subdomain-based identification.
+    </p>
+
+    <h2>Managing Group Members</h2>
+
+    <p>
+      Click <strong>&ldquo;Manage&rdquo;</strong> on a group to open its detail
+      view. The <strong>Clients</strong> section shows who belongs to this group.
+    </p>
+
+    <div class="screenshot">
+      <img src="img/client-groups-manage.png" alt="Managing a client group, showing client list and add interface" />
+      <div class="caption">Managing clients in a group</div>
+    </div>
+
+    <h3>Adding Clients</h3>
+
+    <p>
+      The client input is a combobox with autocomplete. Type to search or select
+      from discovered devices on your network. You can add:
+    </p>
+
+    <div class="box">
+      <div class="box-body">
+        <table>
+          <thead>
+            <tr><th>Format</th><th>Example</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>IP address</strong></td>
+              <td><code>192.168.1.42</code></td>
+              <td>Match a single device</td>
+            </tr>
+            <tr>
+              <td><strong>CIDR range</strong></td>
+              <td><code>192.168.1.0/24</code></td>
+              <td>Match an entire subnet</td>
+            </tr>
+            <tr>
+              <td><strong>Hostname</strong></td>
+              <td><code>kids-ipad.local</code></td>
+              <td>Match by discovered hostname</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="callout tip">
+      <span class="callout-icon">&#10003;</span>
+      <div class="callout-body">
+        <p>
+          Blockasaurus discovers devices on your network via ARP. The combobox
+          shows discovered IPs along with their MAC address and hostname (if
+          available), making it easy to find the right device.
+        </p>
+      </div>
+    </div>
+
+    <h3>Removing Clients</h3>
+
+    <p>
+      Each client appears as a chip with a remove button. Click the &times; to
+      remove a client from the group. The device will fall back to the
+      <code>default</code> group.
+    </p>
+
+    <h2>Client Identification Methods</h2>
+
+    <p>
+      Blockasaurus identifies which group a client belongs to using several
+      methods. The method depends on how the client connects:
+    </p>
+
+    <div class="box">
+      <div class="box-header">Identification Methods</div>
+      <div class="box-body">
+        <table>
+          <thead>
+            <tr><th>Method</th><th>How It Works</th><th>Requires</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Source IP</strong></td>
+              <td>Matches the client&rsquo;s IP address against group members</td>
+              <td>Plain DNS or <code>externalTrafficPolicy: Local</code></td>
+            </tr>
+            <tr>
+              <td><strong>DoH path</strong></td>
+              <td>Client connects to <code>https://dns.example.com/&lt;slug&gt;</code></td>
+              <td>TLS + domain configured</td>
+            </tr>
+            <tr>
+              <td><strong>DoT subdomain</strong></td>
+              <td>Client connects to <code>&lt;slug&gt;.dns.example.com:853</code></td>
+              <td>TLS + wildcard cert + domain</td>
+            </tr>
+            <tr>
+              <td><strong>DoH subdomain</strong></td>
+              <td>Client connects to <code>https://&lt;slug&gt;.dns.example.com/dns-query</code></td>
+              <td>TLS + wildcard cert + domain</td>
+            </tr>
+            <tr>
+              <td><strong>EDNS CPE-ID</strong></td>
+              <td>Client sends a CPE-ID EDNS option matching the group slug</td>
+              <td><code>cpeId: true</code> in config</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <h2>Setup Guides</h2>
+
+    <p>
+      Each client group has a built-in <strong>Setup Guide</strong> that generates
+      platform-specific instructions for connecting devices to that group.
+      The guide dynamically adapts based on your server configuration (whether
+      TLS is enabled, which domains are configured, etc.).
+    </p>
+
+    <div class="screenshot">
+      <img src="img/client-groups-setup-guide.png" alt="Setup guide showing platform-specific instructions" />
+      <div class="caption">Auto-generated setup guide with per-platform instructions</div>
+    </div>
+
+    <h3>Supported Platforms</h3>
+
+    <div class="box">
+      <div class="box-body">
+        <table>
+          <thead>
+            <tr><th>Platform</th><th>Recommended Method</th><th>Alternative</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Android</strong></td>
+              <td>Private DNS (DoT)</td>
+              <td>Manual DNS</td>
+            </tr>
+            <tr>
+              <td><strong>iOS</strong></td>
+              <td>Configuration Profile (DoH/DoT)</td>
+              <td>Manual DNS</td>
+            </tr>
+            <tr>
+              <td><strong>Windows</strong></td>
+              <td>Secure DNS (Win 11) or DoH</td>
+              <td>Manual DNS</td>
+            </tr>
+            <tr>
+              <td><strong>macOS</strong></td>
+              <td>Configuration Profile (DoH/DoT)</td>
+              <td>Manual DNS</td>
+            </tr>
+            <tr>
+              <td><strong>Linux</strong></td>
+              <td>systemd-resolved (DoT)</td>
+              <td>resolv.conf, Stubby, Unbound</td>
+            </tr>
+            <tr>
+              <td><strong>Routers</strong></td>
+              <td>DHCP DNS setting</td>
+              <td>dnsmasq, Unbound, pfSense, MikroTik</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <p>
+      For iOS and macOS, you can download a <strong>configuration profile</strong>
+      (<code>.mobileconfig</code>) directly from the setup guide. If you&rsquo;re
+      using a self-signed certificate, the profile can include the CA certificate
+      automatically.
+    </p>
+
+    <h2>Assigning Blocklists</h2>
+
+    <p>
+      Blocklists are assigned to client groups from the
+      <a href="blocklists.html">Blocklists</a> page. Each blocklist can be
+      assigned to one or more groups (many-to-many). See the Blocklists
+      documentation for details.
+    </p>
+
+    <div class="callout info">
+      <span class="callout-icon">&#9432;</span>
+      <div class="callout-body">
+        <p>
+          Within a group&rsquo;s detail view, the Blocklists section shows which
+          lists are currently assigned and directs you to the Blocklists tab
+          to manage assignments.
+        </p>
+      </div>
+    </div>
+
+    <h2>Example: Family Network</h2>
+
+    <p>A common setup with three groups:</p>
+
+    <div class="box">
+      <div class="box-body">
+        <table>
+          <thead>
+            <tr><th>Group</th><th>Clients</th><th>Blocklists</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>default</code></td>
+              <td>Everything not explicitly assigned</td>
+              <td>Ads, tracking</td>
+            </tr>
+            <tr>
+              <td><code>kids</code></td>
+              <td>Kids&rsquo; iPads, Chromebook</td>
+              <td>Ads, tracking, adult content, social media</td>
+            </tr>
+            <tr>
+              <td><code>iot</code></td>
+              <td><code>10.0.3.0/24</code> (IoT VLAN)</td>
+              <td>Ads, tracking, telemetry</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <nav class="page-nav">
+      <a href="upstreams.html">
+        <span class="label">Previous</span>
+        Upstream DNS
+      </a>
+      <a href="blocklists.html" class="next">
+        <span class="label">Next</span>
+        Blocklists
+      </a>
+    </nav>
+  </main>
+</div>
+
+<footer class="site-footer">
+  blockasaurus &middot; DNS firewall &amp; ad blocker
+</footer>
+
+<script src="handbook.js"></script>
+</body>
+</html>

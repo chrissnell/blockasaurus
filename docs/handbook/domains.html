@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Domain Allow/Deny &mdash; Blockasaurus Handbook</title>
+  <link rel="stylesheet" href="handbook.css" />
+</head>
+<body>
+
+<header class="site-header">
+  <div class="site-header-inner">
+    <a href="index.html" class="site-logo">
+      <img src="img/blockasaurus-logo-face.svg" alt="" />
+      <span>blockasaurus <span class="handbook-label">handbook</span></span>
+    </a>
+    <div class="header-actions">
+      <button class="theme-toggle" aria-label="Toggle theme">[ dark ]</button>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar">
+    <nav>
+      <div class="sidebar-section">Getting Started</div>
+      <a href="index.html">Introduction</a>
+      <a href="installation.html">Installation</a>
+      <a href="tls.html">TLS Configuration</a>
+      <div class="sidebar-section">Configuration</div>
+      <a href="upstreams.html">Upstream DNS</a>
+      <a href="client-groups.html">Client Groups</a>
+      <a href="blocklists.html">Blocklists</a>
+      <a href="domains.html">Domain Allow/Deny</a>
+      <a href="custom-dns.html">Custom DNS</a>
+      <a href="settings.html">Settings</a>
+      <div class="sidebar-section">Operations</div>
+      <a href="testing.html">Testing</a>
+    </nav>
+  </aside>
+
+  <main class="content">
+    <h1>Domain Allow/Deny</h1>
+    <p class="subtitle">Whitelist and blacklist individual domains with exact or regex matching</p>
+
+    <p>
+      The <strong>Domains</strong> page lets you create fine-grained rules for
+      individual domains. Use it to override blocklist decisions &mdash;
+      whitelist a domain that&rsquo;s being blocked by a list, or blacklist
+      a specific domain without subscribing to an entire blocklist.
+    </p>
+
+    <h2>The Domains Page</h2>
+
+    <div class="screenshot">
+      <img src="img/domains-overview.png" alt="Domains page showing domain entries with type, status, and comment columns" />
+      <div class="caption">Domain entries with type indicators, status, and group assignments</div>
+    </div>
+
+    <h2>Entry Types</h2>
+
+    <p>Four types of domain entries are available:</p>
+
+    <div class="box">
+      <div class="box-body">
+        <table>
+          <thead>
+            <tr><th>Type</th><th>Match</th><th>Action</th><th>Use Case</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="badge danger">Exact Deny</span></td>
+              <td>Exact domain name</td>
+              <td>Block</td>
+              <td>Block a specific domain</td>
+            </tr>
+            <tr>
+              <td><span class="badge danger">Regex Deny</span></td>
+              <td>Regex pattern</td>
+              <td>Block</td>
+              <td>Block domains matching a pattern</td>
+            </tr>
+            <tr>
+              <td><span class="badge accent">Exact Allow</span></td>
+              <td>Exact domain name</td>
+              <td>Whitelist</td>
+              <td>Override a blocklist for one domain</td>
+            </tr>
+            <tr>
+              <td><span class="badge accent">Regex Allow</span></td>
+              <td>Regex pattern</td>
+              <td>Whitelist</td>
+              <td>Override blocklist for a pattern</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="callout info">
+      <span class="callout-icon">&#9432;</span>
+      <div class="callout-body">
+        <p>
+          <strong>Allow rules take precedence over deny rules.</strong> If a domain
+          matches both an allow entry and a blocklist/deny entry, the domain is
+          allowed. This lets you use broad blocklists and selectively whitelist
+          domains that are incorrectly blocked.
+        </p>
+      </div>
+    </div>
+
+    <h2>Adding a Domain Entry</h2>
+
+    <p>
+      Click <strong>&ldquo;Add Entry&rdquo;</strong> at the top of the page.
+    </p>
+
+    <div class="screenshot">
+      <img src="img/domains-add.png" alt="Add domain entry form showing domain field, type selector, comment field, and wildcard checkbox" />
+      <div class="caption">Adding a new domain entry</div>
+    </div>
+
+    <h3>Fields</h3>
+
+    <table>
+      <thead>
+        <tr><th>Field</th><th>Description</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Domain / RegEx</strong></td>
+          <td>The domain name (for exact entries) or regex pattern (for regex entries)</td>
+        </tr>
+        <tr>
+          <td><strong>Type</strong></td>
+          <td>One of: Exact Deny, Regex Deny, Exact Allow, Regex Allow</td>
+        </tr>
+        <tr>
+          <td><strong>Comment</strong></td>
+          <td>Optional note explaining why this rule exists</td>
+        </tr>
+        <tr>
+          <td><strong>Wildcard</strong></td>
+          <td>Checkbox that auto-converts to a regex matching the domain and all subdomains</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>The Wildcard Checkbox</h3>
+
+    <p>
+      Checking <strong>Wildcard</strong> converts your entry into a regex that
+      matches the domain itself <em>and</em> all of its subdomains. For example:
+    </p>
+
+    <div class="box">
+      <div class="box-body">
+        <table>
+          <thead>
+            <tr><th>You Enter</th><th>Wildcard Converts To</th><th>Matches</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>example.com</code></td>
+              <td><code>(\.|^)example\.com$</code></td>
+              <td><code>example.com</code>, <code>www.example.com</code>, <code>ads.example.com</code></td>
+            </tr>
+            <tr>
+              <td><code>tracking.co</code></td>
+              <td><code>(\.|^)tracking\.co$</code></td>
+              <td><code>tracking.co</code>, <code>pixel.tracking.co</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="callout tip">
+      <span class="callout-icon">&#10003;</span>
+      <div class="callout-body">
+        <p>
+          Use the Wildcard checkbox when you want to block or allow an entire
+          domain and all its subdomains. It automatically switches the type to
+          the regex variant (e.g., Exact Deny becomes Regex Deny).
+        </p>
+      </div>
+    </div>
+
+    <h2>Writing Regex Patterns</h2>
+
+    <p>
+      For regex entries, blockasaurus uses Go&rsquo;s <code>regexp</code> syntax
+      (RE2). Some useful patterns:
+    </p>
+
+    <div class="box">
+      <div class="box-body">
+        <table>
+          <thead>
+            <tr><th>Pattern</th><th>Matches</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>(\.|^)ads\.example\.com$</code></td>
+              <td><code>ads.example.com</code> and subdomains</td>
+            </tr>
+            <tr>
+              <td><code>.*\.doubleclick\.net$</code></td>
+              <td>All subdomains of <code>doubleclick.net</code></td>
+            </tr>
+            <tr>
+              <td><code>^track(ing|er)\..*</code></td>
+              <td>Domains starting with <code>tracking.</code> or <code>tracker.</code></td>
+            </tr>
+            <tr>
+              <td><code>.*\.(ru|cn)$</code></td>
+              <td>All <code>.ru</code> and <code>.cn</code> domains</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <h2>Assigning to Client Groups</h2>
+
+    <p>
+      Like blocklists, domain entries can be assigned to specific
+      <a href="client-groups.html">client groups</a>. Click the
+      <strong>&ldquo;Groups&rdquo;</strong> button on any entry to choose which
+      groups it applies to.
+    </p>
+
+    <div class="screenshot">
+      <img src="img/domains-assign-groups.png" alt="Group assignment dialog for a domain entry" />
+      <div class="caption">Assigning a domain entry to client groups</div>
+    </div>
+
+    <p>
+      If a domain entry is not assigned to any group, it applies to
+      <strong>all groups</strong>.
+    </p>
+
+    <h2>Sorting and Managing</h2>
+
+    <p>
+      Click column headers to sort the table by domain, type, or status. Each
+      entry has toggle, edit, and delete buttons for quick management.
+    </p>
+
+    <h2>Common Patterns</h2>
+
+    <h3>Whitelist a False Positive</h3>
+
+    <p>
+      If a blocklist blocks a domain you need (e.g., a CDN used by a legitimate
+      service):
+    </p>
+
+    <ol class="steps">
+      <li>Add the domain as an <strong>Exact Allow</strong> entry.</li>
+      <li>Optionally add a comment: &ldquo;Required for $SERVICE&rdquo;.</li>
+      <li>Assign it to the relevant group(s) or leave unassigned for all groups.</li>
+    </ol>
+
+    <h3>Block an Entire Ad Network</h3>
+
+    <ol class="steps">
+      <li>Add a <strong>Regex Deny</strong> entry.</li>
+      <li>Enter a pattern like <code>.*\.adnetwork\.com$</code>.</li>
+      <li>Assign to the desired groups.</li>
+    </ol>
+
+    <nav class="page-nav">
+      <a href="blocklists.html">
+        <span class="label">Previous</span>
+        Blocklists
+      </a>
+      <a href="custom-dns.html" class="next">
+        <span class="label">Next</span>
+        Custom DNS
+      </a>
+    </nav>
+  </main>
+</div>
+
+<footer class="site-footer">
+  blockasaurus &middot; DNS firewall &amp; ad blocker
+</footer>
+
+<script src="handbook.js"></script>
+</body>
+</html>

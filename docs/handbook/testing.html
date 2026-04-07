@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Testing &mdash; Blockasaurus Handbook</title>
+  <link rel="stylesheet" href="handbook.css" />
+</head>
+<body>
+
+<header class="site-header">
+  <div class="site-header-inner">
+    <a href="index.html" class="site-logo">
+      <img src="img/blockasaurus-logo-face.svg" alt="" />
+      <span>blockasaurus <span class="handbook-label">handbook</span></span>
+    </a>
+    <div class="header-actions">
+      <button class="theme-toggle" aria-label="Toggle theme">[ dark ]</button>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar">
+    <nav>
+      <div class="sidebar-section">Getting Started</div>
+      <a href="index.html">Introduction</a>
+      <a href="installation.html">Installation</a>
+      <a href="tls.html">TLS Configuration</a>
+      <div class="sidebar-section">Configuration</div>
+      <a href="upstreams.html">Upstream DNS</a>
+      <a href="client-groups.html">Client Groups</a>
+      <a href="blocklists.html">Blocklists</a>
+      <a href="domains.html">Domain Allow/Deny</a>
+      <a href="custom-dns.html">Custom DNS</a>
+      <a href="settings.html">Settings</a>
+      <div class="sidebar-section">Operations</div>
+      <a href="testing.html">Testing</a>
+    </nav>
+  </aside>
+
+  <main class="content">
+    <h1>Testing</h1>
+    <p class="subtitle">Verify your blockasaurus server is working correctly</p>
+
+    <p>
+      After setting up blockasaurus, you&rsquo;ll want to verify that DNS
+      resolution works, that blocked domains are actually blocked, and that
+      encrypted DNS (DoT/DoH) is functioning if configured.
+    </p>
+
+    <p>
+      In the examples below, replace <code>SERVER_IP</code> with your
+      blockasaurus server&rsquo;s IP address and <code>dns.example.com</code>
+      with your configured domain.
+    </p>
+
+    <h2>Plain DNS (UDP/TCP)</h2>
+
+    <p>
+      Plain DNS is the simplest to test. Every operating system includes tools
+      for this.
+    </p>
+
+    <h3>dig</h3>
+
+    <p>
+      <code>dig</code> is the standard DNS debugging tool on Linux and macOS.
+    </p>
+
+    <h4>Basic query</h4>
+<pre><code># Query blockasaurus for an A record
+dig @SERVER_IP example.com
+
+# Short output (just the answer)
+dig @SERVER_IP example.com +short</code></pre>
+
+    <h4>Verify a domain is blocked</h4>
+<pre><code># If using Zero IP block type, you'll get 0.0.0.0
+dig @SERVER_IP ads.doubleclick.net +short
+# Expected: 0.0.0.0
+
+# If using NXDOMAIN block type, you'll get NXDOMAIN
+dig @SERVER_IP ads.doubleclick.net
+# Look for: status: NXDOMAIN</code></pre>
+
+    <h4>Query specific record types</h4>
+<pre><code># AAAA (IPv6) record
+dig @SERVER_IP example.com AAAA +short
+
+# MX record
+dig @SERVER_IP example.com MX +short
+
+# Custom DNS entry
+dig @SERVER_IP nas.home +short
+# Expected: 192.168.1.50 (or whatever you configured)</code></pre>
+
+    <h3>nslookup</h3>
+
+    <p>
+      Available on Windows, macOS, and Linux:
+    </p>
+
+<pre><code># Basic query
+nslookup example.com SERVER_IP
+
+# Verify blocking
+nslookup ads.doubleclick.net SERVER_IP</code></pre>
+
+    <h3>host</h3>
+
+    <p>
+      Simple and available on most Unix systems:
+    </p>
+
+<pre><code># Basic query
+host example.com SERVER_IP
+
+# Reverse lookup
+host 192.168.1.50 SERVER_IP</code></pre>
+
+    <h3>PowerShell (Windows)</h3>
+
+<pre><code># Using Resolve-DnsName
+Resolve-DnsName -Name example.com -Server SERVER_IP
+
+# Verify blocking
+Resolve-DnsName -Name ads.doubleclick.net -Server SERVER_IP</code></pre>
+
+    <h2>DNS-over-TLS (DoT)</h2>
+
+    <p>
+      DoT encrypts DNS queries over TLS on port 853. Testing requires tools
+      that support TLS connections.
+    </p>
+
+    <div class="callout info">
+      <span class="callout-icon">&#9432;</span>
+      <div class="callout-body">
+        <p>
+          DoT requires TLS to be configured. See <a href="tls.html">TLS Configuration</a>
+          if you haven&rsquo;t set that up yet.
+        </p>
+      </div>
+    </div>
+
+    <h3>kdig (knot-dns)</h3>
+
+    <p>
+      <code>kdig</code> is part of the <code>knot-dnsutils</code> package and
+      has native TLS support. It&rsquo;s the best tool for testing DoT.
+    </p>
+
+<pre><code># Install on Debian/Ubuntu
+sudo apt install knot-dnsutils
+
+# Install on macOS
+brew install knot
+
+# Install on Arch
+sudo pacman -S knot</code></pre>
+
+    <h4>Query via DoT</h4>
+<pre><code># Basic DoT query (trusted certificate)
+kdig @dns.example.com +tls example.com
+
+# DoT with explicit port
+kdig @dns.example.com -p 853 +tls example.com
+
+# DoT to a specific IP (bypass DNS for the server itself)
+kdig @SERVER_IP +tls example.com
+
+# DoT with self-signed cert (skip verification)
+kdig @SERVER_IP +tls example.com +tls-ca=/path/to/ca.crt</code></pre>
+
+    <h4>Test per-group subdomain</h4>
+<pre><code># Query as the "kids" group via DoT
+kdig @kids.dns.example.com +tls example.com</code></pre>
+
+    <h3>openssl s_client (manual)</h3>
+
+    <p>
+      You can verify that the TLS handshake works using <code>openssl</code>,
+      even without sending a DNS query:
+    </p>
+
+<pre><code># Verify TLS handshake on port 853
+openssl s_client -connect SERVER_IP:853 -servername dns.example.com
+
+# Check certificate details
+openssl s_client -connect SERVER_IP:853 -servername dns.example.com 2>/dev/null | \
+  openssl x509 -noout -subject -issuer -dates</code></pre>
+
+    <h3>dog</h3>
+
+    <p>
+      <code>dog</code> is a modern DNS client with DoT support:
+    </p>
+
+<pre><code># Install
+brew install dog          # macOS
+cargo install dog         # Rust/any platform
+
+# DoT query
+dog example.com @tls:dns.example.com</code></pre>
+
+    <h2>DNS-over-HTTPS (DoH)</h2>
+
+    <p>
+      DoH sends DNS queries as HTTPS requests. You can test with any HTTP client.
+    </p>
+
+    <h3>curl</h3>
+
+    <p>
+      The most versatile testing tool for DoH. Works on every platform.
+    </p>
+
+    <h4>Wireformat (RFC 8484)</h4>
+
+    <p>
+      This is the standard DoH format used by browsers and operating systems:
+    </p>
+
+<pre><code># Query using DNS wireformat (POST)
+echo -n 'q80BAAABAAAAAAAABmdvb2dsZQNjb20AAAEAAQ==' | \
+  base64 -d | \
+  curl -s -H 'Content-Type: application/dns-message' \
+    --data-binary @- \
+    'https://dns.example.com/dns-query' | \
+  xxd</code></pre>
+
+    <div class="callout tip">
+      <span class="callout-icon">&#10003;</span>
+      <div class="callout-body">
+        <p>
+          The base64 string above encodes a DNS query for <code>google.com</code>
+          type A. For ad-hoc testing, the JSON API method below is much easier
+          to use.
+        </p>
+      </div>
+    </div>
+
+    <h4>JSON API (Google-style)</h4>
+
+    <p>
+      Blockasaurus also supports the Google-compatible JSON DNS API, which is
+      much easier for manual testing:
+    </p>
+
+<pre><code># Basic DoH query (JSON format)
+curl -s 'https://dns.example.com/dns-query?name=example.com&type=A' \
+  -H 'Accept: application/dns-json' | python3 -m json.tool
+
+# Verify blocking
+curl -s 'https://dns.example.com/dns-query?name=ads.doubleclick.net&type=A' \
+  -H 'Accept: application/dns-json' | python3 -m json.tool
+
+# Query a specific client group via path
+curl -s 'https://dns.example.com/kids?name=youtube.com&type=A' \
+  -H 'Accept: application/dns-json' | python3 -m json.tool
+
+# Query via subdomain
+curl -s 'https://kids.dns.example.com/dns-query?name=youtube.com&type=A' \
+  -H 'Accept: application/dns-json' | python3 -m json.tool</code></pre>
+
+    <h4>Self-signed certificate</h4>
+
+<pre><code># Skip TLS verification (for self-signed certs)
+curl -sk 'https://SERVER_IP/dns-query?name=example.com&type=A' \
+  -H 'Accept: application/dns-json'
+
+# Or provide the CA certificate
+curl -s --cacert /path/to/ca.crt \
+  'https://dns.example.com/dns-query?name=example.com&type=A' \
+  -H 'Accept: application/dns-json'</code></pre>
+
+    <h3>dog</h3>
+
+<pre><code># DoH query
+dog example.com @https:dns.example.com/dns-query</code></pre>
+
+    <h3>Browser</h3>
+
+    <p>
+      Modern browsers can use DoH natively. To test that your browser is using
+      blockasaurus:
+    </p>
+
+    <ol class="steps">
+      <li>
+        Configure your browser to use your DoH server
+        (<code>https://dns.example.com/dns-query</code>).
+      </li>
+      <li>
+        Visit a known-blocked domain (e.g., an ad-serving domain).
+        It should fail to load.
+      </li>
+      <li>
+        Check the <strong>Live Logs</strong> tab in the blockasaurus web UI
+        to see your queries appearing in real-time.
+      </li>
+    </ol>
+
+    <h2>Verifying Blocking</h2>
+
+    <p>
+      A quick end-to-end test that blocking is working:
+    </p>
+
+<pre><code># This should resolve normally
+dig @SERVER_IP example.com +short
+# Expected: 93.184.216.34 (or similar)
+
+# This should be blocked (returns 0.0.0.0 or NXDOMAIN)
+dig @SERVER_IP ads.doubleclick.net +short
+# Expected: 0.0.0.0 (if using Zero IP block type)
+
+# Check a custom DNS entry
+dig @SERVER_IP nas.home +short
+# Expected: your configured IP</code></pre>
+
+    <h2>Using the Live Logs</h2>
+
+    <p>
+      The <strong>Live Logs</strong> tab in the web UI shows DNS queries in
+      real-time via WebSocket. It&rsquo;s the best way to see exactly what
+      blockasaurus is doing:
+    </p>
+
+    <ul>
+      <li>Every query shows the <strong>domain</strong>, <strong>query type</strong> (A, AAAA, etc.), and <strong>response reason</strong></li>
+      <li>Blocked queries are highlighted with an error indicator</li>
+      <li>Response duration (in ms) helps diagnose latency issues</li>
+      <li>The log streams automatically &mdash; no need to refresh</li>
+    </ul>
+
+    <h2>Troubleshooting</h2>
+
+    <div class="box">
+      <div class="box-header">Common Issues</div>
+      <div class="box-body">
+        <table>
+          <thead>
+            <tr><th>Symptom</th><th>Likely Cause</th><th>Fix</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Connection refused on port 53</td>
+              <td>Blockasaurus not running or port conflict</td>
+              <td>Check <code>systemctl status blockasaurus</code>; check if another DNS server is on port 53</td>
+            </tr>
+            <tr>
+              <td>Queries resolve but nothing is blocked</td>
+              <td>No blocklists assigned to the client&rsquo;s group</td>
+              <td>Check <a href="blocklists.html">Blocklists</a> &rarr; assign to client group &rarr; Apply</td>
+            </tr>
+            <tr>
+              <td>DoT/DoH not working</td>
+              <td>TLS not configured or cert issues</td>
+              <td>Check <a href="tls.html">TLS Configuration</a>; test with <code>openssl s_client</code></td>
+            </tr>
+            <tr>
+              <td>Device not in expected client group</td>
+              <td>IP mismatch or identification method issue</td>
+              <td>Check Live Logs for the client&rsquo;s actual IP; verify group membership</td>
+            </tr>
+            <tr>
+              <td>Slow DNS responses</td>
+              <td>Upstream timeout or unreachable upstream</td>
+              <td>Check upstream settings; try reducing timeout; check upstream health</td>
+            </tr>
+            <tr>
+              <td>&ldquo;Apply&rdquo; fails</td>
+              <td>Upstream probe failure (fail-on-error init strategy)</td>
+              <td>Verify upstreams are reachable, or switch to &ldquo;blocking&rdquo; init strategy</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <h2>Quick Test Script</h2>
+
+    <p>
+      A one-liner to quickly verify all three DNS protocols against your server:
+    </p>
+
+<pre><code>#!/bin/bash
+# Quick blockasaurus test
+SERVER=SERVER_IP
+DOMAIN=dns.example.com
+
+echo "=== Plain DNS ==="
+dig @$SERVER example.com +short
+
+echo "=== DoT (kdig) ==="
+kdig @$DOMAIN +tls example.com +short
+
+echo "=== DoH (curl) ==="
+curl -s "https://$DOMAIN/dns-query?name=example.com&type=A" \
+  -H 'Accept: application/dns-json' | python3 -m json.tool
+
+echo "=== Blocking test ==="
+RESULT=$(dig @$SERVER ads.doubleclick.net +short)
+if [ "$RESULT" = "0.0.0.0" ] || [ -z "$RESULT" ]; then
+  echo "Blocking: OK (ads.doubleclick.net blocked)"
+else
+  echo "Blocking: FAIL (got $RESULT)"
+fi</code></pre>
+
+    <nav class="page-nav">
+      <a href="settings.html">
+        <span class="label">Previous</span>
+        Settings
+      </a>
+      <span></span>
+    </nav>
+  </main>
+</div>
+
+<footer class="site-footer">
+  blockasaurus &middot; DNS firewall &amp; ad blocker
+</footer>
+
+<script src="handbook.js"></script>
+</body>
+</html>
