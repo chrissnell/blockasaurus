@@ -14,7 +14,7 @@
     "vite": "^6.0.0"
   },
   "dependencies": {
-    "@chrissnell/chonky-ui": "^0.1.17",
+    "@chrissnell/chonky-ui": "^0.1.18",
     "highcharts": "^12.5.0"
   }
 }
