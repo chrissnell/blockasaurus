@@ -70,7 +70,7 @@
   <StatusBar class="shell-status">
     {#if version}
       <a href="https://github.com/chrissnell/blockasaurus" target="_blank" rel="noopener">
-        Blockasaurus v{version}
+        Blockasaurus {version}
       </a>
     {/if}
     {#if pendingCount > 0}
