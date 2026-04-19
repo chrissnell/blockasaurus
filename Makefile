@@ -1,4 +1,4 @@
-.PHONY: all clean generate build test e2e-test e2e-test-coverage lint run fmt docker-build docker-push bump-minor bump-point deploy helm-deploy version help check-tools
+.PHONY: all clean generate build test e2e-test e2e-test-coverage lint run fmt docker-build docker-push bump-minor bump-point deploy helm-deploy version help check-tools sync-handbook
 .DEFAULT_GOAL:=help
 
 VERSION:=$(shell cat VERSION)
@@ -14,6 +14,9 @@ HELM_CHART:=packaging/helm/blockasaurus
 HELM_RELEASE:=blockasaurus
 HELM_NAMESPACE:=blockasaurus
 HELM_VALUES?=values.yaml
+
+HANDBOOK_SRC:=docs/handbook/
+HANDBOOK_DEST?=/Volumes/NFS/static-sites/chrissnell.com/software/blockasaurus
 
 BINARY_NAME:=blockasaurus
 BIN_OUT_DIR?=bin
@@ -181,8 +184,10 @@ bump-minor: ## Bump minor version, commit, tag, and push
 	@echo "Current version: $(VERSION)"
 	$(eval NEW_VERSION := $(shell echo $(VERSION) | awk -F. '{printf "%d.%d.0", $$1, $$2+1}'))
 	@echo "$(NEW_VERSION)" > VERSION
+	sed -i.bak -e 's/^version: .*/version: $(NEW_VERSION)/' -e 's/^appVersion: .*/appVersion: "v$(NEW_VERSION)"/' $(HELM_CHART)/Chart.yaml
+	@rm $(HELM_CHART)/Chart.yaml.bak
 	@echo "New version: $(NEW_VERSION)"
-	git add VERSION
+	git add VERSION $(HELM_CHART)/Chart.yaml
 	git commit -m "Bump version to v$(NEW_VERSION)"
 	git tag "v$(NEW_VERSION)"
 	git push $(GIT_REMOTE) && git push $(GIT_REMOTE) "v$(NEW_VERSION)"
@@ -191,8 +196,10 @@ bump-point: ## Bump point version, commit, tag, and push
 	@echo "Current version: $(VERSION)"
 	$(eval NEW_VERSION := $(shell echo $(VERSION) | awk -F. '{printf "%d.%d.%d", $$1, $$2, $$3+1}'))
 	@echo "$(NEW_VERSION)" > VERSION
+	sed -i.bak -e 's/^version: .*/version: $(NEW_VERSION)/' -e 's/^appVersion: .*/appVersion: "v$(NEW_VERSION)"/' $(HELM_CHART)/Chart.yaml
+	@rm $(HELM_CHART)/Chart.yaml.bak
 	@echo "New version: $(NEW_VERSION)"
-	git add VERSION
+	git add VERSION $(HELM_CHART)/Chart.yaml
 	git commit -m "Bump version to v$(NEW_VERSION)"
 	git tag "v$(NEW_VERSION)"
 	git push $(GIT_REMOTE) && git push $(GIT_REMOTE) "v$(NEW_VERSION)"
@@ -210,6 +217,9 @@ helm-deploy: ## Deploy to Kubernetes via Helm (image already built by CI)
 		-f $(HELM_VALUES) \
 		--set image.tag=$(DOCKER_TAG)
 	@echo "Deployed $(DOCKER_REGISTRY)/blockasaurus:$(DOCKER_TAG)"
+
+sync-handbook: ## Rsync handbook to static site destination
+	rsync -av --delete $(HANDBOOK_SRC) $(HANDBOOK_DEST)/
 
 check-tools: check-go check-docker ## Check if all required tools are installed
 

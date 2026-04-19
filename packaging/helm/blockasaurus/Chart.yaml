@@ -2,8 +2,8 @@ apiVersion: v2
 name: blockasaurus
 description: Fast and lightweight DNS proxy as ad-blocker for local network
 type: application
-version: 0.1.0
-appVersion: "v0.29.0"
+version: 0.34.36
+appVersion: "v0.34.36"
 keywords:
   - dns
   - adblock
