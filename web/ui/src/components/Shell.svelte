@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
 <script>
-  import { Tabs, StatusBar, ThemeToggle } from '@chrissnell/chonky-ui'
+  import { Tabs, StatusBar } from '@chrissnell/chonky-ui'
   import ApplyButton from './ApplyButton.svelte'
   import { getDirtyCount, clearDirty, onDirtyChange } from '../lib/dirty.svelte.js'
   import { apply, getVersion } from '../lib/api.js'
@@ -13,6 +13,24 @@
   let applying = $state(false)
   let version = $state('')
   let menuOpen = $state(false)
+
+  function readInitialTheme() {
+    if (typeof document === 'undefined') return 'light'
+    const stored = localStorage.getItem('theme')
+    if (stored === 'light' || stored === 'dark') return stored
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  }
+
+  let theme = $state(readInitialTheme())
+
+  $effect(() => {
+    document.documentElement.setAttribute('data-theme', theme)
+    localStorage.setItem('theme', theme)
+  })
+
+  function toggleTheme() {
+    theme = theme === 'light' ? 'dark' : 'light'
+  }
 
   $effect(() => {
     getVersion().then(v => { version = v })
@@ -84,13 +102,31 @@
     <div class="header-actions">
       {#if user}
         <span class="username">{user.username}</span>
-        <button class="logout-btn" onclick={logout} title="Sign out">
+        <button class="icon-btn" onclick={logout} title="Sign out" aria-label="Sign out">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
             <path d="M6 2H3a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3M11 11l3-3-3-3M14 8H6" />
           </svg>
         </button>
       {/if}
-      <ThemeToggle />
+      <button
+        class="icon-btn theme-btn"
+        onclick={toggleTheme}
+        title={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
+        aria-label={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
+      >
+        {#if theme === 'light'}
+          <!-- moon: clicking switches to dark -->
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M13.5 9.5A5.5 5.5 0 1 1 6.5 2.5a4.5 4.5 0 0 0 7 7Z" />
+          </svg>
+        {:else}
+          <!-- sun: clicking switches to light -->
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="8" cy="8" r="3" />
+            <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.4 1.4M11.55 11.55l1.4 1.4M3.05 12.95l1.4-1.4M11.55 4.45l1.4-1.4" />
+          </svg>
+        {/if}
+      </button>
       <button
         class="menu-toggle"
         onclick={(e) => { e.stopPropagation(); menuOpen = !menuOpen }}
@@ -221,7 +257,7 @@
     color: var(--color-text-dim);
   }
 
-  .logout-btn {
+  .icon-btn {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -234,8 +270,12 @@
     transition: color var(--transition);
   }
 
-  .logout-btn:hover {
+  .icon-btn:hover {
     color: var(--color-text);
+  }
+
+  .theme-btn {
+    margin-left: 0.5rem;
   }
 
   .menu-toggle {
