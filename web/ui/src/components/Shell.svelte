@@ -54,11 +54,11 @@
 
   const baseNav = [
     { path: '/', label: 'dashboard' },
-    { path: '/logs', label: 'live logs' },
-    { path: '/client-groups', label: 'client groups' },
+    { path: '/logs', label: 'logs' },
+    { path: '/client-groups', label: 'groups' },
     { path: '/blocklists', label: 'blocklists' },
     { path: '/domains', label: 'domains' },
-    { path: '/custom-dns', label: 'custom dns' },
+    { path: '/custom-dns', label: 'dns' },
     { path: '/upstream-groups', label: 'upstreams' },
     { path: '/settings', label: 'settings' },
   ]
@@ -133,7 +133,7 @@
 
 <style>
   :global(.shell) {
-    max-width: 1100px;
+    max-width: 1280px;
     margin: 0 auto;
     padding: 2rem 1rem;
   }
@@ -145,7 +145,7 @@
     margin-bottom: 1.5rem;
     border-bottom: 1px solid var(--color-border);
     padding-bottom: 0.75rem;
-    gap: 1rem;
+    gap: 0.75rem;
   }
 
   .logo-link {
@@ -174,6 +174,10 @@
     flex: 1;
     border-bottom: none;
     transform: translateY(3px);
+  }
+
+  :global(.shell-tabs) :global([data-tabs-trigger]) {
+    white-space: nowrap;
   }
 
   .content {
