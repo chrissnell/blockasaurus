@@ -45,14 +45,150 @@
 
     <div data-tabs>
       <div class="tabs">
-        <button class="tab active" data-target="tab-binary">Standalone Binary</button>
+        <button class="tab active" data-target="tab-linux-pkg">Linux Package (deb/rpm)</button>
+        <button class="tab" data-target="tab-windows">Windows Installer</button>
         <button class="tab" data-target="tab-docker">Docker</button>
         <button class="tab" data-target="tab-helm">Kubernetes + Helm</button>
+        <button class="tab" data-target="tab-binary">Standalone Binary</button>
         <button class="tab" data-target="tab-source">Build from Source</button>
       </div>
 
+      <!-- ── Linux Package (deb/rpm) ── -->
+      <div class="tab-panel active" id="tab-linux-pkg">
+
+        <p>
+          The recommended way to install on Linux is via the prebuilt
+          <code>.deb</code> or <code>.rpm</code> package. The package installs
+          the binary, a hardened systemd unit, a default config file, and
+          enables the service for you.
+        </p>
+
+        <h2>Download</h2>
+
+        <p>
+          Grab the package for your distro and architecture from the
+          <a href="https://github.com/chrissnell/blockasaurus/releases">GitHub Releases</a>
+          page. Packages are built for <code>amd64</code> and <code>arm64</code>.
+        </p>
+
+        <h2>Debian / Ubuntu</h2>
+
+<pre><code>sudo apt install ./blockasaurus_&lt;version&gt;_linux_amd64.deb</code></pre>
+
+        <p>Or with <code>dpkg</code>:</p>
+
+<pre><code>sudo dpkg -i blockasaurus_&lt;version&gt;_linux_amd64.deb</code></pre>
+
+        <h2>Fedora / RHEL / Rocky / Alma</h2>
+
+<pre><code>sudo dnf install ./blockasaurus_&lt;version&gt;_linux_amd64.rpm</code></pre>
+
+        <p>Or with <code>rpm</code>:</p>
+
+<pre><code>sudo rpm -i blockasaurus_&lt;version&gt;_linux_amd64.rpm</code></pre>
+
+        <h2>What the Package Installs</h2>
+
+        <table>
+          <thead>
+            <tr><th>Path</th><th>Purpose</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>/usr/bin/blockasaurus</code></td><td>Server binary</td></tr>
+            <tr><td><code>/usr/lib/systemd/system/blockasaurus.service</code></td><td>Hardened systemd unit</td></tr>
+            <tr><td><code>/etc/blockasaurus/config.yml</code></td><td>Default config (preserved on upgrade)</td></tr>
+          </tbody>
+        </table>
+
+        <h2>Start the Service</h2>
+
+        <p>
+          The post-install script enables the unit but does not start it,
+          so you can edit <code>/etc/blockasaurus/config.yml</code> first.
+        </p>
+
+<pre><code>sudo systemctl start blockasaurus
+sudo systemctl status blockasaurus</code></pre>
+
+        <p>
+          The web UI will be available at
+          <code>http://&lt;your-server-ip&gt;:4000</code>.
+        </p>
+
+        <div class="callout info">
+          <span class="callout-icon">&#9432;</span>
+          <div class="callout-body">
+            <p>
+              On first start, blockasaurus seeds the database with a <code>default</code>
+              upstream group containing Cloudflare DNS (<code>1.1.1.1</code> and
+              <code>1.0.0.1</code>). You can change this in the web UI.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Windows Installer ── -->
+      <div class="tab-panel" id="tab-windows">
+
+        <p>
+          A signed-friendly Windows MSI installer is published with each release.
+          It installs the binary, the default config, and registers blockasaurus
+          as a Windows service.
+        </p>
+
+        <h2>Download</h2>
+
+        <p>
+          Download <code>blockasaurus_&lt;version&gt;_Windows_x86_64.msi</code> from the
+          <a href="https://github.com/chrissnell/blockasaurus/releases">GitHub Releases</a>
+          page.
+        </p>
+
+        <h2>Install</h2>
+
+        <p>
+          Double-click the MSI to run the installer, or install silently from an
+          elevated PowerShell:
+        </p>
+
+<pre><code>msiexec /i blockasaurus_&lt;version&gt;_Windows_x86_64.msi /qn</code></pre>
+
+        <p>
+          After installation, edit the config file (under
+          <code>C:\ProgramData\Blockasaurus\config.yml</code>) and start the
+          service from <strong>services.msc</strong> or PowerShell:
+        </p>
+
+<pre><code>Start-Service blockasaurus</code></pre>
+
+        <div class="callout warn">
+          <span class="callout-icon">&#9888;</span>
+          <div class="callout-body">
+            <p>
+              Port 53 is often in use on Windows by other DNS resolvers
+              (such as the DNS Client service on Server SKUs). Make sure no
+              other process is bound to it before starting blockasaurus.
+            </p>
+          </div>
+        </div>
+      </div>
+
       <!-- ── Standalone Binary ── -->
-      <div class="tab-panel active" id="tab-binary">
+      <div class="tab-panel" id="tab-binary">
+
+        <div class="callout info">
+          <span class="callout-icon">&#9432;</span>
+          <div class="callout-body">
+            <p>
+              For most users the <strong>Linux Package</strong> or
+              <strong>Windows Installer</strong> tab is the easier path &mdash;
+              they install the binary, systemd unit, and default config in one
+              step. Use the standalone binary route if you're on a distro
+              without <code>.deb</code>/<code>.rpm</code> support, or you want
+              to manage everything yourself.
+            </p>
+          </div>
+        </div>
 
         <h2>Download</h2>
 
