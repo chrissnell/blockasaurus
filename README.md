@@ -6,6 +6,10 @@ Blockasaurus is a blocking DNS server with a modern web UI for blocklist and use
 
 > **Important**: Blockasaurus is an independent fork. Please **do not** send support requests, bug reports, or feature requests for Blockasaurus to the Blocky project. If you have issues with Blockasaurus, please file them [here](https://github.com/chrissnell/blockasaurus/issues).
 
+<p align="center">
+  <img src="docs/handbook/img/dashboard-overview.png" alt="Blockasaurus dashboard showing status cards and query activity" width="900">
+</p>
+
 ## Documentation
 
 **[Blockasaurus Handbook](https://chrissnell.com/software/blockasaurus/)** — installation, configuration, and usage guide.
