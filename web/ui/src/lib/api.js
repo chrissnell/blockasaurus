@@ -3,10 +3,50 @@
 
 const BASE = '/api/config'
 
+// Handle session expiry on any non-auth URL: preserve the intended hash
+// destination and redirect to #/login. Throws 'unauthorized' so callers that
+// feed the result into .map() / {#each} don't TypeError on undefined.
+function handle401(url) {
+  // Loop guard: probing /api/auth/session legitimately returns 401 at boot.
+  if (url.includes('/api/auth/')) return
+  const current = window.location.hash.slice(1) || '/'
+  if (current !== '/login' && current !== '/') {
+    sessionStorage.setItem('authReturnTo', current)
+  }
+  window.location.hash = '#/login'
+}
+
+async function parseBody(resp) {
+  if (resp.status === 204) return null
+  const text = await resp.text()
+  if (!text) return null
+  try {
+    return JSON.parse(text)
+  } catch {
+    if (!resp.ok) throw new Error(text || `${resp.status} ${resp.statusText}`)
+    throw new Error(`unexpected response: ${text.slice(0, 200)}`)
+  }
+}
+
+function makeRateLimitError(resp, data) {
+  const retry = parseInt(resp.headers.get('Retry-After') || '60', 10)
+  const err = new Error((data && data.message) || 'rate limited')
+  err.retryAfter = Number.isFinite(retry) ? retry : 60
+  err.status = 429
+  err.error = data && data.error
+  return err
+}
+
 async function request(method, path, body) {
   const opts = {
     method,
     headers: {},
+    credentials: 'include',
+  }
+
+  // CSRF header required on mutations (Phase 3 middleware).
+  if (method !== 'GET') {
+    opts.headers['X-Requested-With'] = 'fetch'
   }
 
   if (body !== undefined) {
@@ -14,24 +54,91 @@ async function request(method, path, body) {
     opts.body = JSON.stringify(body)
   }
 
-  const resp = await fetch(BASE + path, opts)
+  const url = BASE + path
+  const resp = await fetch(url, opts)
 
-  if (resp.status === 204) return null
-
-  const text = await resp.text()
-  let data
-  try {
-    data = JSON.parse(text)
-  } catch {
-    if (!resp.ok) throw new Error(text || `${resp.status} ${resp.statusText}`)
-    throw new Error(`unexpected response: ${text.slice(0, 200)}`)
+  if (resp.status === 401) {
+    handle401(url)
+    // Throw, not return — callers feed the result into {#each} / .map();
+    // returning undefined would TypeError before navigation takes effect.
+    throw new Error('unauthorized')
   }
 
+  if (resp.status === 429) {
+    const data = await parseBody(resp).catch(() => ({}))
+    throw makeRateLimitError(resp, data)
+  }
+
+  const data = await parseBody(resp)
+
   if (!resp.ok) {
-    throw new Error(data.message || data.error || `${resp.status} ${resp.statusText}`)
+    const err = new Error(
+      (data && (data.message || data.error)) || `${resp.status} ${resp.statusText}`
+    )
+    err.status = resp.status
+    err.error = data && data.error
+    throw err
   }
 
   return data
+}
+
+// Generic authRequest for non-config URLs (e.g. /api/auth/users).
+// Mirrors request() semantics: 401 redirects + throws, 429 surfaces retryAfter.
+// Optional `signal` lets callers cancel on unmount; AbortError bubbles up so
+// callers can ignore it silently.
+export async function authRequest(method, url, body, signal) {
+  const opts = {
+    method,
+    headers: {},
+    credentials: 'include',
+  }
+
+  if (method !== 'GET') {
+    opts.headers['X-Requested-With'] = 'fetch'
+  }
+
+  if (body !== undefined) {
+    opts.headers['Content-Type'] = 'application/json'
+    opts.body = JSON.stringify(body)
+  }
+
+  if (signal) opts.signal = signal
+
+  const resp = await fetch(url, opts)
+
+  if (resp.status === 401) {
+    handle401(url)
+    throw new Error('unauthorized')
+  }
+
+  if (resp.status === 429) {
+    const data = await parseBody(resp).catch(() => ({}))
+    throw makeRateLimitError(resp, data)
+  }
+
+  const data = await parseBody(resp)
+
+  if (!resp.ok) {
+    const err = new Error(
+      (data && (data.message || data.error)) || `${resp.status} ${resp.statusText}`
+    )
+    err.status = resp.status
+    err.error = data && data.error
+    throw err
+  }
+
+  return data
+}
+
+// authAPI: thin surface for the auth/user endpoints used by pages.
+// login/setup/password go through auth.svelte.js so they can update state;
+// users CRUD / session probes use authRequest directly.
+export const authAPI = {
+  session: () => authRequest('GET', '/api/auth/session'),
+  listUsers: (signal) => authRequest('GET', '/api/auth/users', undefined, signal),
+  createUser: (body) => authRequest('POST', '/api/auth/users', body),
+  deleteUser: (id) => authRequest('DELETE', `/api/auth/users/${id}`),
 }
 
 // Client Groups
@@ -106,11 +213,22 @@ export const blockSettings = {
   update: (body) => request('PUT', '/block-settings', body),
 }
 
+// Raw GET helper with 401 handling for non-config "read" endpoints that don't
+// want an authAPI wrapper (stats/version/discovered-clients). Keeps the old
+// "return sentinel on failure" ergonomics while still redirecting on 401.
+async function rawGet(url, fallback) {
+  const resp = await fetch(url, { credentials: 'include' })
+  if (resp.status === 401) {
+    handle401(url)
+    throw new Error('unauthorized')
+  }
+  if (!resp.ok) return fallback
+  return resp.json()
+}
+
 // Discovered Clients (ARP-based network discovery)
 export async function getDiscoveredClients() {
-  const resp = await fetch('/api/discovered-clients')
-  if (!resp.ok) return []
-  return resp.json()
+  return rawGet('/api/discovered-clients', [])
 }
 
 // Apply
@@ -118,58 +236,43 @@ export const apply = () => request('POST', '/apply')
 
 // Stats
 export async function getStats() {
-  const resp = await fetch('/api/stats')
-  if (!resp.ok) return null
-  return resp.json()
+  return rawGet('/api/stats', null)
 }
 
 export async function getStatsOvertime() {
-  const resp = await fetch('/api/stats/overtime')
-  if (!resp.ok) return null
-  return resp.json()
+  return rawGet('/api/stats/overtime', null)
 }
 
 export async function getStatsOvertimeClients() {
-  const resp = await fetch('/api/stats/overtime/clients')
-  if (!resp.ok) return null
-  return resp.json()
+  return rawGet('/api/stats/overtime/clients', null)
 }
 
 export async function getStatsQueryTypes() {
-  const resp = await fetch('/api/stats/query-types')
-  if (!resp.ok) return null
-  return resp.json()
+  return rawGet('/api/stats/query-types', null)
 }
 
 export async function getStatsResponseTypes() {
-  const resp = await fetch('/api/stats/response-types')
-  if (!resp.ok) return null
-  return resp.json()
+  return rawGet('/api/stats/response-types', null)
 }
 
 export async function getStatsTopDomains() {
-  const resp = await fetch('/api/stats/top-domains')
-  if (!resp.ok) return null
-  return resp.json()
+  return rawGet('/api/stats/top-domains', null)
 }
 
 export async function getStatsTopClients() {
-  const resp = await fetch('/api/stats/top-clients')
-  if (!resp.ok) return null
-  return resp.json()
+  return rawGet('/api/stats/top-clients', null)
 }
 
 // Endpoint Info (client group endpoint configuration)
 export async function getEndpointInfo() {
-  const resp = await fetch('/api/endpoint-info')
-  if (!resp.ok) return null
-  return resp.json()
+  return rawGet('/api/endpoint-info', null)
 }
 
 // Version
 export async function getVersion() {
-  const resp = await fetch('/api/version')
+  const resp = await fetch('/api/version', { credentials: 'include' })
+  // Version is allowed to fail silently (pre-auth page chrome).
   if (!resp.ok) return ''
-  const data = await resp.json()
+  const data = await resp.json().catch(() => ({}))
   return data.version || ''
 }

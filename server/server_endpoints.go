@@ -12,7 +12,9 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"time"
 
+	"github.com/0xERR0R/blocky/auth"
 	"github.com/0xERR0R/blocky/metrics"
 	"github.com/0xERR0R/blocky/pkg/arp"
 	"github.com/0xERR0R/blocky/pkg/statscollector"
@@ -22,9 +24,9 @@ import (
 	"github.com/0xERR0R/blocky/api/configapi"
 	"github.com/0xERR0R/blocky/config"
 	"github.com/0xERR0R/blocky/configstore"
-	"github.com/0xERR0R/blocky/logstream"
 	"github.com/0xERR0R/blocky/docs"
 	"github.com/0xERR0R/blocky/log"
+	"github.com/0xERR0R/blocky/logstream"
 	"github.com/0xERR0R/blocky/model"
 	"github.com/0xERR0R/blocky/util"
 	"github.com/0xERR0R/blocky/web"
@@ -32,6 +34,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/miekg/dns"
+	"nhooyr.io/websocket"
 )
 
 const (
@@ -239,61 +242,115 @@ func handleDiscoveredClients(w http.ResponseWriter, r *http.Request) {
 }
 
 // registerUIRoutes adds all admin routes: API, config, UI, static assets,
-// docs, debug, metrics, websocket logs. Does NOT add DoH endpoints.
+// docs, debug, metrics, websocket logs. Does NOT add DoH endpoints — those
+// are registered on the outer router by the caller in combined-port mode or
+// on a separate DoH-only router in split-port mode.
+//
+// Route-shape rules:
+//
+//   - Prometheus metrics and mobileconfig are mounted on the outer router,
+//     outside the auth group, because they are scraped or fetched without
+//     session cookies (monitoring, MDM provisioning).
+//   - DoH is never mounted here — see the caller.
+//   - Everything else (API, config, UI, static, docs, debug, websocket) goes
+//     behind RequireAuth + RequireCSRFHeader. Mutating API routes are further
+//     gated by RequireAdminForMutations so `viewer` users are read-only.
 func registerUIRoutes(router *chi.Mux, cfg *config.Config,
 	openAPIImpl api.StrictServerInterface,
 	store *configstore.ConfigStore, reconfigurer configapi.Reconfigurer,
 	broadcaster *logstream.Broadcaster,
 	statsCollector *statscollector.Collector,
+	revoker *auth.WSRevoker,
 ) {
-	api.RegisterOpenAPIEndpoints(router, openAPIImpl)
+	// --- Public (no auth ever) ---
 
-	if store != nil {
-		configapi.RegisterEndpoints(router, configapi.NewConfigHandler(store, reconfigurer))
-	}
+	// Prometheus metrics — scraped by monitoring without auth.
+	// Healthcheck for k8s/load-balancers is implemented via DNS
+	// (healthcheck.blocky, see server.go:registerDNSHandlers), not HTTP —
+	// no HTTP healthcheck endpoint exists here, so nothing further to
+	// exclude from the auth group for probe access.
+	metrics.Start(router, cfg.Prometheus)
 
-	router.Get("/api/discovered-clients", handleDiscoveredClients)
-	router.Get("/api/endpoint-info", handleEndpointInfo(cfg))
-	router.Get("/api/stats", handleStats)
-	router.Get("/api/stats/overtime", handleStatsOvertime(statsCollector))
-	router.Get("/api/stats/overtime/clients", handleStatsOvertimeClients(statsCollector))
-	router.Get("/api/stats/query-types", handleStatsQueryTypes(statsCollector))
-	router.Get("/api/stats/response-types", handleStatsResponseTypes(statsCollector))
-	router.Get("/api/stats/top-domains", handleStatsTopDomains(statsCollector))
-	router.Get("/api/stats/top-clients", handleStatsTopClients(statsCollector))
-	router.Get("/api/version", handleVersion)
-
+	// Mobileconfig downloads (public by design — consumed by MDM/Apple
+	// Configurator which cannot carry a session cookie).
 	if store != nil {
 		router.Get("/api/mobileconfig/{slug}", handleMobileconfig(cfg, store))
 	}
 
-	if broadcaster != nil {
-		router.Get("/api/ws/logs", logstream.Handler(broadcaster))
+	// Public auth endpoints (login + first-run setup).
+	// CSRF is applied internally by RegisterPublicRoutes.
+	if store != nil {
+		registerAuthRoutes(router, store)
 	}
 
-	configureDebugHandler(router)
-	configureDocsHandler(router)
-	configureStaticAssetsHandler(router)
-	configureUIHandler(router)
-	configureRootHandler(cfg, router)
-	configureRobotsHandler(router)
+	// --- Authenticated group ---
+	router.Group(func(r chi.Router) {
+		if store != nil {
+			r.Use(auth.RequireAuth(store))
+			r.Use(auth.RequireCSRFHeader())
+		}
 
-	metrics.Start(router, cfg.Prometheus)
+		// Auth endpoints that require a session (session probe, logout,
+		// password change, users CRUD).
+		if store != nil {
+			registerAuthenticatedAuthRoutes(r, store)
+		}
+
+		// Config & stats & existing OpenAPI routes (admin-only for mutations).
+		r.Group(func(r chi.Router) {
+			if store != nil {
+				r.Use(auth.RequireAdminForMutations())
+			}
+
+			// Existing OpenAPI operations: /api/blocking/*, /api/cache/flush,
+			// /api/lists/refresh, /api/query. All are admin-guarded for
+			// mutations via RequireAdminForMutations; the read-only
+			// /api/blocking/status passes through for viewer users.
+			api.RegisterOpenAPIEndpoints(r, openAPIImpl)
+
+			if store != nil {
+				configapi.RegisterEndpoints(r, configapi.NewConfigHandler(store, reconfigurer))
+			}
+
+			r.Get("/api/discovered-clients", handleDiscoveredClients)
+			r.Get("/api/endpoint-info", handleEndpointInfo(cfg))
+			r.Get("/api/stats", handleStats)
+			r.Get("/api/stats/overtime", handleStatsOvertime(statsCollector))
+			r.Get("/api/stats/overtime/clients", handleStatsOvertimeClients(statsCollector))
+			r.Get("/api/stats/query-types", handleStatsQueryTypes(statsCollector))
+			r.Get("/api/stats/response-types", handleStatsResponseTypes(statsCollector))
+			r.Get("/api/stats/top-domains", handleStatsTopDomains(statsCollector))
+			r.Get("/api/stats/top-clients", handleStatsTopClients(statsCollector))
+			r.Get("/api/version", handleVersion)
+		})
+
+		if broadcaster != nil {
+			r.Get("/api/ws/logs", wsLogsHandler(broadcaster, revoker))
+		}
+
+		configureDebugHandler(r)
+		configureDocsHandler(r)
+		configureStaticAssetsHandler(r)
+		configureUIHandler(r)
+		configureRootHandler(cfg, r)
+		configureRobotsHandler(r)
+	})
 }
 
 func createHTTPRouter(cfg *config.Config, openAPIImpl api.StrictServerInterface,
 	store *configstore.ConfigStore, reconfigurer configapi.Reconfigurer,
 	broadcaster *logstream.Broadcaster,
 	statsCollector *statscollector.Collector,
+	revoker *auth.WSRevoker,
 ) *chi.Mux {
 	router := chi.NewRouter()
 
-	registerUIRoutes(router, cfg, openAPIImpl, store, reconfigurer, broadcaster, statsCollector)
+	registerUIRoutes(router, cfg, openAPIImpl, store, reconfigurer, broadcaster, statsCollector, revoker)
 
 	return router
 }
 
-func configureDocsHandler(router *chi.Mux) {
+func configureDocsHandler(router chi.Router) {
 	router.Get("/docs/openapi.yaml", func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set(contentTypeHeader, yamlContentType)
 		_, err := writer.Write([]byte(docs.OpenAPI))
@@ -301,7 +358,7 @@ func configureDocsHandler(router *chi.Mux) {
 	})
 }
 
-func configureStaticAssetsHandler(router *chi.Mux) {
+func configureStaticAssetsHandler(router chi.Router) {
 	assets, err := web.Assets()
 	util.FatalOnError("unable to load static asset files", err)
 
@@ -309,7 +366,7 @@ func configureStaticAssetsHandler(router *chi.Mux) {
 	router.Handle("/static/*", http.StripPrefix("/static/", fs))
 }
 
-func configureUIHandler(router *chi.Mux) {
+func configureUIHandler(router chi.Router) {
 	uiAssets, err := web.UIAssets()
 	if err != nil {
 		logger().Warn("UI assets not available: ", err)
@@ -324,11 +381,11 @@ func configureUIHandler(router *chi.Mux) {
 	})
 }
 
-func configureRobotsHandler(router *chi.Mux) {
+func configureRobotsHandler(router chi.Router) {
 	router.Handle("/robots.txt", http.FileServer(http.FS(web.WebFs)))
 }
 
-func configureRootHandler(cfg *config.Config, router *chi.Mux) {
+func configureRootHandler(cfg *config.Config, router chi.Router) {
 	router.Get("/", func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set(contentTypeHeader, htmlContentType)
 
@@ -380,6 +437,56 @@ func logAndResponseWithError(err error, message string, writer http.ResponseWrit
 	}
 }
 
-func configureDebugHandler(router *chi.Mux) {
+func configureDebugHandler(router chi.Router) {
 	router.Mount("/debug", middleware.Profiler())
+}
+
+// wsLogsHandler returns an http.HandlerFunc that upgrades /api/ws/logs to a
+// WebSocket and registers the connection with the WSRevoker (when available)
+// so it is force-closed on session revocation or at session expiry.
+//
+// The authenticated user and their current session are pulled from the request
+// context (attached by RequireAuth). If no user is attached (should be
+// unreachable because this route is mounted inside the authenticated group),
+// registration is skipped and the handler still streams — the upstream
+// middleware would have rejected an unauthenticated request before reaching
+// here.
+//
+// The revoker's lifetime cap is the session's true ExpiresAt (after any
+// sliding-renewal adjustment applied by RequireAuth on this request). The
+// proactive revocation path via SessionRevoked → WSRevoker.RevokeUser fires
+// immediately regardless of this cap when DeleteSession / ResetPassword /
+// DeleteUser runs, which is the critical property the plan requires; the cap
+// is the backstop that forces any still-open socket to close at the session's
+// own expiry instant even if revocation signals never arrive.
+func wsLogsHandler(broadcaster *logstream.Broadcaster, revoker *auth.WSRevoker) http.HandlerFunc {
+	if revoker == nil {
+		return logstream.Handler(broadcaster)
+	}
+
+	hook := func(r *http.Request, conn *websocket.Conn) func() {
+		user := auth.UserFromContext(r.Context())
+		if user == nil {
+			// Defensive: RequireAuth should have already rejected; skip
+			// registration rather than register a zero userID.
+			return nil
+		}
+
+		// Use the real session expiry. Middleware guarantees a session is
+		// attached; if it isn't (future refactor bug), fall back to the old
+		// conservative cap with a warn log so we don't register a socket
+		// with a zero-time deadline that fires immediately.
+		var expiresAt time.Time
+		if sess := auth.SessionFromContext(r.Context()); sess != nil {
+			expiresAt = sess.ExpiresAt
+		} else {
+			logger().Warn("wsLogsHandler: no session in request context; falling back to SessionDuration cap")
+
+			expiresAt = time.Now().Add(auth.SessionDuration)
+		}
+
+		return revoker.Register(user.ID, conn, expiresAt)
+	}
+
+	return logstream.HandlerWithHook(broadcaster, hook)
 }

@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/0xERR0R/blocky/auth"
 	"github.com/0xERR0R/blocky/config"
 	"github.com/0xERR0R/blocky/configstore"
 	"github.com/0xERR0R/blocky/log"
@@ -61,6 +62,7 @@ type Server struct {
 	redisClient    *redis.Client
 	broadcaster    *logstream.Broadcaster
 	statsCollector *statscollector.Collector
+	wsRevoker      *auth.WSRevoker
 
 	servers map[net.Listener]*httpServer
 }
@@ -177,6 +179,13 @@ func NewServer(ctx context.Context, cfg *config.Config, store *configstore.Confi
 		return nil, queryError
 	}
 
+	// WSRevoker is created unconditionally so route registration can pass
+	// it through; StartRevoker is only launched when a store is present
+	// (the revocation channel originates in the store). When store is nil,
+	// the revoker exists but no producer pushes to SessionRevoked, which is
+	// a harmless idle state.
+	wsRevoker := auth.NewWSRevoker()
+
 	server = &Server{
 		dnsServers:     dnsServers,
 		cfg:            cfg,
@@ -185,8 +194,16 @@ func NewServer(ctx context.Context, cfg *config.Config, store *configstore.Confi
 		redisClient:    redisClient,
 		broadcaster:    broadcaster,
 		statsCollector: sc,
+		wsRevoker:      wsRevoker,
 
 		servers: make(map[net.Listener]*httpServer),
+	}
+
+	// Start the session-revocation consumer goroutine. It drains
+	// store.SessionRevoked() for the lifetime of ctx and force-closes any
+	// registered WebSocket when a user's sessions are revoked.
+	if store != nil {
+		auth.StartRevoker(ctx, store, wsRevoker)
 	}
 
 	server.activeChain.Store(&chainSnapshot{chain: queryResolver, cancel: chainCancel})
@@ -207,7 +224,7 @@ func NewServer(ctx context.Context, cfg *config.Config, store *configstore.Confi
 
 		// UI-only router for admin ports
 		uiRouter := chi.NewRouter()
-		registerUIRoutes(uiRouter, cfg, openAPIImpl, server.configStore, server, server.broadcaster, server.statsCollector)
+		registerUIRoutes(uiRouter, cfg, openAPIImpl, server.configStore, server, server.broadcaster, server.statsCollector, server.wsRevoker)
 
 		// Create admin listeners
 		adminHTTP, adminHTTPS, err := createAdminListeners(ctx, cfg, tlsCfg)
@@ -243,7 +260,7 @@ func NewServer(ctx context.Context, cfg *config.Config, store *configstore.Confi
 			}
 		}
 	} else {
-		httpRouter := createHTTPRouter(cfg, openAPIImpl, server.configStore, server, server.broadcaster, server.statsCollector)
+		httpRouter := createHTTPRouter(cfg, openAPIImpl, server.configStore, server, server.broadcaster, server.statsCollector, server.wsRevoker)
 		server.registerDoHEndpoints(httpRouter, cfg)
 
 		if len(cfg.Ports.HTTP) != 0 {
@@ -259,6 +276,32 @@ func NewServer(ctx context.Context, cfg *config.Config, store *configstore.Confi
 				server.servers[l] = srv
 			}
 		}
+	}
+
+	// Start hourly session cleanup. Prune once at startup so a short-lived
+	// process doesn't leave expired rows for an hour, then tick every hour
+	// until the server context is cancelled. Per-tick errors are warn-logged
+	// and do not exit the goroutine — the next tick will retry.
+	if store != nil {
+		go func() {
+			if err := store.PruneExpiredSessions(); err != nil {
+				logger().WithError(err).Warn("prune expired sessions at startup failed")
+			}
+
+			ticker := time.NewTicker(time.Hour)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if err := store.PruneExpiredSessions(); err != nil {
+						logger().WithError(err).Warn("prune expired sessions failed")
+					}
+				}
+			}
+		}()
 	}
 
 	return server, err

@@ -6,6 +6,7 @@
   import ApplyButton from './ApplyButton.svelte'
   import { getDirtyCount, clearDirty, onDirtyChange } from '../lib/dirty.svelte.js'
   import { apply, getVersion } from '../lib/api.js'
+  import { getUser, isAdmin, logout } from '../lib/auth.svelte.js'
 
   let { currentPath = '/', children } = $props()
   let pendingCount = $state(getDirtyCount())
@@ -48,7 +49,10 @@
     applying = false
   }
 
-  const nav = [
+  let user = $derived(getUser())
+  let admin = $derived(isAdmin())
+
+  const baseNav = [
     { path: '/', label: 'dashboard' },
     { path: '/logs', label: 'live logs' },
     { path: '/client-groups', label: 'client groups' },
@@ -58,6 +62,8 @@
     { path: '/upstream-groups', label: 'upstreams' },
     { path: '/settings', label: 'settings' },
   ]
+
+  let nav = $derived(admin ? [...baseNav, { path: '/users', label: 'users' }] : baseNav)
 </script>
 
 <Tabs.Root
@@ -76,6 +82,14 @@
       {/each}
     </Tabs.List>
     <div class="header-actions">
+      {#if user}
+        <span class="username">{user.username}</span>
+        <button class="logout-btn" onclick={logout} title="Sign out">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M6 2H3a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3M11 11l3-3-3-3M14 8H6" />
+          </svg>
+        </button>
+      {/if}
       <ThemeToggle />
       <button
         class="menu-toggle"
@@ -196,6 +210,28 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
+  }
+
+  .username {
+    font-size: var(--text-sm);
+    color: var(--color-text-dim);
+  }
+
+  .logout-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    color: var(--color-text-dim);
+    padding: 0.3rem;
+    cursor: pointer;
+    transition: color var(--transition);
+  }
+
+  .logout-btn:hover {
+    color: var(--color-text);
   }
 
   .menu-toggle {

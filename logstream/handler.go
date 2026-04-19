@@ -10,8 +10,22 @@ import (
 	"nhooyr.io/websocket"
 )
 
+// AcceptHook runs after a successful WebSocket upgrade and before streaming
+// begins. It receives the request and the upgraded connection and returns an
+// unregister function that will be invoked (via defer) when the connection
+// closes. A nil unregister function is fine; callers that don't need cleanup
+// can return nil.
+type AcceptHook func(r *http.Request, conn *websocket.Conn) func()
+
 // Handler returns an HTTP handler that upgrades to WebSocket and streams log entries.
 func Handler(broadcaster *Broadcaster) http.HandlerFunc {
+	return HandlerWithHook(broadcaster, nil)
+}
+
+// HandlerWithHook is like Handler but invokes the supplied hook after the
+// WebSocket upgrade succeeds. The hook's returned unregister function is
+// deferred to run when the connection closes.
+func HandlerWithHook(broadcaster *Broadcaster, hook AcceptHook) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 			InsecureSkipVerify: true, // Allow any origin (local network service)
@@ -20,6 +34,12 @@ func Handler(broadcaster *Broadcaster) http.HandlerFunc {
 			return
 		}
 		defer conn.CloseNow() //nolint:errcheck
+
+		if hook != nil {
+			if unregister := hook(r, conn); unregister != nil {
+				defer unregister()
+			}
+		}
 
 		ch, cancel := broadcaster.Subscribe()
 		defer cancel()

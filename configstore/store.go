@@ -5,6 +5,7 @@ package configstore
 
 import (
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/0xERR0R/blocky/util"
@@ -14,7 +15,16 @@ import (
 )
 
 type ConfigStore struct {
-	db *gorm.DB
+	db                *gorm.DB // read-write, MaxOpenConns=1 (preserved for write serialization)
+	roDB              *gorm.DB // read-only for auth lookups, MaxOpenConns=4
+	hasUsersCache     atomic.Bool
+	hasUsersLastCheck atomic.Int64 // unix-nano of last cold-path re-query
+
+	// sessionRevoked fans out userID revocation signals to in-process consumers
+	// (e.g., the WebSocket log broadcaster) so active sockets can be closed when
+	// a user is deleted or all their sessions are invalidated. Buffered so that
+	// auth write paths (DeleteSessionsForUser) never block on a slow consumer.
+	sessionRevoked chan uint
 }
 
 func Open(path string) (*ConfigStore, error) {
@@ -42,6 +52,41 @@ func Open(path string) (*ConfigStore, error) {
 		return nil, fmt.Errorf("set busy timeout: %w", err)
 	}
 
+	// Read-only connection for auth lookups (session checks on every request).
+	//
+	// The glebarez/go-sqlite driver strips query parameters from the DSN before
+	// passing it to sqlite3 unless the DSN is prefixed with "file:" — only then
+	// does SQLITE_OPEN_URI kick in and SQLite's own URI parser honor mode=ro.
+	// So we build a proper file: URI here. As belt-and-suspenders we also apply
+	// PRAGMA query_only=1 on the handle after open, which enforces read-only
+	// at the SQLite statement layer even if the URI parsing ever regresses.
+	roDSN := "file:" + path + "?mode=ro"
+
+	roDB, err := gorm.Open(sqlite.Open(roDSN), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("open read-only config database: %w", err)
+	}
+
+	roSQL, err := roDB.DB()
+	if err != nil {
+		return nil, fmt.Errorf("get underlying read-only sql.DB: %w", err)
+	}
+
+	roSQL.SetMaxOpenConns(4)
+
+	if err := roDB.Exec("PRAGMA busy_timeout=5000").Error; err != nil {
+		return nil, fmt.Errorf("set read-only busy timeout: %w", err)
+	}
+
+	// WAL mode is set by the RW handle; the roDB picks it up from the shared
+	// journal_mode on the database file. Still, explicitly ensure any
+	// subsequent connections in this pool see the same pragmas.
+	if err := roDB.Exec("PRAGMA query_only=1").Error; err != nil {
+		return nil, fmt.Errorf("set read-only query_only: %w", err)
+	}
+
 	if err := db.AutoMigrate(
 		&ClientGroup{},
 		&BlocklistSource{},
@@ -53,6 +98,8 @@ func Open(path string) (*ConfigStore, error) {
 		&UpstreamSettings{},
 		&StatsBucket{},
 		&StatsCounter{},
+		&User{},
+		&Session{},
 	); err != nil {
 		return nil, fmt.Errorf("auto-migrate config tables: %w", err)
 	}
@@ -64,7 +111,14 @@ func Open(path string) (*ConfigStore, error) {
 		return nil, fmt.Errorf("backfill domain entry group names: %w", err)
 	}
 
-	store := &ConfigStore{db: db}
+	store := &ConfigStore{
+		db:             db,
+		roDB:           roDB,
+		sessionRevoked: make(chan uint, 16),
+	}
+
+	// Seed hasUsers cache from the DB once at open.
+	store.refreshHasUsersCache()
 
 	// Backfill slugs for client groups that predate the slug column
 	if err := store.backfillClientGroupSlugs(); err != nil {
@@ -83,6 +137,12 @@ func Open(path string) (*ConfigStore, error) {
 }
 
 func (s *ConfigStore) Close() error {
+	if s.roDB != nil {
+		if roDB, err := s.roDB.DB(); err == nil {
+			roDB.Close()
+		}
+	}
+
 	sqlDB, err := s.db.DB()
 	if err != nil {
 		return err

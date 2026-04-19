@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/0xERR0R/blocky/auth/authmodels"
 )
 
 type ClientGroup struct {
@@ -149,6 +151,19 @@ func (e *CustomDNSEntry) IsEnabled() bool { return e.Enabled == nil || *e.Enable
 
 // IsEnabled returns the Enabled value, defaulting to true if nil.
 func (d *DomainEntry) IsEnabled() bool { return d.Enabled == nil || *d.Enabled }
+
+// --- Auth models ---
+//
+// The User and Session structs live in auth/authmodels so that both the
+// auth package (for middleware types) and configstore (for AutoMigrate and
+// CRUD) can reference them without forming an import cycle. Re-exported
+// here as type aliases to preserve existing call sites (configstore.User,
+// configstore.Session).
+
+type (
+	User    = authmodels.User
+	Session = authmodels.Session
+)
 
 // --- Stats persistence models ---
 

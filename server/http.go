@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -91,13 +93,35 @@ func newCORSMiddleware() httpMiddleware {
 	const corsMaxAge = 5 * time.Minute
 
 	options := cors.Options{
+		// Same-origin only: mirror the Origin header iff its host matches
+		// the request Host. The SPA is served from the same origin as the
+		// API, so no cross-origin credentialed fetches should ever be
+		// legitimate. AllowedOrigins: ["*"] + AllowCredentials: true is
+		// spec-invalid (browsers reject it), and a permissive
+		// AllowOriginFunc defeats the CSRF defense provided by
+		// SameSite=Lax + the X-Requested-With header check.
+		AllowOriginFunc:  sameOriginFunc,
 		AllowCredentials: true,
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token", "X-Requested-With"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE"},
-		AllowedOrigins:   []string{"*"},
 		ExposedHeaders:   []string{"Link"},
 		MaxAge:           int(corsMaxAge.Seconds()),
 	}
 
 	return cors.New(options).Handler
+}
+
+// sameOriginFunc returns true iff the Origin header's host matches the
+// request Host. Returns false for empty/unparseable Origin values.
+func sameOriginFunc(r *http.Request, origin string) bool {
+	if origin == "" {
+		return false
+	}
+
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+
+	return strings.EqualFold(u.Host, r.Host)
 }
