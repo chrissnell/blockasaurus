@@ -15,6 +15,9 @@
   let addComment = $state('')
   let addEntryType = $state('exact_deny')
   let addWildcard = $state(false)
+  // Preserves the raw hostname while the wildcard checkbox rewrites addDomain
+  // into a regex, so unchecking restores what the user actually typed.
+  let addDomainRaw = $state('')
 
   // Edit modal
   let editOpen = $state(false)
@@ -88,6 +91,7 @@
 
   function onWildcardToggle() {
     if (addWildcard) {
+      addDomainRaw = addDomain
       const val = addDomain.trim()
       if (val) {
         // Strip glob-style wildcards and dots from edges, then build a proper regex
@@ -97,6 +101,13 @@
       }
       if (addEntryType === 'exact_deny') addEntryType = 'regex_deny'
       else if (addEntryType === 'exact_allow') addEntryType = 'regex_allow'
+    } else {
+      // Restore the hostname the user typed and flip the type back so we
+      // never end up with a regex-shaped domain stored as an exact match.
+      if (addDomainRaw) addDomain = addDomainRaw
+      addDomainRaw = ''
+      if (addEntryType === 'regex_deny') addEntryType = 'exact_deny'
+      else if (addEntryType === 'regex_allow') addEntryType = 'exact_allow'
     }
   }
 
@@ -116,6 +127,7 @@
     }
 
     addDomain = ''
+    addDomainRaw = ''
     addComment = ''
     addEntryType = 'exact_deny'
     addWildcard = false
@@ -222,7 +234,7 @@
       </div>
       <div class="field">
         <label class="label" for="de-add-type">Type</label>
-        <Select id="de-add-type" bind:value={addEntryType} options={[
+        <Select id="de-add-type" bind:value={addEntryType} disabled={addWildcard} options={[
           { value: 'exact_deny', label: 'Exact block' },
           { value: 'regex_deny', label: 'Regex block' },
           { value: 'exact_allow', label: 'Exact allow' },

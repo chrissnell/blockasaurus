@@ -821,6 +821,12 @@ func validateCustomDNSEntry(input *CustomDNSEntryInput) error {
 	return nil
 }
 
+// hostnameChars is the set of characters legal in a DNS name we'd try to
+// match exactly. Anything outside this set (parens, backslashes, pipes,
+// asterisks, etc.) implies the caller meant a regex and picked the wrong
+// entry_type — matching would silently never fire.
+var hostnameChars = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+
 func validateDomainEntry(input *DomainEntryInput) error {
 	if input == nil {
 		return fmt.Errorf("request body is required")
@@ -830,11 +836,14 @@ func validateDomainEntry(input *DomainEntryInput) error {
 		return fmt.Errorf("domain is required")
 	}
 
-	// Validate regex patterns compile
 	switch input.EntryType {
 	case DomainEntryInputEntryTypeRegexDeny, DomainEntryInputEntryTypeRegexAllow:
 		if _, err := regexp.Compile(input.Domain); err != nil {
 			return fmt.Errorf("invalid regex pattern: %w", err)
+		}
+	case DomainEntryInputEntryTypeExactDeny, DomainEntryInputEntryTypeExactAllow:
+		if !hostnameChars.MatchString(strings.TrimSpace(input.Domain)) {
+			return fmt.Errorf("exact entries must be a plain hostname; use regex_deny/regex_allow for patterns")
 		}
 	}
 
