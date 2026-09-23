@@ -147,7 +147,7 @@ func walkRoutes(router *chi.Mux) ([]string, error) {
 	guards := map[routeKey]string{}
 	methodsByPattern := map[string]map[string]bool{}
 
-	walk := func(method string, route string, _ http.Handler,
+	walk := func(method, route string, _ http.Handler,
 		middlewares ...func(http.Handler) http.Handler,
 	) error {
 		if methodsByPattern[route] == nil {
