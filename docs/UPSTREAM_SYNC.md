@@ -369,22 +369,28 @@ asked for which name at which time. The dashboard's aggregates are not a
 substitute for that, and it is the only thing lost by leaving query logging on
 `console`.
 
-**Searching by client and domain.** The owner does want this (2026-09-23), and
-the console writer is already most of the way there: `LogEntryFields` emits
-`client_ip`, `client_names`, `client_group`, `question_name`, `question_type`,
-`response_type`, `response_code`, `response_reason`, `answer` and `duration_ms`
-as structured logrus fields. With `log.format: json` those become top-level keys
-on stdout, so shipping them to the cluster's existing Vector → OpenSearch
-pipeline needs no Blockasaurus change at all and keeps the live Logs page
-working (GRA-643). The in-UI alternative — the `sqlite` target plus a searchable
-history page — is real work across three layers and is blocked on decoupling the
-broadcaster from the writer type (GRA-644, GRA-645).
+**Searching by client and domain.** The owner wants this in the **live log
+viewer**, not in an external log pipeline (2026-09-23). Blockasaurus is a
+self-contained home DNS server in the Pi-hole mould; shipping DNS logs to the
+cluster's OpenSearch was explicitly rejected, and an earlier issue proposing it
+is cancelled.
 
-dnstap is **not** the route to this. For "search by client and domain" it costs
-more than GRA-643 and lands in the same place: a new protocol, a TCP listener, a
-Vector dnstap source, `queryLog.fields` ignored, and `log.privacy` not applying —
-in exchange for wire-format DNS messages nobody has asked for. It stays merged
-and unused.
+That makes it a frontend change and nothing more (GRA-645).
+`Broadcaster.Subscribe` backfills from a 1000-entry ring before streaming live,
+so the viewer already holds recent history; the entries already carry
+`client_ip`, `client_group`, `question_name`, `question_type`, `response_code`
+and `response_reason`; and chonky-ui's `LogViewer` has no filtering of its own,
+so a derived filtered list in `Logs.svelte` is the whole feature. No API, no
+storage, no config change, no contract-golden regeneration.
+
+Persistent query history — the `sqlite` target, a query API, a history page — is
+**not** being built. The live buffer is the scope. If that ever changes, the
+broadcaster coupling above has to be fixed first (GRA-644).
+
+dnstap is not wanted either: it exports wire-format DNS messages for external
+collectors, which is forensics for a pipeline we are deliberately not building.
+It stays merged and unused, as does the `sqlite` target.
+
 
 ## 5. Plan
 
