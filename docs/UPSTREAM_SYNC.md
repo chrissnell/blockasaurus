@@ -369,6 +369,23 @@ asked for which name at which time. The dashboard's aggregates are not a
 substitute for that, and it is the only thing lost by leaving query logging on
 `console`.
 
+**Searching by client and domain.** The owner does want this (2026-09-23), and
+the console writer is already most of the way there: `LogEntryFields` emits
+`client_ip`, `client_names`, `client_group`, `question_name`, `question_type`,
+`response_type`, `response_code`, `response_reason`, `answer` and `duration_ms`
+as structured logrus fields. With `log.format: json` those become top-level keys
+on stdout, so shipping them to the cluster's existing Vector → OpenSearch
+pipeline needs no Blockasaurus change at all and keeps the live Logs page
+working (GRA-643). The in-UI alternative — the `sqlite` target plus a searchable
+history page — is real work across three layers and is blocked on decoupling the
+broadcaster from the writer type (GRA-644, GRA-645).
+
+dnstap is **not** the route to this. For "search by client and domain" it costs
+more than GRA-643 and lands in the same place: a new protocol, a TCP listener, a
+Vector dnstap source, `queryLog.fields` ignored, and `log.privacy` not applying —
+in exchange for wire-format DNS messages nobody has asked for. It stays merged
+and unused.
+
 ## 5. Plan
 
 Each phase ends at a gate. Do not start a phase before its gate passes.
