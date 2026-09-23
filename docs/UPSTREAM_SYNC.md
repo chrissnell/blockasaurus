@@ -349,6 +349,26 @@ Upstream's new targets in this sync: `sqlite` (local file, queryable history),
 that `log.privacy` obfuscation does **not** apply to dnstap payloads — it
 exports full wire-format DNS messages.
 
+**The dashboard does not depend on any of this.** Nothing the admin UI shows is
+derived from the query log, so changing `queryLog.type` — including setting it
+to `none` — leaves every stat intact. Two independent sources feed it, both off
+the resolver chain:
+
+- The three headline cards (`/api/stats`) gather from the in-process Prometheus
+  registry. `MetricsResolver.Resolve` only increments those counters inside
+  `if r.cfg.Enable`, so they need `prometheus.enable: true`, and they reset on
+  restart.
+- Everything else — over-time series, top domains, top clients, query types,
+  response types, latency (`/api/stats/*`) — comes from `pkg/statscollector`.
+  `MetricsResolver` calls `StatsCollector.Record` **outside** the Prometheus
+  guard, so this collects regardless of that flag, and `configstore/stats.go`
+  flushes it to SQLite every 30s and reloads at startup. These survive restarts.
+
+What the query log alone gives you is durable per-query history — which client
+asked for which name at which time. The dashboard's aggregates are not a
+substitute for that, and it is the only thing lost by leaving query logging on
+`console`.
+
 ## 5. Plan
 
 Each phase ends at a gate. Do not start a phase before its gate passes.
