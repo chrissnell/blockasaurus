@@ -1,0 +1,61 @@
+### docs/api/openapi.yaml
+op   GET     /blocking/disable                             disableBlocking
+op   GET     /blocking/enable                              enableBlocking
+op   GET     /blocking/status                              blockingStatus
+op   POST    /cache/flush                                  cacheFlush
+op   POST    /lists/refresh                                listRefresh
+op   POST    /query                                        query
+type api.BlockingStatus             object required=[enabled] props=[autoEnableInSec:integer disabledGroups:array enabled:boolean]
+type api.QueryRequest               object required=[query type] props=[query:string type:string]
+type api.QueryResult                object required=[reason response responseType returnCode] props=[reason:string response:string responseType:string returnCode:string]
+
+### docs/api/openapi-config.yaml
+op   DELETE  /blocklist-sources/{id}                       deleteBlocklistSource
+op   DELETE  /client-groups/{name}                         deleteClientGroup
+op   DELETE  /custom-dns/{id}                              deleteCustomDNSEntry
+op   DELETE  /domain-entries/{id}                          deleteDomainEntry
+op   DELETE  /upstream-groups/{name}                       deleteUpstreamGroup
+op   DELETE  /upstream-groups/{name}/servers/{id}          deleteUpstreamServer
+op   GET     /block-settings                               getBlockSettings
+op   GET     /blocklist-sources                            listBlocklistSources
+op   GET     /blocklist-sources/{id}                       getBlocklistSource
+op   GET     /client-groups                                listClientGroups
+op   GET     /client-groups/{name}                         getClientGroup
+op   GET     /custom-dns                                   listCustomDNSEntries
+op   GET     /custom-dns/{id}                              getCustomDNSEntry
+op   GET     /domain-entries                               listDomainEntries
+op   GET     /domain-entries/{id}                          getDomainEntry
+op   GET     /upstream-groups                              listUpstreamGroups
+op   GET     /upstream-groups/{name}                       getUpstreamGroup
+op   GET     /upstream-groups/{name}/servers               listUpstreamServers
+op   GET     /upstream-settings                            getUpstreamSettings
+op   POST    /apply                                        applyConfig
+op   POST    /blocklist-sources                            createBlocklistSource
+op   POST    /custom-dns                                   createCustomDNSEntry
+op   POST    /domain-entries                               createDomainEntry
+op   POST    /upstream-groups/{name}/servers               createUpstreamServer
+op   PUT     /block-settings                               putBlockSettings
+op   PUT     /blocklist-sources/{id}                       updateBlocklistSource
+op   PUT     /client-groups/{name}                         putClientGroup
+op   PUT     /custom-dns/{id}                              updateCustomDNSEntry
+op   PUT     /domain-entries/{id}                          updateDomainEntry
+op   PUT     /upstream-groups/{name}                       putUpstreamGroup
+op   PUT     /upstream-groups/{name}/servers/{id}          updateUpstreamServer
+op   PUT     /upstream-settings                            putUpstreamSettings
+type ApplyResponse                  object required=[message status] props=[error:string message:string status:string]
+type BlockSettings                  object required=[block_ttl block_type] props=[block_ttl:string block_type:string]
+type BlockSettingsInput             object required=[block_ttl block_type] props=[block_ttl:string block_type:string]
+type BlocklistSource                object required=[enabled group_name id list_type source source_type] props=[enabled:boolean group_name:string id:integer list_type:string source:string source_type:string]
+type BlocklistSourceInput           object required=[enabled group_name list_type source source_type] props=[enabled:boolean group_name:string list_type:string source:string source_type:string]
+type ClientGroup                    object required=[clients groups id name slug] props=[clients:array groups:array id:integer name:string slug:string]
+type ClientGroupInput               object required=[] props=[clients:array groups:array]
+type CustomDNSEntry                 object required=[domain enabled id record_type ttl value] props=[domain:string enabled:boolean id:integer record_type:string ttl:integer value:string]
+type CustomDNSEntryInput            object required=[domain enabled record_type ttl value] props=[domain:string enabled:boolean record_type:string ttl:integer value:string]
+type DomainEntry                    object required=[comment domain enabled entry_type group_name id] props=[comment:string domain:string enabled:boolean entry_type:string group_name:string id:integer]
+type DomainEntryInput               object required=[domain enabled entry_type] props=[comment:string domain:string enabled:boolean entry_type:string]
+type ErrorResponse                  object required=[message] props=[message:string]
+type UpstreamGroup                  object required=[id name slug] props=[id:integer name:string slug:string]
+type UpstreamServer                 object required=[enabled group_name id position url] props=[enabled:boolean group_name:string id:integer position:integer url:string]
+type UpstreamServerInput            object required=[enabled url] props=[enabled:boolean position:integer url:string]
+type UpstreamSettings               object required=[init_strategy strategy timeout user_agent] props=[init_strategy:string strategy:string timeout:string user_agent:string]
+type UpstreamSettingsInput          object required=[init_strategy strategy timeout user_agent] props=[init_strategy:string strategy:string timeout:string user_agent:string]

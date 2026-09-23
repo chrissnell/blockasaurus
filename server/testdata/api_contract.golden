@@ -1,80 +1,86 @@
-GET     /
-POST    /api/auth/login
-POST    /api/auth/logout
-POST    /api/auth/password
-GET     /api/auth/session
-POST    /api/auth/setup
-GET     /api/auth/users
-POST    /api/auth/users
-DELETE  /api/auth/users/{id}
-GET     /api/blocking/disable
-GET     /api/blocking/enable
-GET     /api/blocking/status
-POST    /api/cache/flush
-POST    /api/config/apply
-GET     /api/config/block-settings
-PUT     /api/config/block-settings
-GET     /api/config/blocklist-sources
-POST    /api/config/blocklist-sources
-DELETE  /api/config/blocklist-sources/{id}
-GET     /api/config/blocklist-sources/{id}
-PUT     /api/config/blocklist-sources/{id}
-GET     /api/config/client-groups
-DELETE  /api/config/client-groups/{name}
-GET     /api/config/client-groups/{name}
-PUT     /api/config/client-groups/{name}
-GET     /api/config/custom-dns
-POST    /api/config/custom-dns
-DELETE  /api/config/custom-dns/{id}
-GET     /api/config/custom-dns/{id}
-PUT     /api/config/custom-dns/{id}
-GET     /api/config/domain-entries
-POST    /api/config/domain-entries
-DELETE  /api/config/domain-entries/{id}
-GET     /api/config/domain-entries/{id}
-PUT     /api/config/domain-entries/{id}
-GET     /api/config/upstream-groups
-DELETE  /api/config/upstream-groups/{name}
-GET     /api/config/upstream-groups/{name}
-PUT     /api/config/upstream-groups/{name}
-GET     /api/config/upstream-groups/{name}/servers
-POST    /api/config/upstream-groups/{name}/servers
-DELETE  /api/config/upstream-groups/{name}/servers/{id}
-PUT     /api/config/upstream-groups/{name}/servers/{id}
-GET     /api/config/upstream-settings
-PUT     /api/config/upstream-settings
-GET     /api/discovered-clients
-GET     /api/endpoint-info
-POST    /api/lists/refresh
-GET     /api/mobileconfig/{slug}
-POST    /api/query
-GET     /api/stats
-GET     /api/stats/overtime
-GET     /api/stats/overtime/clients
-GET     /api/stats/overtime/latency
-GET     /api/stats/query-types
-GET     /api/stats/response-types
-GET     /api/stats/top-clients
-GET     /api/stats/top-domains
-GET     /api/version
-GET     /api/ws/logs
-GET     /debug/
-ANY     /debug/pprof
-ANY     /debug/pprof/*
-ANY     /debug/pprof/allocs
-ANY     /debug/pprof/block
-ANY     /debug/pprof/cmdline
-ANY     /debug/pprof/goroutine
-ANY     /debug/pprof/heap
-ANY     /debug/pprof/mutex
-ANY     /debug/pprof/profile
-ANY     /debug/pprof/symbol
-ANY     /debug/pprof/threadcreate
-ANY     /debug/pprof/trace
-ANY     /debug/vars
-GET     /docs/openapi.yaml
-ANY     /metrics
-ANY     /robots.txt
-ANY     /static/*
-GET     /ui
-ANY     /ui/*
+GET     /                                             [RequireAuth RequireCSRFHeader]
+POST    /api/auth/login                               [RequireCSRFHeader]
+POST    /api/auth/logout                              [RequireAuth RequireCSRFHeader]
+POST    /api/auth/password                            [RequireAuth RequireCSRFHeader]
+GET     /api/auth/session                             [RequireAuth RequireCSRFHeader]
+POST    /api/auth/setup                               [RequireCSRFHeader]
+GET     /api/auth/users                               [RequireAuth RequireCSRFHeader RequireRole]
+POST    /api/auth/users                               [RequireAuth RequireCSRFHeader RequireRole]
+DELETE  /api/auth/users/{id}                          [RequireAuth RequireCSRFHeader RequireRole]
+GET     /api/blocking/disable                         [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+GET     /api/blocking/enable                          [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+GET     /api/blocking/status                          [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+POST    /api/cache/flush                              [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+POST    /api/config/apply                             [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+GET     /api/config/block-settings                    [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+PUT     /api/config/block-settings                    [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+GET     /api/config/blocklist-sources                 [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+POST    /api/config/blocklist-sources                 [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+DELETE  /api/config/blocklist-sources/{id}            [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+GET     /api/config/blocklist-sources/{id}            [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+PUT     /api/config/blocklist-sources/{id}            [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+GET     /api/config/client-groups                     [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+DELETE  /api/config/client-groups/{name}              [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+GET     /api/config/client-groups/{name}              [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+PUT     /api/config/client-groups/{name}              [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+GET     /api/config/custom-dns                        [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+POST    /api/config/custom-dns                        [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+DELETE  /api/config/custom-dns/{id}                   [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+GET     /api/config/custom-dns/{id}                   [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+PUT     /api/config/custom-dns/{id}                   [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+GET     /api/config/domain-entries                    [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+POST    /api/config/domain-entries                    [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+DELETE  /api/config/domain-entries/{id}               [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+GET     /api/config/domain-entries/{id}               [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+PUT     /api/config/domain-entries/{id}               [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+GET     /api/config/upstream-groups                   [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+DELETE  /api/config/upstream-groups/{name}            [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+GET     /api/config/upstream-groups/{name}            [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+PUT     /api/config/upstream-groups/{name}            [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+GET     /api/config/upstream-groups/{name}/servers    [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+POST    /api/config/upstream-groups/{name}/servers    [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+DELETE  /api/config/upstream-groups/{name}/servers/{id} [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+PUT     /api/config/upstream-groups/{name}/servers/{id} [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+GET     /api/config/upstream-settings                 [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+PUT     /api/config/upstream-settings                 [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+GET     /api/discovered-clients                       [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+GET     /api/endpoint-info                            [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+POST    /api/lists/refresh                            [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+GET     /api/mobileconfig/{slug}                      [public]
+POST    /api/query                                    [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+GET     /api/stats                                    [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+GET     /api/stats/overtime                           [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+GET     /api/stats/overtime/clients                   [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+GET     /api/stats/overtime/latency                   [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+GET     /api/stats/query-types                        [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+GET     /api/stats/response-types                     [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+GET     /api/stats/top-clients                        [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+GET     /api/stats/top-domains                        [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+GET     /api/version                                  [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+GET     /api/ws/logs                                  [RequireAuth RequireCSRFHeader]
+GET     /debug/                                       [NoCache]
+ANY     /debug/pprof                                  [NoCache]
+ANY     /debug/pprof/*                                [NoCache]
+ANY     /debug/pprof/allocs                           [NoCache]
+ANY     /debug/pprof/block                            [NoCache]
+ANY     /debug/pprof/cmdline                          [NoCache]
+ANY     /debug/pprof/goroutine                        [NoCache]
+ANY     /debug/pprof/heap                             [NoCache]
+ANY     /debug/pprof/mutex                            [NoCache]
+ANY     /debug/pprof/profile                          [NoCache]
+ANY     /debug/pprof/symbol                           [NoCache]
+ANY     /debug/pprof/threadcreate                     [NoCache]
+ANY     /debug/pprof/trace                            [NoCache]
+ANY     /debug/vars                                   [NoCache]
+GET     /dns-query                                    [public]
+POST    /dns-query                                    [public]
+GET     /dns-query/                                   [public]
+POST    /dns-query/                                   [public]
+GET     /dns-query/{clientID}                         [public]
+POST    /dns-query/{clientID}                         [public]
+GET     /docs/openapi.yaml                            [RequireAuth RequireCSRFHeader]
+ANY     /metrics                                      [public]
+ANY     /robots.txt                                   [RequireAuth RequireCSRFHeader]
+ANY     /static/*                                     [RequireAuth RequireCSRFHeader]
+GET     /ui                                           [RequireAuth RequireCSRFHeader]
+ANY     /ui/*                                         [RequireAuth RequireCSRFHeader]

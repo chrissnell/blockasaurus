@@ -2,14 +2,18 @@
 #
 # Checked by 'make check-fork-additions'. The point is to make an upstream
 # merge that silently drops one of our files fail loudly instead of shipping.
-# Generated against upstream main @ 2bb9b70 (2026-09-21); regenerate with:
+# This list includes the guardrails themselves — deleting the contract test
+# or this manifest is exactly the kind of loss it has to catch.
 #
-#   comm -23 <(git ls-tree -r --name-only HEAD | sort) \
-#            <(git ls-tree -r --name-only upstream/main | sort) \
-#     | grep -v '^web/ui/node_modules'
+# 'make check-fork-additions-sync' reports when this list has gone stale and
+# prints the diff to apply. It needs upstream fetched:
+#
+#   git remote add upstream https://github.com/0xERR0R/blocky.git
+#   git fetch upstream main
 #
 # See docs/UPSTREAM_SYNC.md.
 
+.fork-additions
 Dockerfile.goreleaser
 VERSION
 api/configapi/configapi_suite_test.go
@@ -41,6 +45,7 @@ configstore/stats.go
 configstore/store.go
 configstore/store_test.go
 configstore/upstreams.go
+docs/UPSTREAM_SYNC.md
 docs/api/openapi-config.yaml
 docs/client_group_endpoints.md
 docs/handbook/blocklists.html
@@ -110,6 +115,8 @@ pkg/statscollector/collector.go
 pkg/statscollector/collector_test.go
 pkg/winservice/service_other.go
 pkg/winservice/service_windows.go
+server/api_contract_test.go
+server/api_spec_contract_test.go
 server/server_auth.go
 server/server_auth_test.go
 server/server_endpoint_info.go
@@ -117,6 +124,8 @@ server/server_endpoints_test.go
 server/server_mobileconfig.go
 server/server_stats.go
 server/server_version.go
+server/testdata/api_contract.golden
+server/testdata/api_spec_contract.golden
 util/slug.go
 util/slug_test.go
 web/ui.go

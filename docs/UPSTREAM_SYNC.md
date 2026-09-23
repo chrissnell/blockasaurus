@@ -144,6 +144,86 @@ field will flow into the generated schema unless it is handled deliberately.
   `docs/config.schema.json`, all `go-enum` outputs (`config/`, `log/`, `lists/`, `model/`,
   `resolver/dnssec/`).
 
+## 3a. Guardrails
+
+Two checks exist so that "did we lose anything?" is a test result rather than a
+judgement call. **Run both before the merge and again after every resolution
+phase** — a guard that is only consulted at the end tells you something broke
+without telling you where.
+
+```bash
+go test ./server -run 'TestAPIContract|TestAPISpecContract'
+make check-fork-additions
+```
+
+### `TestAPIContract` — routing and auth
+
+`server/api_contract_test.go` builds the real production router
+(`createHTTPRouter`, plus `registerDoHEndpoints` for combined-port mode), walks
+it, and records for every route the method, path pattern and **middleware
+chain**, against `server/testdata/api_contract.golden`.
+
+The middleware chain is the part that matters most. Moving a route out of the
+authenticated group strips `RequireAuth` without changing its method or path —
+the likeliest and most damaging thing a badly resolved `Group` block can do —
+and the golden catches it as:
+
+```text
+- GET     /api/version    [RequireAuth RequireCSRFHeader RequireAdminForMutations]
++ GET     /api/version    [public]
+```
+
+### `TestAPISpecContract` — payloads
+
+`server/api_spec_contract_test.go` locks every operation and every component
+schema (property names, types, required fields) in `docs/api/openapi.yaml` and
+`docs/api/openapi-config.yaml` against
+`server/testdata/api_spec_contract.golden`. `openapi.yaml` is an upstream file
+carrying our edits, so it is a prime candidate for being reverted wholesale.
+
+It deliberately ignores prose. Descriptions and branding will legitimately
+change during this merge, and a guard that fires on a reworded sentence gets
+regenerated without being read.
+
+### `make check-fork-additions` — file survival
+
+Verifies every path in `.fork-additions` (the files present here and absent
+upstream) still exists. This is what catches a delete/modify conflict resolved
+toward upstream. The manifest lists itself and both contract tests, so deleting
+the guard is itself a failure. `make check-fork-additions-sync` reports when the
+manifest has gone stale and prints the diff to apply.
+
+### Reading a golden diff
+
+A diff is never automatically a bug — but it is always a change to the contract
+`web/ui` and any API consumer depend on. Three legitimate reasons to regenerate:
+
+1. We deliberately added an endpoint.
+2. We deliberately removed one, and the UI no longer calls it.
+3. An upstream fix changed a schema we decided to adopt.
+
+Anything else is the merge eating our work. Regenerate only with:
+
+```bash
+go test ./server -run 'TestAPIContract|TestAPISpecContract' -update-api-contract
+```
+
+and call the change out explicitly in the pull request.
+
+### What the guardrails do not cover
+
+Say this out loud so nobody trusts them further than they reach:
+
+- **Fork edits to upstream files.** `.fork-additions` only catches deletions of
+  fork-*only* files. The likelier casualty in a 220-commit merge is one of the
+  ~18 upstream files carrying our patches (§7) being reverted by a sloppy hunk
+  resolution. Nothing fails automatically there — that is what the §7 register
+  and a `git diff` against the pre-merge tag are for.
+- **Schemas behind the operations.** `TestAPISpecContract` locks the declared
+  component schemas, not inline request/response bodies or handler behavior.
+- **Middleware behavior.** Only the identity and order of the chain is recorded.
+- **The Svelte UI.** Only that its files still exist and that it builds.
+
 ## 4. Decisions required before merging
 
 These are owner calls. Resolving them at conflict time produces arbitrary outcomes.
