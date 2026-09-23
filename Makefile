@@ -1,4 +1,4 @@
-.PHONY: all clean generate build test e2e-test e2e-test-coverage lint run fmt docker-build docker-push bump-minor bump-point deploy helm-deploy version help check-tools sync-handbook
+.PHONY: all clean generate build test check-fork-additions e2e-test e2e-test-coverage lint run fmt docker-build docker-push bump-minor bump-point deploy helm-deploy version help check-tools sync-handbook
 .DEFAULT_GOAL:=help
 
 VERSION:=$(shell cat VERSION)
@@ -152,6 +152,21 @@ e2e-test-coverage: check-go check-docker ## run e2e tests with code coverage
 
 race: check-go ## run tests with race detector
 	go tool ginkgo --label-filter="!e2e" --race -r ${GINKGO_PROCS}
+
+check-fork-additions: ## verify no Blockasaurus-only file was dropped by an upstream merge
+	@missing=0; \
+	while IFS= read -r path; do \
+		case "$$path" in ''|\#*) continue;; esac; \
+		if [ ! -e "$$path" ]; then echo "MISSING: $$path"; missing=1; fi; \
+	done < .fork-additions; \
+	if [ $$missing -ne 0 ]; then \
+		echo; \
+		echo "Blockasaurus-only files are missing from the working tree."; \
+		echo "An upstream merge most likely resolved a delete/modify conflict the wrong way."; \
+		echo "See docs/UPSTREAM_SYNC.md."; \
+		exit 1; \
+	fi; \
+	echo "fork additions: all $$(grep -cv -e '^#' -e '^$$' .fork-additions) files present"
 
 lint: check-go fmt ## run golangcli-lint checks
 	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANG_LINT_VERSION) run --timeout 5m
