@@ -224,18 +224,39 @@ Say this out loud so nobody trusts them further than they reach:
 - **Middleware behavior.** Only the identity and order of the chain is recorded.
 - **The Svelte UI.** Only that its files still exist and that it builds.
 
-## 4. Decisions required before merging
+## 4. Decisions — settled
 
-These are owner calls. Resolving them at conflict time produces arbitrary outcomes.
+Owner decisions, made 2026-09-23. Recorded here because resolving these at
+conflict time produces arbitrary outcomes.
 
-| # | Decision | Recommendation |
+| # | Decision | Outcome |
 | --- | --- | --- |
-| D1 | Stats: keep ours, adopt upstream's, or both? | Keep ours (it backs the dashboard's overtime/top-clients series, which upstream's does not provide). Do not mount upstream's `/stats` operation; keep `stats/` and `resolver/stats_resolver.go` out of the chain, or drop them. Revisit later as a single subsystem. |
-| D2 | `upstreams:` YAML sentinel — keep rejecting, or accept as read-only fallback? | Keep rejecting; exclude the sentinel field from schema generation. |
-| D3 | Re-delete `cmd/lists.go` and keep `cache`/`stats` subcommands out of `cmd/root.go`? | Yes — these are UI-driven in Blockasaurus. |
-| D4 | Re-delete the 9 upstream GitHub workflows? | Yes. |
-| D5 | Which new upstream features ship enabled in this sync? DoQ, DoH3, per-client rate limiting, DNS rebinding protection, PROXY protocol, SQLite/dnstap query log, schedule-based blocking, on-disk list cache. | Merge the code, leave each at upstream defaults, ship no UI/config-store plumbing in this sync. Each gets its own follow-up issue. |
-| D6 | Does `docs/` stay branded Blockasaurus, or track upstream? | Take upstream content, re-apply branding as a final pass. |
+| D1 | Stats subsystem ownership | **Keep ours.** `pkg/statscollector` + `configstore/stats.go` + `server/server_stats.go` back the dashboard's overtime, top-clients and latency series, which upstream's in-memory 24h collector does not provide. Upstream's `/stats` operation must not reach the router — drop `stats/`, `resolver/stats_resolver.go`, `cmd/stats.go` and the `/stats` path from the spec, or keep the package unwired. |
+| D2 | `upstreams:` YAML sentinel | **Keep rejecting.** Upstream configuration stays in the SQLite config store. Exclude the sentinel field from upstream's generated JSON schema. |
+| D3 | `cmd/lists.go`, `cache` / `stats` subcommands | **Re-delete.** These are UI-driven in Blockasaurus. |
+| D4 | The 9 upstream GitHub workflows | **Re-delete.** |
+| D5 | New upstream features | **Merge the code at upstream defaults; no config-store or UI plumbing during the sync.** DoQ and DoH3 get UI work as dedicated follow-ups immediately after the sync lands (GRA-638, GRA-639). The remainder stay YAML-only until someone asks for them; see §4a. |
+| D6 | `docs/` branding | Take upstream content, re-apply Blockasaurus branding as a final pass. |
+
+### 4a. Merged but not surfaced
+
+These land in the tree as part of the sync and sit at upstream defaults —
+off, unless the operator sets them in YAML. None of them changes behavior
+by merging. Listed so a future reader knows the capability exists rather
+than rediscovering it in a diff.
+
+| Feature | What it does | Default |
+| --- | --- | --- |
+| Per-client rate limiting (#2063) | Token bucket per client IP, with configurable rate, burst, IPv4/IPv6 aggregation prefix and an allowlist. | `enable: false` |
+| DNS rebinding protection (#2111) | Rejects upstream answers that map a public name to a private address, with a per-domain allowlist for the NAS-on-a-real-hostname case. | `enable: false` |
+| PROXY protocol (#2094) | Accepts HAProxy PROXY headers on proxied DoT/DoH listeners so the real client IP survives a reverse proxy. Relevant behind k8s ingress, where client-group matching otherwise sees the proxy. | opt-in per listener |
+| SQLite query log (#2080) | Query log to a local SQLite file — no external database. | existing `queryLog.type` |
+| dnstap query log (#2144) | Query log as a dnstap stream for external collectors. | existing `queryLog.type` |
+| Query-log domain ignore (#2084) | Exclude domains (exact, wildcard, regex) from the query log. | none configured |
+| Schedule-based blocking (#2037) | Time-of-day and weekday windows for deny/allowlist groups, including overnight ranges. Pairs naturally with the existing client-groups UI. | no schedules configured |
+| On-disk list download cache (#2087) | Caches downloaded blocklists on disk with conditional revalidation, so restarts do not re-download every list. | opt-in |
+| Config values from files (#2077) | Reads sensitive config values from files instead of inline YAML. | unused |
+| Config folder structural merge (#2112) | Merges multiple config files in a folder structurally rather than by last-wins. | unchanged behavior |
 
 ## 5. Plan
 
