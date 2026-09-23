@@ -1,3 +1,6 @@
+# Applied to every route below by withCommonMiddleware (server/http.go):
+COMMON  *                                             [secureHeadersMiddleware Cors.Handler]
+
 GET     /                                             [RequireAuth RequireCSRFHeader]
 POST    /api/auth/login                               [RequireCSRFHeader]
 POST    /api/auth/logout                              [RequireAuth RequireCSRFHeader]

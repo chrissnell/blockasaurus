@@ -160,15 +160,19 @@ check-fork-additions: ## verify no Blockasaurus-only file was dropped by an upst
 		echo "Restore it from git, or regenerate per the instructions in its header."; \
 		exit 1; \
 	}
-	@missing=0; checked=0; \
+	@lost=0; checked=0; \
 	while IFS= read -r path || [ -n "$$path" ]; do \
 		case "$$path" in ''|\#*) continue;; esac; \
 		checked=$$((checked + 1)); \
-		if [ ! -s "$$path" ]; then echo "MISSING: $$path"; missing=1; fi; \
+		if [ ! -e "$$path" ]; then \
+			echo "MISSING: $$path"; lost=1; \
+		elif [ ! -s "$$path" ]; then \
+			echo "EMPTY:   $$path"; lost=1; \
+		fi; \
 	done < .fork-additions; \
-	if [ $$missing -ne 0 ]; then \
+	if [ $$lost -ne 0 ]; then \
 		echo; \
-		echo "Blockasaurus-only files are missing from the working tree."; \
+		echo "Blockasaurus-only files were lost from the working tree."; \
 		echo "An upstream merge most likely resolved a delete/modify conflict the wrong way."; \
 		echo "See docs/UPSTREAM_SYNC.md."; \
 		exit 1; \
@@ -176,23 +180,30 @@ check-fork-additions: ## verify no Blockasaurus-only file was dropped by an upst
 	echo "fork additions: all $$checked files present"
 
 check-fork-additions-sync: ## verify .fork-additions still matches reality (needs: git fetch upstream)
-	@git rev-parse --verify -q upstream/main >/dev/null 2>&1 || { \
+# One shell with `set -e` on purpose: split across recipe lines, the early
+# `exit 0` below would only end its own line and make would carry on to
+# compare the manifest against an empty upstream tree — reporting every
+# upstream file as a missing entry, and recommending a "fix" that would pad
+# the manifest with the whole upstream tree and neuter check-fork-additions.
+	@set -e; \
+	if ! git rev-parse --verify -q upstream/main >/dev/null 2>&1; then \
 		echo "skip: upstream/main not fetched (git remote add upstream https://github.com/0xERR0R/blocky.git && git fetch upstream main)"; \
 		exit 0; \
-	}
-	@grep -v -e '^#' -e '^$$' .fork-additions | sort > .fork-additions.have
-	@git ls-tree -r --name-only HEAD | sort > .fork-additions.ours
-	@git ls-tree -r --name-only upstream/main | sort > .fork-additions.theirs
-	@comm -23 .fork-additions.ours .fork-additions.theirs > .fork-additions.want
-	@rm -f .fork-additions.ours .fork-additions.theirs
-	@if ! diff -u .fork-additions.have .fork-additions.want; then \
-		rm -f .fork-additions.have .fork-additions.want; \
+	fi; \
+	tmp=$$(mktemp -d); \
+	trap 'rm -rf "$$tmp"' EXIT INT TERM; \
+	grep -v -e '^#' -e '^$$' .fork-additions | sort > "$$tmp/have"; \
+	git ls-tree -r --name-only HEAD > "$$tmp/ours.raw"; \
+	git ls-tree -r --name-only upstream/main > "$$tmp/theirs.raw"; \
+	sort "$$tmp/ours.raw" > "$$tmp/ours"; \
+	sort "$$tmp/theirs.raw" > "$$tmp/theirs"; \
+	comm -23 "$$tmp/ours" "$$tmp/theirs" > "$$tmp/want"; \
+	if ! diff -u --label .fork-additions --label .fork-additions.expected "$$tmp/have" "$$tmp/want"; then \
 		echo; \
 		echo ".fork-additions is stale. Regenerate it per the instructions in its header."; \
 		exit 1; \
-	fi
-	@rm -f .fork-additions.have .fork-additions.want
-	@echo "fork additions: manifest is in sync with upstream/main"
+	fi; \
+	echo "fork additions: manifest is in sync with upstream/main"
 
 lint: check-go fmt ## run golangcli-lint checks
 	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANG_LINT_VERSION) run --timeout 5m

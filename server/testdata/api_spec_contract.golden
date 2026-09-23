@@ -1,61 +1,61 @@
 ### docs/api/openapi.yaml
-op   GET     /blocking/disable                             disableBlocking
-op   GET     /blocking/enable                              enableBlocking
-op   GET     /blocking/status                              blockingStatus
-op   POST    /cache/flush                                  cacheFlush
-op   POST    /lists/refresh                                listRefresh
-op   POST    /query                                        query
-type api.BlockingStatus             object required=[enabled] props=[autoEnableInSec:integer disabledGroups:array enabled:boolean]
+op   GET     /blocking/disable                             disableBlocking              params=[query:duration:string query:groups:string] req=- resp=[200:- 400:text/plain:string]
+op   GET     /blocking/enable                              enableBlocking               params=[] req=- resp=[200:-]
+op   GET     /blocking/status                              blockingStatus               params=[] req=- resp=[200:application/json:ref:api.BlockingStatus]
+op   POST    /cache/flush                                  cacheFlush                   params=[] req=- resp=[200:-]
+op   POST    /lists/refresh                                listRefresh                  params=[] req=- resp=[200:- 500:text/plain:string]
+op   POST    /query                                        query                        params=[] req=application/json:ref:api.QueryRequest resp=[200:application/json:ref:api.QueryResult 400:text/plain:string]
+type api.BlockingStatus             object required=[enabled] props=[autoEnableInSec:integer disabledGroups:array<string> enabled:boolean]
 type api.QueryRequest               object required=[query type] props=[query:string type:string]
 type api.QueryResult                object required=[reason response responseType returnCode] props=[reason:string response:string responseType:string returnCode:string]
 
 ### docs/api/openapi-config.yaml
-op   DELETE  /blocklist-sources/{id}                       deleteBlocklistSource
-op   DELETE  /client-groups/{name}                         deleteClientGroup
-op   DELETE  /custom-dns/{id}                              deleteCustomDNSEntry
-op   DELETE  /domain-entries/{id}                          deleteDomainEntry
-op   DELETE  /upstream-groups/{name}                       deleteUpstreamGroup
-op   DELETE  /upstream-groups/{name}/servers/{id}          deleteUpstreamServer
-op   GET     /block-settings                               getBlockSettings
-op   GET     /blocklist-sources                            listBlocklistSources
-op   GET     /blocklist-sources/{id}                       getBlocklistSource
-op   GET     /client-groups                                listClientGroups
-op   GET     /client-groups/{name}                         getClientGroup
-op   GET     /custom-dns                                   listCustomDNSEntries
-op   GET     /custom-dns/{id}                              getCustomDNSEntry
-op   GET     /domain-entries                               listDomainEntries
-op   GET     /domain-entries/{id}                          getDomainEntry
-op   GET     /upstream-groups                              listUpstreamGroups
-op   GET     /upstream-groups/{name}                       getUpstreamGroup
-op   GET     /upstream-groups/{name}/servers               listUpstreamServers
-op   GET     /upstream-settings                            getUpstreamSettings
-op   POST    /apply                                        applyConfig
-op   POST    /blocklist-sources                            createBlocklistSource
-op   POST    /custom-dns                                   createCustomDNSEntry
-op   POST    /domain-entries                               createDomainEntry
-op   POST    /upstream-groups/{name}/servers               createUpstreamServer
-op   PUT     /block-settings                               putBlockSettings
-op   PUT     /blocklist-sources/{id}                       updateBlocklistSource
-op   PUT     /client-groups/{name}                         putClientGroup
-op   PUT     /custom-dns/{id}                              updateCustomDNSEntry
-op   PUT     /domain-entries/{id}                          updateDomainEntry
-op   PUT     /upstream-groups/{name}                       putUpstreamGroup
-op   PUT     /upstream-groups/{name}/servers/{id}          updateUpstreamServer
-op   PUT     /upstream-settings                            putUpstreamSettings
-type ApplyResponse                  object required=[message status] props=[error:string message:string status:string]
+op   DELETE  /blocklist-sources/{id}                       deleteBlocklistSource        params=[ref:ResourceID] req=- resp=[204:- 404:ref:NotFound]
+op   DELETE  /client-groups/{name}                         deleteClientGroup            params=[ref:ClientGroupName] req=- resp=[204:- 404:ref:NotFound]
+op   DELETE  /custom-dns/{id}                              deleteCustomDNSEntry         params=[ref:ResourceID] req=- resp=[204:- 404:ref:NotFound]
+op   DELETE  /domain-entries/{id}                          deleteDomainEntry            params=[ref:ResourceID] req=- resp=[204:- 404:ref:NotFound]
+op   DELETE  /upstream-groups/{name}                       deleteUpstreamGroup          params=[ref:UpstreamGroupName] req=- resp=[204:- 400:ref:BadRequest 404:ref:NotFound]
+op   DELETE  /upstream-groups/{name}/servers/{id}          deleteUpstreamServer         params=[ref:ResourceID ref:UpstreamGroupName] req=- resp=[204:- 400:ref:BadRequest 404:ref:NotFound]
+op   GET     /block-settings                               getBlockSettings             params=[] req=- resp=[200:application/json:ref:BlockSettings]
+op   GET     /blocklist-sources                            listBlocklistSources         params=[query:group_name:string query:list_type:string=[deny|allow]] req=- resp=[200:application/json:array<ref:BlocklistSource>]
+op   GET     /blocklist-sources/{id}                       getBlocklistSource           params=[ref:ResourceID] req=- resp=[200:application/json:ref:BlocklistSource 404:ref:NotFound]
+op   GET     /client-groups                                listClientGroups             params=[] req=- resp=[200:application/json:array<ref:ClientGroup>]
+op   GET     /client-groups/{name}                         getClientGroup               params=[ref:ClientGroupName] req=- resp=[200:application/json:ref:ClientGroup 404:ref:NotFound]
+op   GET     /custom-dns                                   listCustomDNSEntries         params=[] req=- resp=[200:application/json:array<ref:CustomDNSEntry>]
+op   GET     /custom-dns/{id}                              getCustomDNSEntry            params=[ref:ResourceID] req=- resp=[200:application/json:ref:CustomDNSEntry 404:ref:NotFound]
+op   GET     /domain-entries                               listDomainEntries            params=[query:entry_type:string=[exact_deny|regex_deny|exact_allow|regex_allow]] req=- resp=[200:application/json:array<ref:DomainEntry>]
+op   GET     /domain-entries/{id}                          getDomainEntry               params=[ref:ResourceID] req=- resp=[200:application/json:ref:DomainEntry 404:ref:NotFound]
+op   GET     /upstream-groups                              listUpstreamGroups           params=[] req=- resp=[200:application/json:array<ref:UpstreamGroup>]
+op   GET     /upstream-groups/{name}                       getUpstreamGroup             params=[ref:UpstreamGroupName] req=- resp=[200:application/json:ref:UpstreamGroup 404:ref:NotFound]
+op   GET     /upstream-groups/{name}/servers               listUpstreamServers          params=[ref:UpstreamGroupName] req=- resp=[200:application/json:array<ref:UpstreamServer>]
+op   GET     /upstream-settings                            getUpstreamSettings          params=[] req=- resp=[200:application/json:ref:UpstreamSettings]
+op   POST    /apply                                        applyConfig                  params=[] req=- resp=[200:application/json:ref:ApplyResponse 500:application/json:ref:ApplyResponse]
+op   POST    /blocklist-sources                            createBlocklistSource        params=[] req=application/json:ref:BlocklistSourceInput resp=[201:application/json:ref:BlocklistSource 400:ref:BadRequest]
+op   POST    /custom-dns                                   createCustomDNSEntry         params=[] req=application/json:ref:CustomDNSEntryInput resp=[201:application/json:ref:CustomDNSEntry 400:ref:BadRequest]
+op   POST    /domain-entries                               createDomainEntry            params=[] req=application/json:ref:DomainEntryInput resp=[201:application/json:ref:DomainEntry 400:ref:BadRequest]
+op   POST    /upstream-groups/{name}/servers               createUpstreamServer         params=[ref:UpstreamGroupName] req=application/json:ref:UpstreamServerInput resp=[201:application/json:ref:UpstreamServer 400:ref:BadRequest 404:ref:NotFound]
+op   PUT     /block-settings                               putBlockSettings             params=[] req=application/json:ref:BlockSettingsInput resp=[200:application/json:ref:BlockSettings 400:ref:BadRequest]
+op   PUT     /blocklist-sources/{id}                       updateBlocklistSource        params=[ref:ResourceID] req=application/json:ref:BlocklistSourceInput resp=[200:application/json:ref:BlocklistSource 400:ref:BadRequest 404:ref:NotFound]
+op   PUT     /client-groups/{name}                         putClientGroup               params=[ref:ClientGroupName] req=application/json:ref:ClientGroupInput resp=[200:application/json:ref:ClientGroup 400:ref:BadRequest]
+op   PUT     /custom-dns/{id}                              updateCustomDNSEntry         params=[ref:ResourceID] req=application/json:ref:CustomDNSEntryInput resp=[200:application/json:ref:CustomDNSEntry 400:ref:BadRequest 404:ref:NotFound]
+op   PUT     /domain-entries/{id}                          updateDomainEntry            params=[ref:ResourceID] req=application/json:ref:DomainEntryInput resp=[200:application/json:ref:DomainEntry 400:ref:BadRequest 404:ref:NotFound]
+op   PUT     /upstream-groups/{name}                       putUpstreamGroup             params=[ref:UpstreamGroupName] req=- resp=[200:application/json:ref:UpstreamGroup 400:ref:BadRequest]
+op   PUT     /upstream-groups/{name}/servers/{id}          updateUpstreamServer         params=[ref:ResourceID ref:UpstreamGroupName] req=application/json:ref:UpstreamServerInput resp=[200:application/json:ref:UpstreamServer 400:ref:BadRequest 404:ref:NotFound]
+op   PUT     /upstream-settings                            putUpstreamSettings          params=[] req=application/json:ref:UpstreamSettingsInput resp=[200:application/json:ref:UpstreamSettings 400:ref:BadRequest]
+type ApplyResponse                  object required=[message status] props=[error:string message:string status:string=[ok|error]]
 type BlockSettings                  object required=[block_ttl block_type] props=[block_ttl:string block_type:string]
 type BlockSettingsInput             object required=[block_ttl block_type] props=[block_ttl:string block_type:string]
-type BlocklistSource                object required=[enabled group_name id list_type source source_type] props=[enabled:boolean group_name:string id:integer list_type:string source:string source_type:string]
-type BlocklistSourceInput           object required=[enabled group_name list_type source source_type] props=[enabled:boolean group_name:string list_type:string source:string source_type:string]
-type ClientGroup                    object required=[clients groups id name slug] props=[clients:array groups:array id:integer name:string slug:string]
-type ClientGroupInput               object required=[] props=[clients:array groups:array]
-type CustomDNSEntry                 object required=[domain enabled id record_type ttl value] props=[domain:string enabled:boolean id:integer record_type:string ttl:integer value:string]
-type CustomDNSEntryInput            object required=[domain enabled record_type ttl value] props=[domain:string enabled:boolean record_type:string ttl:integer value:string]
-type DomainEntry                    object required=[comment domain enabled entry_type group_name id] props=[comment:string domain:string enabled:boolean entry_type:string group_name:string id:integer]
-type DomainEntryInput               object required=[domain enabled entry_type] props=[comment:string domain:string enabled:boolean entry_type:string]
+type BlocklistSource                object required=[enabled group_name id list_type source source_type] props=[enabled:boolean group_name:string id:integer list_type:string=[deny|allow] source:string source_type:string=[http|file|text]]
+type BlocklistSourceInput           object required=[enabled group_name list_type source source_type] props=[enabled:boolean group_name:string list_type:string=[deny|allow] source:string source_type:string=[http|file|text]]
+type ClientGroup                    object required=[clients groups id name slug] props=[clients:array<string> groups:array<string> id:integer name:string slug:string]
+type ClientGroupInput               object required=[] props=[clients:array<string> groups:array<string>]
+type CustomDNSEntry                 object required=[domain enabled id record_type ttl value] props=[domain:string enabled:boolean id:integer record_type:string=[A|AAAA|CNAME] ttl:integer value:string]
+type CustomDNSEntryInput            object required=[domain enabled record_type ttl value] props=[domain:string enabled:boolean record_type:string=[A|AAAA|CNAME] ttl:integer value:string]
+type DomainEntry                    object required=[comment domain enabled entry_type group_name id] props=[comment:string domain:string enabled:boolean entry_type:string=[exact_deny|regex_deny|exact_allow|regex_allow] group_name:string id:integer]
+type DomainEntryInput               object required=[domain enabled entry_type] props=[comment:string domain:string enabled:boolean entry_type:string=[exact_deny|regex_deny|exact_allow|regex_allow]]
 type ErrorResponse                  object required=[message] props=[message:string]
 type UpstreamGroup                  object required=[id name slug] props=[id:integer name:string slug:string]
 type UpstreamServer                 object required=[enabled group_name id position url] props=[enabled:boolean group_name:string id:integer position:integer url:string]
 type UpstreamServerInput            object required=[enabled url] props=[enabled:boolean position:integer url:string]
-type UpstreamSettings               object required=[init_strategy strategy timeout user_agent] props=[init_strategy:string strategy:string timeout:string user_agent:string]
-type UpstreamSettingsInput          object required=[init_strategy strategy timeout user_agent] props=[init_strategy:string strategy:string timeout:string user_agent:string]
+type UpstreamSettings               object required=[init_strategy strategy timeout user_agent] props=[init_strategy:string=[blocking|failOnError|fast] strategy:string=[parallel_best|strict|random] timeout:string user_agent:string]
+type UpstreamSettingsInput          object required=[init_strategy strategy timeout user_agent] props=[init_strategy:string=[blocking|failOnError|fast] strategy:string=[parallel_best|strict|random] timeout:string user_agent:string]

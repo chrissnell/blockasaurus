@@ -78,6 +78,14 @@ func TestAPIContract(t *testing.T) {
 // subsystem present, so no route is conditionally skipped. A nil config store
 // or nil broadcaster would silently drop whole route groups and make the
 // golden weaker than the thing it is guarding.
+//
+// The result is wrapped in withCommonMiddleware, because that is how every
+// router actually reaches the network: newHTTPServer applies it to whatever it
+// is given (server/http.go). Walking createHTTPRouter's output directly would
+// leave the outermost layer — secureHeadersMiddleware and the fork's
+// same-origin CORS policy — outside the contract, and server/http.go is an
+// upstream file carrying fork edits, exactly the category most at risk in a
+// merge.
 func buildContractRouter(t *testing.T) *chi.Mux {
 	t.Helper()
 
@@ -119,13 +127,15 @@ func buildContractRouter(t *testing.T) *chi.Mux {
 	// Server is sufficient to record the route shape.
 	(&Server{}).registerDoHEndpoints(router, cfg)
 
-	return router
+	return withCommonMiddleware(router)
 }
 
 // allMethods is chi's full method set. A route registered with Handle() (as
 // opposed to Get/Post/...) is expanded by chi into one entry per method; we
 // collapse those back into a single ANY line so the golden stays readable and
-// a real change is not buried under nine identical rows.
+// a real change is not buried under nine identical rows. The collapse is
+// conditional on all nine chains being identical, so it can never hide a
+// per-method difference in the guards.
 var allMethods = []string{
 	"CONNECT", "DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT", "TRACE",
 }
@@ -144,7 +154,7 @@ type routeKey struct {
 // its method or path, and that is both the likeliest and the most damaging
 // regression an upstream merge can introduce here.
 func walkRoutes(router *chi.Mux) ([]string, error) {
-	guards := map[routeKey]string{}
+	chains := map[routeKey][]string{}
 	methodsByPattern := map[string]map[string]bool{}
 
 	walk := func(method, route string, _ http.Handler,
@@ -155,7 +165,7 @@ func walkRoutes(router *chi.Mux) ([]string, error) {
 		}
 
 		methodsByPattern[route][method] = true
-		guards[routeKey{route, method}] = middlewareChain(middlewares)
+		chains[routeKey{route, method}] = middlewareNames(middlewares)
 
 		return nil
 	}
@@ -171,13 +181,30 @@ func walkRoutes(router *chi.Mux) ([]string, error) {
 
 	sort.Strings(patterns)
 
-	var routes []string
+	// The withCommonMiddleware layer is on every route by construction, so
+	// repeating it 85 times would bury the per-route guards that actually
+	// differ — and "[public]" only reads as public if the common layer is not
+	// in the way. Record it once, and strip it from the per-route chains.
+	// Should some route ever escape that layer, the shared prefix shrinks and
+	// every line changes: loud, which is the correct failure here.
+	common := commonPrefix(chains)
+
+	guards := map[routeKey]string{}
+	for key, chain := range chains {
+		guards[key] = formatChain(chain[len(common):])
+	}
+
+	routes := []string{
+		"# Applied to every route below by withCommonMiddleware (server/http.go):",
+		formatRoute("COMMON", "*", formatChain(common)),
+		"",
+	}
 
 	for _, pattern := range patterns {
 		methods := byPatternMethods(methodsByPattern[pattern])
 
-		if isAllMethods(methodsByPattern[pattern]) {
-			routes = append(routes, formatRoute("ANY", pattern, guards[routeKey{pattern, methods[0]}]))
+		if guard, ok := uniformGuard(pattern, methods, guards); ok {
+			routes = append(routes, formatRoute("ANY", pattern, guard))
 
 			continue
 		}
@@ -190,19 +217,46 @@ func walkRoutes(router *chi.Mux) ([]string, error) {
 	return routes, nil
 }
 
+// commonPrefix returns the leading middlewares shared by every route.
+func commonPrefix(chains map[routeKey][]string) []string {
+	var (
+		prefix []string
+		first  = true
+	)
+
+	for _, chain := range chains {
+		if first {
+			prefix = append([]string(nil), chain...)
+			first = false
+
+			continue
+		}
+
+		if len(chain) < len(prefix) {
+			prefix = prefix[:len(chain)]
+		}
+
+		for i := range prefix {
+			if chain[i] != prefix[i] {
+				prefix = prefix[:i]
+
+				break
+			}
+		}
+	}
+
+	return prefix
+}
+
 func formatRoute(method, pattern, guard string) string {
 	return fmt.Sprintf("%-7s %-45s %s", method, pattern, guard)
 }
 
-// middlewareChain renders the guards on a route by function name, in order.
+// middlewareNames renders the guards on a route by function name, in order.
 // Closures returned by middleware constructors resolve to stable names like
 // "auth.RequireAuth.func1", which is enough to tell "authenticated" from
 // "public" and to notice a guard being dropped or reordered.
-func middlewareChain(middlewares []func(http.Handler) http.Handler) string {
-	if len(middlewares) == 0 {
-		return "[public]"
-	}
-
+func middlewareNames(middlewares []func(http.Handler) http.Handler) []string {
 	names := make([]string, 0, len(middlewares))
 
 	for _, mw := range middlewares {
@@ -210,8 +264,22 @@ func middlewareChain(middlewares []func(http.Handler) http.Handler) string {
 		names = append(names, middlewareName(full))
 	}
 
+	return names
+}
+
+// formatChain renders a middleware chain, naming the empty chain "[public]" so
+// a route losing its guards is obvious at a glance rather than an absence.
+func formatChain(names []string) string {
+	if len(names) == 0 {
+		return "[public]"
+	}
+
 	return "[" + strings.Join(names, " ") + "]"
 }
+
+// methodValueSuffix is what the compiler appends to a method used as a value,
+// e.g. cors.(*Cors).Handler passed to Use() becomes "cors.(*Cors).Handler-fm".
+const methodValueSuffix = "-fm"
 
 // middlewareName reduces a runtime symbol like
 // "github.com/0xERR0R/blocky/server.registerUIRoutes.func1.RequireAuth.2" to
@@ -219,22 +287,41 @@ func middlewareChain(middlewares []func(http.Handler) http.Handler) string {
 // closure indices the compiler assigns, and the leading ones are whichever
 // function happened to install the middleware — neither is part of the
 // contract, and both churn on unrelated edits.
+//
+// Method values keep their receiver type, so the CORS handler reads as
+// "Cors.Handler" rather than a bare, ambiguous "Handler".
+//
+// One limitation worth knowing before trusting a name: a middleware declared
+// inline — Use(func(next http.Handler) http.Handler { ... }) — has no name of
+// its own, so this resolves to the enclosing function that installed it. Two
+// different inline middlewares in the same function are therefore
+// indistinguishable here, and moving one to a differently named function
+// churns the golden without changing behavior. There are none today; prefer a
+// named constructor if you add one.
 func middlewareName(symbol string) string {
 	segments := strings.Split(symbol[strings.LastIndex(symbol, "/")+1:], ".")
 
 	for i := len(segments) - 1; i >= 0; i-- {
-		if seg := segments[i]; !closureSegment(seg) {
-			return seg
+		seg := segments[i]
+		if closureSegment(seg) {
+			continue
 		}
+
+		name := strings.TrimSuffix(seg, methodValueSuffix)
+		if name != seg && i > 0 {
+			if recv := strings.Trim(segments[i-1], "(*)"); recv != "" {
+				return recv + "." + name
+			}
+		}
+
+		return name
 	}
 
 	return symbol
 }
 
 func closureSegment(seg string) bool {
-	if strings.HasPrefix(seg, "func") {
-		seg = strings.TrimPrefix(seg, "func")
-	}
+	seg = strings.TrimPrefix(seg, "func")
 
 	if seg == "" {
 		return true
@@ -260,18 +347,30 @@ func byPatternMethods(methods map[string]bool) []string {
 	return named
 }
 
-func isAllMethods(methods map[string]bool) bool {
+// uniformGuard reports the single middleware chain shared by every method on a
+// pattern, but only when the pattern covers chi's full method set. Anything
+// less, or any disagreement between the chains, is listed per method: an ANY
+// line that averaged over differing guards would hide the regression this test
+// exists to catch.
+func uniformGuard(pattern string, methods []string, guards map[routeKey]string) (string, bool) {
 	if len(methods) != len(allMethods) {
-		return false
+		return "", false
 	}
 
 	for _, m := range allMethods {
-		if !methods[m] {
-			return false
+		if _, ok := guards[routeKey{pattern, m}]; !ok {
+			return "", false
 		}
 	}
 
-	return true
+	guard := guards[routeKey{pattern, methods[0]}]
+	for _, m := range methods {
+		if guards[routeKey{pattern, m}] != guard {
+			return "", false
+		}
+	}
+
+	return guard, true
 }
 
 // assertGolden compares got against the golden file, or rewrites it when
@@ -311,6 +410,22 @@ func assertGolden(t *testing.T, path, got, what, regenCmd string) {
 
 	fmt.Fprintf(&b, "%s.\n\n", what)
 
+	// A set comparison finds nothing when the lines are the same but their
+	// order or the surrounding whitespace is not — CRLF normalization, an
+	// editor stripping the trailing newline, a registration reshuffle. Saying
+	// so beats printing an empty report: a failure with no stated cause is one
+	// a reader regenerates away without looking.
+	if len(added) == 0 && len(removed) == 0 {
+		b.WriteString("The same lines are present, so the difference is ordering or whitespace:\n")
+		fmt.Fprintf(&b, "  golden %d bytes, got %d bytes\n", len(wantBytes), len(got))
+
+		for _, d := range firstPositionalDiff(string(wantBytes), got) {
+			fmt.Fprintf(&b, "  %s\n", d)
+		}
+
+		b.WriteString("\n")
+	}
+
 	if len(removed) > 0 {
 		b.WriteString("GONE (a consumer relying on these breaks):\n")
 
@@ -332,6 +447,36 @@ func assertGolden(t *testing.T, path, got, what, regenCmd string) {
 	b.WriteString("and call out the contract change in the pull request.\n")
 
 	t.Fatal(b.String())
+}
+
+// firstPositionalDiff names the first line that differs by position, which is
+// what identifies an ordering or whitespace-only change.
+func firstPositionalDiff(want, got string) []string {
+	wantLines := strings.Split(want, "\n")
+	gotLines := strings.Split(got, "\n")
+
+	for i := 0; i < len(wantLines) || i < len(gotLines); i++ {
+		w, g := lineAt(wantLines, i), lineAt(gotLines, i)
+		if w == g {
+			continue
+		}
+
+		return []string{
+			fmt.Sprintf("first difference at line %d:", i+1),
+			fmt.Sprintf("  golden: %q", w),
+			fmt.Sprintf("  got:    %q", g),
+		}
+	}
+
+	return nil
+}
+
+func lineAt(lines []string, i int) string {
+	if i >= len(lines) {
+		return "<end of file>"
+	}
+
+	return lines[i]
 }
 
 func diffLines(want, got string) (added, removed []string) {

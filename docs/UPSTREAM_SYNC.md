@@ -154,14 +154,16 @@ without telling you where.
 ```bash
 go test ./server -run 'TestAPIContract|TestAPISpecContract'
 make check-fork-additions
+make check-fork-additions-sync   # needs upstream fetched; see below
 ```
 
 ### `TestAPIContract` — routing and auth
 
 `server/api_contract_test.go` builds the real production router
-(`createHTTPRouter`, plus `registerDoHEndpoints` for combined-port mode), walks
-it, and records for every route the method, path pattern and **middleware
-chain**, against `server/testdata/api_contract.golden`.
+(`createHTTPRouter`, plus `registerDoHEndpoints` for combined-port mode),
+wraps it in `withCommonMiddleware` exactly as `newHTTPServer` does, walks it,
+and records for every route the method, path pattern and **middleware chain**,
+against `server/testdata/api_contract.golden`.
 
 The middleware chain is the part that matters most. Moving a route out of the
 authenticated group strips `RequireAuth` without changing its method or path —
@@ -173,25 +175,59 @@ and the golden catches it as:
 + GET     /api/version    [public]
 ```
 
+The outermost layer — `secureHeadersMiddleware` and our same-origin CORS policy
+in `server/http.go`, which is an upstream file carrying fork edits — is on every
+route by construction, so it is recorded once as the `COMMON *` line at the top
+of the golden rather than repeated 85 times. Dropping it reads as:
+
+```text
+- COMMON  *    [secureHeadersMiddleware Cors.Handler]
++ COMMON  *    [public]
+```
+
 ### `TestAPISpecContract` — payloads
 
-`server/api_spec_contract_test.go` locks every operation and every component
-schema (property names, types, required fields) in `docs/api/openapi.yaml` and
-`docs/api/openapi-config.yaml` against
+`server/api_spec_contract_test.go` locks the REST surface as declared in
+`docs/api/openapi.yaml` and `docs/api/openapi-config.yaml` against
 `server/testdata/api_spec_contract.golden`. `openapi.yaml` is an upstream file
 carrying our edits, so it is a prime candidate for being reverted wholesale.
 
-It deliberately ignores prose. Descriptions and branding will legitimately
-change during this merge, and a guard that fires on a reworded sentence gets
-regenerated without being read.
+Per operation: its `operationId`, its parameters (name, location, type, enum,
+required), and the schema it exchanges in the request body and in each response
+by status code. That last part matters on its own — re-pointing
+`PUT /custom-dns/{id}` from `CustomDNSEntryInput` to `CustomDNSEntry` changes the
+contract without touching either schema.
+
+Per component schema: `type`, `required`, and for every property its type,
+format, array item type, enum members, `$ref` target, and composition
+(`allOf`/`oneOf`/`additionalProperties`). An array of strings quietly becoming an
+array of integers, or an enum losing a member, fails here.
+
+It deliberately ignores prose. Descriptions, summaries, tags and branding will
+legitimately change during this merge, and a guard that fires on a reworded
+sentence gets regenerated without being read.
 
 ### `make check-fork-additions` — file survival
 
-Verifies every path in `.fork-additions` (the files present here and absent
-upstream) still exists. This is what catches a delete/modify conflict resolved
-toward upstream. The manifest lists itself and both contract tests, so deleting
-the guard is itself a failure. `make check-fork-additions-sync` reports when the
-manifest has gone stale and prints the diff to apply.
+Verifies every path in `.fork-additions` (the 149 files present here and absent
+upstream) still exists and is non-empty — `MISSING` for a deleted file, `EMPTY`
+for a truncated one. This is what catches a delete/modify conflict resolved
+toward upstream. The manifest lists itself, both contract tests and both
+goldens, so deleting the guard is itself a failure, and a missing or empty
+manifest is a hard error rather than a green "all files present".
+
+`make check-fork-additions-sync` reports when the manifest itself has gone stale
+and prints the diff to apply. It needs upstream fetched, and **skips cleanly
+when that has not been done** — if you see it compare the manifest against an
+empty upstream tree and recommend adding hundreds of files, do not follow that
+advice: it would pad the manifest with the whole upstream tree and turn
+`check-fork-additions` into a tautology.
+
+```bash
+git remote add upstream https://github.com/0xERR0R/blocky.git
+git fetch upstream main
+make check-fork-additions-sync
+```
 
 ### Reading a golden diff
 
@@ -217,12 +253,35 @@ Say this out loud so nobody trusts them further than they reach:
 - **Fork edits to upstream files.** `.fork-additions` only catches deletions of
   fork-*only* files. The likelier casualty in a 220-commit merge is one of the
   ~18 upstream files carrying our patches (§7) being reverted by a sloppy hunk
-  resolution. Nothing fails automatically there — that is what the §7 register
-  and a `git diff` against the pre-merge tag are for.
-- **Schemas behind the operations.** `TestAPISpecContract` locks the declared
-  component schemas, not inline request/response bodies or handler behavior.
-- **Middleware behavior.** Only the identity and order of the chain is recorded.
+  resolution. Two of those files — `server/server_endpoints.go` and
+  `server/http.go` — are now covered for their routing and middleware content by
+  `TestAPIContract`. The rest are not: that is what the §7 register and a
+  `git diff` against the pre-merge tag are for.
+- **Handler behavior.** `TestAPISpecContract` reads the spec, not the code.
+  Nothing proves a handler honors the schema it advertises, or that the spec
+  describes what the handler really returns. Likewise `TestAPIContract` records
+  the identity and order of a middleware chain, never what it does.
+- **`components.parameters` and `components.responses`.** Recorded where an
+  operation references one by name, so a re-pointed reference fails — but the
+  contents behind that name are not locked.
+- **The split-router arrangement.** With `ports.httpAdmin`/`httpsAdmin` set,
+  `NewServer` builds two routers and serves the admin UI separately from DoH.
+  The test unions both registration functions onto one mux, so route coverage is
+  equivalent but the *split* is not pinned: a merge that mounted the UI routes on
+  the DoH listener would not fail here.
 - **The Svelte UI.** Only that its files still exist and that it builds.
+- **Anything undocumented.** A field the UI relies on that the spec never
+  mentions is invisible to the payload guard by construction.
+
+### Where these run
+
+`check-fork-additions` is a prerequisite of `make test`, and
+`.github/workflows/ci.yml` runs both it and the full non-e2e suite on every pull
+request and every push to `main`. Before that workflow existed, this repo had
+only the tag-triggered `release.yml`, which runs no tests — so "the merge fails
+the build" meant "the merge fails if someone remembers to run the suite
+locally". If you delete or disable that workflow, these guardrails go back to
+being a convention.
 
 ## 4. Decisions — settled
 
@@ -264,7 +323,7 @@ Each phase ends at a gate. Do not start a phase before its gate passes.
 
 | Phase | Work | Gate | Est. |
 | --- | --- | --- | --- |
-| 0. Baseline | Tag `pre-upstream-sync-v0.34.38`. Record current behavior: `go test ./...`, e2e suite, and a captured set of DNS answers (blocked/allowed/custom/conditional/DNSSEC/EDNS0) plus dashboard screenshots. This is what "did we regress?" is measured against later. | Baseline artifacts committed to `scratch/` and green. | 0.5d |
+| 0. Baseline | Tag `pre-upstream-sync-v0.34.38`. Add the §3a guardrails. Record current behavior: `go test ./...`, e2e suite, and a captured set of DNS answers (blocked/allowed/custom/conditional/DNSSEC/EDNS0) plus dashboard screenshots. This is what "did we regress?" is measured against later. | Guardrails green. Baseline recorded in `docs/upstream-sync/baseline-v0.34.38.md` — **not** `scratch/`, which is gitignored and would not survive to be compared against. | 0.5d |
 | 1. Decisions | Close D1–D6 in §4. | Written answers on the sync issue. | — |
 | 2. Merge + mechanical | Branch `sync/upstream-2026-09`. `git merge upstream/main`. Resolve in order: `go.mod`/`go.sum` (regenerate), workflows (re-delete), `cmd/lists.go` (re-delete), `.goreleaser.yml`/`Makefile`/`README`/`web/index.html` (keep ours + branding), `docs/*` (take upstream). | Only the Go integration conflicts remain unresolved. | 0.5d |
 | 3. Config + CLI | `config/config.go`, `config/upstreams.go`, `cmd/root.go`, `cmd/serve.go`. Regenerate enums and `docs/config.schema.json`. | `go build ./config/... ./cmd/...`, config tests green. | 1d |
