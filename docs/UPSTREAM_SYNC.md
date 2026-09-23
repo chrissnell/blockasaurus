@@ -297,25 +297,57 @@ conflict time produces arbitrary outcomes.
 | D5 | New upstream features | **Merge the code at upstream defaults; no config-store or UI plumbing during the sync.** DoQ and DoH3 get UI work as dedicated follow-ups immediately after the sync lands (GRA-638, GRA-639). The remainder stay YAML-only until someone asks for them; see §4a. |
 | D6 | `docs/` branding | Take upstream content, re-apply Blockasaurus branding as a final pass. |
 
-### 4a. Merged but not surfaced
+### 4a. Merged but not surfaced — and what happens to each
 
-These land in the tree as part of the sync and sit at upstream defaults —
-off, unless the operator sets them in YAML. None of them changes behavior
-by merging. Listed so a future reader knows the capability exists rather
-than rediscovering it in a diff.
+These land in the tree as part of the sync and sit at upstream defaults — off,
+unless the operator sets them in YAML. None of them changes behavior by merging.
+The Disposition column records the owner's call (2026-09-23) so a future reader
+knows the capability exists, and whether it was wanted, without rediscovering it
+in a diff.
 
-| Feature | What it does | Default |
-| --- | --- | --- |
-| Per-client rate limiting (#2063) | Token bucket per client IP, with configurable rate, burst, IPv4/IPv6 aggregation prefix and an allowlist. | `enable: false` |
-| DNS rebinding protection (#2111) | Rejects upstream answers that map a public name to a private address, with a per-domain allowlist for the NAS-on-a-real-hostname case. | `enable: false` |
-| PROXY protocol (#2094) | Accepts HAProxy PROXY headers on proxied DoT/DoH listeners so the real client IP survives a reverse proxy. Relevant behind k8s ingress, where client-group matching otherwise sees the proxy. | opt-in per listener |
-| SQLite query log (#2080) | Query log to a local SQLite file — no external database. | existing `queryLog.type` |
-| dnstap query log (#2144) | Query log as a dnstap stream for external collectors. | existing `queryLog.type` |
-| Query-log domain ignore (#2084) | Exclude domains (exact, wildcard, regex) from the query log. | none configured |
-| Schedule-based blocking (#2037) | Time-of-day and weekday windows for deny/allowlist groups, including overnight ranges. Pairs naturally with the existing client-groups UI. | no schedules configured |
-| On-disk list download cache (#2087) | Caches downloaded blocklists on disk with conditional revalidation, so restarts do not re-download every list. | opt-in |
-| Config values from files (#2077) | Reads sensitive config values from files instead of inline YAML. | unused |
-| Config folder structural merge (#2112) | Merges multiple config files in a folder structurally rather than by last-wins. | unchanged behavior |
+| Feature | What it does | Default | Disposition |
+| --- | --- | --- | --- |
+| Per-client rate limiting (#2063) | Token bucket per client IP, with configurable rate, burst, IPv4/IPv6 aggregation prefix and an allowlist. | `enable: false` | No issue filed — available if something on the LAN misbehaves. |
+| DNS rebinding protection (#2111) | Rejects upstream answers that map a public name to a private address, with a per-domain allowlist for the NAS-on-a-real-hostname case. | `enable: false` | **Wanted.** GRA-641. |
+| PROXY protocol (#2094) | Accepts HAProxy PROXY headers on proxied DoT/DoH listeners so the real client IP survives a reverse proxy. Relevant behind k8s ingress, where client-group matching otherwise sees the proxy. | opt-in per listener | Declined for now — not needed. |
+| SQLite query log (#2080) | Query log to a local SQLite file — no external database. | existing `queryLog.type` | See §4b. |
+| dnstap query log (#2144) | Query log as a dnstap stream for external collectors. | existing `queryLog.type` | See §4b. |
+| Query-log domain ignore (#2084) | Exclude domains (exact, wildcard, regex) from the query log. | none configured | See §4b. |
+| Schedule-based blocking (#2037) | Time-of-day and weekday windows for deny/allowlist groups, including overnight ranges. Pairs naturally with the existing client-groups UI. | no schedules configured | **Wanted in the UI.** GRA-640. |
+| On-disk list download cache (#2087) | Caches downloaded blocklists on disk with conditional revalidation, so restarts do not re-download every list. | opt-in | **Wanted.** GRA-642. |
+| Config values from files (#2077) | Reads sensitive config values from files instead of inline YAML. | unused | No issue filed. |
+| Config folder structural merge (#2112) | Merges multiple config files in a folder structurally rather than by last-wins. | unchanged behavior | No issue filed — behavior unchanged. |
+
+### 4b. Query logging as it stands
+
+Recorded because the answer is not obvious from the code and the constraint
+below will bite whoever changes `queryLog.type` first.
+
+Today: `queryLog.type: console`. Query entries go to the pod's stdout **and**,
+separately, to the `logstream.Broadcaster` that feeds the UI's Logs page over
+`/api/ws/logs`. The broadcaster is a 1000-entry ring buffer — live tail only,
+no history, nothing survives a restart.
+
+**The constraint.** `NewQueryLoggingResolver` only attaches the broadcaster when
+the selected writer is a `*querylog.LoggerWriter`:
+
+```go
+if lw, ok := writer.(*querylog.LoggerWriter); ok && broadcaster != nil {
+    lw.SetBroadcaster(broadcaster)
+}
+```
+
+`queryLog.type` is single-valued, so selecting any non-console target — csv,
+mysql, sqlite, dnstap — silently turns the UI's live query log off. Anyone
+adopting a new target should first move the broadcaster publish out of the
+console writer and into the query-logging resolver, so the UI stream is
+independent of the storage target.
+
+Upstream's new targets in this sync: `sqlite` (local file, queryable history),
+`dnstap` (Frame Streams over `unix:/path` or `tcp://host:port`), and
+`queryLog.ignore` for excluding domains by exact match, wildcard or regex. Note
+that `log.privacy` obfuscation does **not** apply to dnstap payloads — it
+exports full wire-format DNS messages.
 
 ## 5. Plan
 
