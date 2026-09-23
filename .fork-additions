@@ -123,6 +123,7 @@ server/server_auth.go
 server/server_auth_test.go
 server/server_endpoint_info.go
 server/server_endpoints_test.go
+server/server_lifecycle_test.go
 server/server_mobileconfig.go
 server/server_stats.go
 server/server_version.go

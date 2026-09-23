@@ -585,13 +585,30 @@ func (s *Server) Stop(ctx context.Context) error {
 		s.broadcaster.Shutdown()
 	}
 
+	// Every listener gets a shutdown attempt even if an earlier one fails:
+	// returning on the first error used to leave the remaining DNS servers
+	// running and the HTTP ports bound.
+	var errs []error
+
 	for _, server := range s.dnsServers {
 		if err := server.ShutdownContext(ctx); err != nil {
-			return fmt.Errorf("stop %s listener failed: %w", server.Net, err)
+			errs = append(errs, fmt.Errorf("stop %s listener failed: %w", server.Net, err))
 		}
 	}
 
-	return nil
+	// The HTTP and HTTPS listeners were previously released only by the
+	// context-cancellation goroutine in httpServer.Serve. That made Stop a
+	// promise it did not keep: the ports could still be bound when it
+	// returned, so anything rebinding them straight afterwards — a restart, or
+	// the next test in a suite — hit "address already in use" depending on
+	// goroutine scheduling.
+	for listener, srv := range s.servers {
+		if err := srv.Close(ctx, listener); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	return errors.Join(errs...)
 }
 
 // Reconfigure rebuilds the resolver chain from current DB state.

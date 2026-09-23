@@ -5,6 +5,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -52,8 +53,32 @@ func (s *httpServer) Serve(ctx context.Context, l net.Listener) error {
 		s.inner.Close()
 	}()
 
-	if err := s.inner.Serve(l); err != nil {
+	// ErrServerClosed is what Serve returns once Close or Shutdown has been
+	// called, i.e. every clean stop. Reporting it as a failure would put an
+	// error on the server's error channel on every shutdown.
+	if err := s.inner.Serve(l); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("HTTP server '%s' failed to serve: %w", s.name, err)
+	}
+
+	return nil
+}
+
+// Close stops serving and releases the port.
+//
+// Shutdown alone is not enough: it closes only the listeners the server is
+// actively serving, so one that was constructed but never started would keep
+// its port bound. Callers need the port back by the time this returns — relying
+// on the context-cancellation goroutine above is a race, because cancelling a
+// context does not wait for the goroutine observing it.
+func (s *httpServer) Close(ctx context.Context, l net.Listener) error {
+	shutdownErr := s.inner.Shutdown(ctx)
+
+	if err := l.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		return fmt.Errorf("HTTP server '%s': close listener %s failed: %w", s.name, l.Addr(), err)
+	}
+
+	if shutdownErr != nil {
+		return fmt.Errorf("HTTP server '%s' shutdown failed: %w", s.name, shutdownErr)
 	}
 
 	return nil
