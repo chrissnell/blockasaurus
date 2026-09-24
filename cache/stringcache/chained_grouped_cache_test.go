@@ -56,11 +56,49 @@ var _ = Describe("Chained grouped cache", func() {
 				Expect(cache.ElementCount("group1")).Should(BeNumerically("==", 2))
 			})
 
-			It("should find strings", func() {
+			It("should find strings and return the matched rule per group", func() {
 				factory.Finish()
-				Expect(cache.Contains("string1", []string{"group1"})).Should(ConsistOf("group1"))
-				Expect(cache.Contains("string2", []string{"group1", "someOtherGroup"})).Should(ConsistOf("group1"))
+				Expect(cache.Contains("string1", []string{"group1"})).
+					Should(Equal(map[string]string{"group1": "string1"}))
+				Expect(cache.Contains("string2", []string{"group1", "someOtherGroup"})).
+					Should(Equal(map[string]string{"group1": "string2"}))
 			})
+		})
+	})
+
+	Describe("Multiple sub-caches matching the same group", func() {
+		// Mirror the real lists.ListCache composition (regex, wildcard, string).
+		// When a domain matches in more than one sub-cache for the same group, a
+		// single representative rule is reported: the one from the last (cheapest)
+		// cache in construction order. This contract must hold regardless of the
+		// internal query order/short-circuiting.
+		BeforeEach(func() {
+			cache = stringcache.NewChainedGroupedCache(
+				stringcache.NewInMemoryGroupedRegexCache(),
+				stringcache.NewInMemoryGroupedWildcardCache(),
+				stringcache.NewInMemoryGroupedStringCache(),
+			)
+
+			factory = cache.Refresh("group1")
+			factory.AddEntry(`/^multi\.example$/`) // regex match for multi.example
+			factory.AddEntry("*.wild.example")     // wildcard match for x.wild.example
+			factory.AddEntry("multi.example")      // exact string match for multi.example
+			factory.Finish()
+		})
+
+		It("reports the string rule when string, wildcard and regex could all match", func() {
+			Expect(cache.Contains("multi.example", []string{"group1"})).
+				Should(Equal(map[string]string{"group1": "multi.example"}))
+		})
+
+		It("reports the wildcard rule when only wildcard and regex match", func() {
+			factory = cache.Refresh("group2")
+			factory.AddEntry(`/\.wild\.example$/`) // regex also matches sub.wild.example
+			factory.AddEntry("*.wild.example")     // wildcard matches sub.wild.example
+			factory.Finish()
+
+			Expect(cache.Contains("sub.wild.example", []string{"group2"})).
+				Should(Equal(map[string]string{"group2": "*.wild.example"}))
 		})
 	})
 
@@ -86,9 +124,12 @@ var _ = Describe("Chained grouped cache", func() {
 			It("should contain 4 elements in 2 groups", func() {
 				Expect(cache.ElementCount("group1")).Should(BeNumerically("==", 2))
 				Expect(cache.ElementCount("group2")).Should(BeNumerically("==", 2))
-				Expect(cache.Contains("g1", []string{"group1", "group2"})).Should(ConsistOf("group1"))
-				Expect(cache.Contains("g2", []string{"group1", "group2"})).Should(ConsistOf("group2"))
-				Expect(cache.Contains("both", []string{"group1", "group2"})).Should(ConsistOf("group1", "group2"))
+				Expect(cache.Contains("g1", []string{"group1", "group2"})).
+					Should(Equal(map[string]string{"group1": "g1"}))
+				Expect(cache.Contains("g2", []string{"group1", "group2"})).
+					Should(Equal(map[string]string{"group2": "g2"}))
+				Expect(cache.Contains("both", []string{"group1", "group2"})).
+					Should(Equal(map[string]string{"group1": "both", "group2": "both"}))
 			})
 
 			It("should replace group content on refresh", func() {
@@ -99,9 +140,12 @@ var _ = Describe("Chained grouped cache", func() {
 				Expect(cache.ElementCount("group1")).Should(BeNumerically("==", 1))
 				Expect(cache.ElementCount("group2")).Should(BeNumerically("==", 2))
 				Expect(cache.Contains("g1", []string{"group1", "group2"})).Should(BeEmpty())
-				Expect(cache.Contains("newString", []string{"group1", "group2"})).Should(ConsistOf("group1"))
-				Expect(cache.Contains("g2", []string{"group1", "group2"})).Should(ConsistOf("group2"))
-				Expect(cache.Contains("both", []string{"group1", "group2"})).Should(ConsistOf("group2"))
+				Expect(cache.Contains("newString", []string{"group1", "group2"})).
+					Should(Equal(map[string]string{"group1": "newstring"})) // rule is normalized to lower-case
+				Expect(cache.Contains("g2", []string{"group1", "group2"})).
+					Should(Equal(map[string]string{"group2": "g2"}))
+				Expect(cache.Contains("both", []string{"group1", "group2"})).
+					Should(Equal(map[string]string{"group2": "both"}))
 			})
 
 			It("should replace empty groups on refresh", func() {

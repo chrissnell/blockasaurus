@@ -76,54 +76,6 @@ var _ = Describe("EcsResolver", func() {
 			})
 		})
 
-		When("use ECS client ip is enabled", func() {
-			BeforeEach(func() {
-				sutConfig.UseAsClient = true
-			})
-
-			It("should change ClientIP with subnet 32", func(ctx context.Context) {
-				request := newRequest("example.com.", A)
-				request.ClientIP = origIP
-
-				addEcsOption(request.Req, ecsIP, ecsMaskIPv4)
-
-				m.ResolveFn = func(ctx context.Context, req *Request) (*Response, error) {
-					Expect(req.ClientIP).Should(Equal(ecsIP))
-
-					return respondWith(mockAnswer), nil
-				}
-
-				Expect(sut.Resolve(ctx, request)).
-					Should(
-						SatisfyAll(
-							HaveNoAnswer(),
-							HaveResponseType(ResponseTypeRESOLVED),
-							HaveReturnCode(dns.RcodeSuccess),
-							HaveReason("Test")))
-			})
-
-			It("shouldn't change ClientIP with subnet 24", func(ctx context.Context) {
-				request := newRequest("example.com.", A)
-				request.ClientIP = origIP
-
-				addEcsOption(request.Req, ecsIP, 24)
-
-				m.ResolveFn = func(ctx context.Context, req *Request) (*Response, error) {
-					Expect(req.ClientIP).Should(Equal(origIP))
-
-					return respondWith(mockAnswer), nil
-				}
-
-				Expect(sut.Resolve(ctx, request)).
-					Should(
-						SatisfyAll(
-							HaveNoAnswer(),
-							HaveResponseType(ResponseTypeRESOLVED),
-							HaveReturnCode(dns.RcodeSuccess),
-							HaveReason("Test")))
-			})
-		})
-
 		When("add ECS information", func() {
 			BeforeEach(func() {
 				sutConfig.IPv4Mask = 32
@@ -184,7 +136,7 @@ var _ = Describe("EcsResolver", func() {
 				addEcsOption(request.Req, ecsIP, ecsMaskIPv4)
 
 				m.ResolveFn = func(ctx context.Context, req *Request) (*Response, error) {
-					Expect(req.ClientIP).Should(Equal(ecsIP))
+					Expect(req.ClientIP).Should(Equal(origIP))
 					Expect(req.Req).Should(HaveEdnsOption(dns.EDNS0SUBNET))
 
 					so := util.GetEdns0Option[*dns.EDNS0_SUBNET](req.Req)
@@ -214,7 +166,7 @@ var _ = Describe("EcsResolver", func() {
 					addEcsOption(request.Req, ecsIP, ecsMaskIPv4)
 
 					m.ResolveFn = func(ctx context.Context, req *Request) (*Response, error) {
-						Expect(req.ClientIP).Should(Equal(ecsIP))
+						Expect(req.ClientIP).Should(Equal(origIP))
 						Expect(req.Req).Should(HaveEdnsOption(dns.EDNS0SUBNET))
 
 						so := util.GetEdns0Option[*dns.EDNS0_SUBNET](req.Req)
@@ -244,6 +196,43 @@ var _ = Describe("EcsResolver", func() {
 
 					so := util.GetEdns0Option[*dns.EDNS0_SUBNET](req.Req)
 					Expect(so.Address).Should(Equal(net.ParseIP("2001:db8::68")))
+
+					return respondWith(mockAnswer), nil
+				}
+
+				Expect(sut.Resolve(ctx, request)).
+					Should(
+						SatisfyAll(
+							HaveNoAnswer(),
+							HaveResponseType(ResponseTypeRESOLVED),
+							HaveReturnCode(dns.RcodeSuccess),
+							HaveReason("Test")))
+			})
+		})
+
+		When("remove ECS information", func() {
+			// no mask configured and forwarding disabled: the option the client sent is dropped
+			BeforeEach(func() {
+				sutConfig.IPv4Mask = 0
+				sutConfig.IPv6Mask = 0
+				sutConfig.Forward = false
+			})
+
+			It("should keep the OPT record when the subnet was the only option", func(ctx context.Context) {
+				request := newRequest("example.com.", A)
+				request.ClientIP = origIP
+
+				request.Req.SetEdns0(1232, true)
+				addEcsOption(request.Req, ecsIP, 32)
+
+				m.ResolveFn = func(ctx context.Context, req *Request) (*Response, error) {
+					Expect(req.Req).ShouldNot(HaveEdnsOption(dns.EDNS0SUBNET))
+
+					// the OPT record still carries the DO bit and the buffer size the client advertised
+					opt := req.Req.IsEdns0()
+					Expect(opt).ShouldNot(BeNil())
+					Expect(opt.Do()).Should(BeTrue())
+					Expect(opt.UDPSize()).Should(BeNumerically("==", 1232))
 
 					return respondWith(mockAnswer), nil
 				}

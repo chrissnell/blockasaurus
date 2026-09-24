@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"net"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -41,7 +42,7 @@ var _ = Describe("Config", func() {
 
 		When("parameter 'disableIPv6' is set", func() {
 			It("should add 'AAAA' to filter.queryTypes", func() {
-				c.Deprecated.DisableIPv6 = ptrOf(true)
+				c.Deprecated.DisableIPv6 = ptrOf(true) //nolint:modernize // ptrOf sets a non-zero value, new(T) would give zero-value pointer
 				c.migrate(logger)
 				Expect(hook.Messages).Should(ContainElement(ContainSubstring("disableIPv6")))
 				Expect(c.Filtering.QueryTypes).Should(HaveKey(QType(dns.TypeAAAA)))
@@ -51,7 +52,7 @@ var _ = Describe("Config", func() {
 
 		When("parameter 'failStartOnListError' is set", func() {
 			BeforeEach(func() {
-				c.Blocking.Deprecated.FailStartOnListError = ptrOf(true)
+				c.Blocking.Deprecated.FailStartOnListError = ptrOf(true) //nolint:modernize // ptrOf sets a non-zero value, new(T) would give zero-value pointer
 			})
 			It("should change loading.strategy blocking to failOnError", func() {
 				c.Blocking.Loading.Strategy = InitStrategyBlocking
@@ -87,7 +88,7 @@ var _ = Describe("Config", func() {
 
 		When("parameter 'logPrivacy' is set", func() {
 			It("should convert to log.privacy", func() {
-				c.Deprecated.LogPrivacy = ptrOf(true)
+				c.Deprecated.LogPrivacy = ptrOf(true) //nolint:modernize // ptrOf sets a non-zero value, new(T) would give zero-value pointer
 				c.migrate(logger)
 				Expect(hook.Messages).Should(ContainElement(ContainSubstring("log.privacy")))
 				Expect(c.Log.Privacy).Should(BeTrue())
@@ -96,7 +97,7 @@ var _ = Describe("Config", func() {
 
 		When("parameter 'logTimestamp' is set", func() {
 			It("should convert to log.timestamp", func() {
-				c.Deprecated.LogTimestamp = ptrOf(false)
+				c.Deprecated.LogTimestamp = new(bool)
 				c.migrate(logger)
 				Expect(hook.Messages).Should(ContainElement(ContainSubstring("log.timestamp")))
 				Expect(c.Log.Timestamp).Should(BeFalse())
@@ -106,7 +107,7 @@ var _ = Describe("Config", func() {
 		When("parameter 'port' is set", func() {
 			It("should convert to ports.dns", func() {
 				ports := ListenConfig([]string{"5333"})
-				c.Deprecated.DNSPorts = ptrOf(ports)
+				c.Deprecated.DNSPorts = ptrOf(ports) //nolint:modernize // ptrOf(var) is not equivalent to new(T)
 				c.migrate(logger)
 				Expect(hook.Messages).Should(ContainElement(ContainSubstring("ports.dns")))
 				Expect(c.Ports.DNS).Should(Equal(ports))
@@ -116,7 +117,7 @@ var _ = Describe("Config", func() {
 		When("parameter 'httpPort' is set", func() {
 			It("should convert to ports.http", func() {
 				ports := ListenConfig([]string{"5333"})
-				c.Deprecated.HTTPPorts = ptrOf(ports)
+				c.Deprecated.HTTPPorts = ptrOf(ports) //nolint:modernize // ptrOf(var) is not equivalent to new(T)
 				c.migrate(logger)
 				Expect(hook.Messages).Should(ContainElement(ContainSubstring("ports.http")))
 				Expect(c.Ports.HTTP).Should(Equal(ports))
@@ -126,7 +127,7 @@ var _ = Describe("Config", func() {
 		When("parameter 'httpsPort' is set", func() {
 			It("should convert to ports.https", func() {
 				ports := ListenConfig([]string{"5333"})
-				c.Deprecated.HTTPSPorts = ptrOf(ports)
+				c.Deprecated.HTTPSPorts = ptrOf(ports) //nolint:modernize // ptrOf(var) is not equivalent to new(T)
 				c.migrate(logger)
 				Expect(hook.Messages).Should(ContainElement(ContainSubstring("ports.https")))
 				Expect(c.Ports.HTTPS).Should(Equal(ports))
@@ -136,7 +137,7 @@ var _ = Describe("Config", func() {
 		When("parameter 'tlsPort' is set", func() {
 			It("should convert to ports.tls", func() {
 				ports := ListenConfig([]string{"5333"})
-				c.Deprecated.TLSPorts = ptrOf(ports)
+				c.Deprecated.TLSPorts = ptrOf(ports) //nolint:modernize // ptrOf(var) is not equivalent to new(T)
 				c.migrate(logger)
 				Expect(hook.Messages).Should(ContainElement(ContainSubstring("ports.tls")))
 				Expect(c.Ports.TLS).Should(Equal(ports))
@@ -145,7 +146,7 @@ var _ = Describe("Config", func() {
 
 		When("parameter 'startVerifyUpstream' is set", func() {
 			It("should convert to upstreams.init.strategy", func() {
-				c.Deprecated.StartVerifyUpstream = ptrOf(true)
+				c.Deprecated.StartVerifyUpstream = ptrOf(true) //nolint:modernize // ptrOf(true) != new(bool) which gives false
 				c.migrate(logger)
 				Expect(hook.Messages).Should(ContainElement(ContainSubstring("startVerifyUpstream")))
 				Expect(c.Upstreams.Init.Strategy).Should(Equal(InitStrategyFailOnError))
@@ -285,6 +286,196 @@ var _ = Describe("Config", func() {
 				Expect(err).Should(Succeed())
 			})
 		})
+		When("multiple config files share keys", func() {
+			It("merges maps across files (issue #1827)", func() {
+				tmpDir.CreateStringFile("00_default.yaml",
+					"upstreams:",
+					"  groups:",
+					"    default:",
+					"      - 8.8.8.8",
+				)
+				tmpDir.CreateStringFile("10_local.yaml",
+					"upstreams:",
+					"  groups:",
+					"    192.168.0.0/16:",
+					"      - 1.1.1.1",
+				)
+
+				c, err := LoadConfig(tmpDir.Path, true)
+				Expect(err).Should(Succeed())
+				Expect(c.Upstreams.Groups).Should(HaveLen(2))
+				Expect(c.Upstreams.Groups).Should(HaveKey("default"))
+				Expect(c.Upstreams.Groups).Should(HaveKey("192.168.0.0/16"))
+			})
+
+			It("lets the last file win scalar and list conflicts", func() {
+				tmpDir.CreateStringFile("00_default.yaml",
+					"upstreams:",
+					"  groups:",
+					"    default:",
+					"      - 8.8.8.8",
+					"      - 8.8.4.4",
+					"log:",
+					"  level: info",
+				)
+				tmpDir.CreateStringFile("10_local.yaml",
+					"upstreams:",
+					"  groups:",
+					"    default:",
+					"      - 1.1.1.1",
+					"log:",
+					"  level: debug",
+				)
+
+				c, err := LoadConfig(tmpDir.Path, true)
+				Expect(err).Should(Succeed())
+				Expect(c.Upstreams.Groups["default"]).Should(HaveLen(1))
+				Expect(c.Log.Level).Should(Equal(logrus.DebugLevel))
+			})
+
+			It("still rejects duplicate keys within one file, naming the file", func() {
+				tmpDir.CreateStringFile("bad.yaml",
+					"log:",
+					"  level: debug",
+					"log:",
+					"  level: info",
+				)
+
+				_, err := LoadConfig(tmpDir.Path, true)
+				Expect(err).Should(HaveOccurred())
+				Expect(err.Error()).Should(ContainSubstring("bad.yaml"))
+				Expect(err.Error()).Should(ContainSubstring("already set in map"))
+			})
+
+			It("rejects a file whose top level is not a mapping, naming the file", func() {
+				tmpDir.CreateStringFile("list.yaml", "- not", "- a", "- mapping")
+
+				_, err := LoadConfig(tmpDir.Path, true)
+				Expect(err).Should(HaveOccurred())
+				Expect(err.Error()).Should(ContainSubstring("list.yaml"))
+				Expect(err.Error()).Should(ContainSubstring("must be a mapping"))
+			})
+
+			It("skips empty and comment-only files", func() {
+				tmpDir.CreateStringFile("00_real.yaml", "log:", "  level: debug")
+				tmpDir.CreateEmptyFile("10_empty.yaml")
+				tmpDir.CreateStringFile("20_comments.yaml", "# overlay placeholder")
+
+				c, err := LoadConfig(tmpDir.Path, true)
+				Expect(err).Should(Succeed())
+				Expect(c.Log.Level).Should(Equal(logrus.DebugLevel))
+			})
+
+			It("merges multi-document files in document order", func() {
+				tmpDir.CreateStringFile("multi.yaml",
+					"log:",
+					"  level: info",
+					"---",
+					"log:",
+					"  level: debug",
+				)
+
+				c, err := LoadConfig(tmpDir.Path, true)
+				Expect(err).Should(Succeed())
+				Expect(c.Log.Level).Should(Equal(logrus.DebugLevel))
+			})
+
+			It("preserves scalar literals so minTlsServeVersion: 1.0 still loads (issue #1827)", func() {
+				// Folder merging used to re-marshal scalars through a generic
+				// map, collapsing `1.0` to `1` and breaking startup. Node-tree
+				// merging keeps the literal, so this loads just like a single
+				// file (which accepts 1.0 and bumps it to the secure default).
+				tmpDir.CreateStringFile("00_tls.yaml",
+					"minTlsServeVersion: 1.0",
+				)
+
+				c, err := LoadConfig(tmpDir.Path, true)
+				Expect(err).Should(Succeed())
+				Expect(c.MinTLSServeVer).Should(Equal(TLSVersion12))
+			})
+
+			It("attributes an unknown key to its source file", func() {
+				tmpDir.CreateStringFile("00_good.yaml", "log:", "  level: debug")
+				tmpDir.CreateStringFile("10_typo.yaml", "blocing:", "  blockType: zeroIp")
+
+				_, err := LoadConfig(tmpDir.Path, true)
+				Expect(err).Should(HaveOccurred())
+				Expect(err.Error()).Should(ContainSubstring("10_typo.yaml"))
+			})
+
+			It("attributes an unknown key introduced by a non-first document of a multi-doc file", func() {
+				// The bad key lives in the SECOND document of the file. Schema
+				// attribution must read every document of the source, not just
+				// the first one, so the file is still named (issue: yaml.v2's
+				// single-document Unmarshal in schema.ValidateYAML).
+				tmpDir.CreateStringFile("00_good.yaml", "log:", "  level: debug")
+				tmpDir.CreateStringFile("10_multidoc.yaml",
+					"upstreams:",
+					"  groups:",
+					"    default:",
+					"      - 8.8.8.8",
+					"---",
+					"blocing:",
+					"  blockType: zeroIp",
+				)
+
+				_, err := LoadConfig(tmpDir.Path, true)
+				Expect(err).Should(HaveOccurred())
+				Expect(err.Error()).Should(ContainSubstring("10_multidoc.yaml"))
+			})
+
+			It("does not duplicate findings and never blames a valid-after-merge file", func() {
+				// 00_good.yaml sets blocking.denylists.ads to null; after merging
+				// 10_bad.yaml fills it with a real list. The merged doc is invalid
+				// only because of blocking.badkey from 10_bad.yaml.
+				// Before the reconciliation fix, 00_good.yaml was falsely blamed
+				// for a null-ads finding and the badkey line appeared twice.
+				tmpDir.CreateStringFile("00_good.yaml",
+					"blocking:",
+					"  denylists:",
+					"    ads:",
+				)
+				tmpDir.CreateStringFile("10_bad.yaml",
+					"blocking:",
+					"  denylists:",
+					"    ads:",
+					"      - http://x",
+					"  badkey: 1",
+				)
+
+				_, err := LoadConfig(tmpDir.Path, true)
+				Expect(err).Should(HaveOccurred())
+
+				errStr := err.Error()
+
+				// "badkey" must appear at most twice: once in the yaml unmarshal
+				// error and once in the attributed schema line. It must NOT appear
+				// three times (which would mean both an unattributed and an
+				// attributed schema line).
+				Expect(strings.Count(errStr, "badkey")).Should(BeNumerically("<=", 2))
+
+				// The good file that is only valid after merging must not be blamed.
+				Expect(errStr).ShouldNot(ContainSubstring("00_good.yaml"))
+
+				// The bad file that introduced the unknown key must be blamed.
+				Expect(errStr).Should(ContainSubstring("10_bad.yaml"))
+			})
+		})
+		When("a single config file contains duplicate keys", func() {
+			It("keeps the single-file error shape, proving the merge path is not used", func() {
+				cfgFile := tmpDir.CreateStringFile("config.yml",
+					"log:",
+					"  level: debug",
+					"log:",
+					"  level: info",
+				)
+
+				_, err := LoadConfig(cfgFile.Path, true)
+				Expect(err).Should(HaveOccurred())
+				Expect(err.Error()).Should(ContainSubstring("wrong file structure"))
+				Expect(err.Error()).ShouldNot(ContainSubstring("can't parse config file"))
+			})
+		})
 		When("Config folder does not exist", func() {
 			It("should fail", func() {
 				_, err := LoadConfig(tmpDir.JoinPath("does-not-exist-config/"), true)
@@ -307,7 +498,7 @@ var _ = Describe("Config", func() {
 blocking:
   loading:
     refreshPeriod: wrongduration`
-				err := unmarshalConfig(logger, []byte(data), &cfg)
+				err := unmarshalConfig(logger, []byte(data), &cfg, nil)
 				Expect(err).Should(HaveOccurred())
 				Expect(err.Error()).Should(ContainSubstring("invalid duration \"wrongduration\""))
 			})
@@ -318,7 +509,7 @@ blocking:
 				data := `customDNS:
   mapping:
     someDomain: 192.168.178.WRONG`
-				err := unmarshalConfig(logger, []byte(data), &cfg)
+				err := unmarshalConfig(logger, []byte(data), &cfg, nil)
 				Expect(err).Should(HaveOccurred())
 				Expect(err.Error()).Should(ContainSubstring("invalid IP address '192.168.178.WRONG'"))
 			})
@@ -329,7 +520,7 @@ blocking:
 				data := `customDNS:
   mapping:
     someDomain: 2001:MALFORMED:IP:ADDRESS:0000:8a2e:0370:7334`
-				err := unmarshalConfig(logger, []byte(data), &cfg)
+				err := unmarshalConfig(logger, []byte(data), &cfg, nil)
 				Expect(err).Should(HaveOccurred())
 				Expect(err.Error()).Should(ContainSubstring("invalid IP address '2001:MALFORMED:IP:ADDRESS:0000:8a2e:0370:7334'"))
 			})
@@ -340,7 +531,7 @@ blocking:
 				data := `conditional:
   mapping:
     multiple.resolvers: 192.168.178.1,wrongprotocol:4.4.4.4:53`
-				err := unmarshalConfig(logger, []byte(data), &cfg)
+				err := unmarshalConfig(logger, []byte(data), &cfg, nil)
 				Expect(err).Should(HaveOccurred())
 				Expect(err.Error()).Should(ContainSubstring("wrong host name 'wrongprotocol:4.4.4.4:53'"))
 			})
@@ -353,7 +544,7 @@ blocking:
     - 8.8.8.8
     - wrongprotocol:8.8.4.4
     - 1.1.1.1`
-				err := unmarshalConfig(logger, []byte(data), &cfg)
+				err := unmarshalConfig(logger, []byte(data), &cfg, nil)
 				Expect(err).Should(HaveOccurred())
 				Expect(err.Error()).Should(ContainSubstring("can't convert upstream 'wrongprotocol:8.8.4.4'"))
 			})
@@ -365,7 +556,7 @@ blocking:
   queryTypes:
     - invalidqtype
 `
-				err := unmarshalConfig(logger, []byte(data), &cfg)
+				err := unmarshalConfig(logger, []byte(data), &cfg, nil)
 				Expect(err).Should(HaveOccurred())
 				Expect(err.Error()).Should(ContainSubstring("unknown DNS query type: 'invalidqtype'"))
 			})
@@ -376,7 +567,7 @@ blocking:
 				cfg := Config{}
 				data := "bootstrapDns: 0.0.0.0"
 
-				err := unmarshalConfig(logger, []byte(data), &cfg)
+				err := unmarshalConfig(logger, []byte(data), &cfg, nil)
 				Expect(err).Should(Succeed())
 				Expect(cfg.BootstrapDNS[0].Upstream.Host).Should(Equal("0.0.0.0"))
 			})
@@ -388,7 +579,7 @@ bootstrapDns:
   ips:
     - 0.0.0.0
 `
-				err := unmarshalConfig(logger, []byte(data), &cfg)
+				err := unmarshalConfig(logger, []byte(data), &cfg, nil)
 				Expect(err).Should(Succeed())
 				Expect(cfg.BootstrapDNS[0].Upstream.Host).Should(Equal("dns.example.com"))
 				Expect(cfg.BootstrapDNS[0].IPs).Should(HaveLen(1))
@@ -402,7 +593,7 @@ bootstrapDns:
       - 0.0.0.0
   - upstream: 1.2.3.4
 `
-				err := unmarshalConfig(logger, []byte(data), &cfg)
+				err := unmarshalConfig(logger, []byte(data), &cfg, nil)
 				Expect(err).Should(Succeed())
 				Expect(cfg.BootstrapDNS).Should(HaveLen(2))
 				Expect(cfg.BootstrapDNS[0].Upstream.Host).Should(Equal("dns.example.com"))
@@ -417,7 +608,7 @@ bootstrapDns:
 			It("should return error", func() {
 				cfg := Config{}
 				data := `///`
-				err := unmarshalConfig(logger, []byte(data), &cfg)
+				err := unmarshalConfig(logger, []byte(data), &cfg, nil)
 				Expect(err).Should(HaveOccurred())
 				Expect(err.Error()).Should(ContainSubstring("cannot unmarshal !!str `///`"))
 			})
@@ -710,6 +901,39 @@ bootstrapDns:
 					Expect(hook.Calls).ShouldNot(BeEmpty())
 					Expect(hook.Messages).Should(ContainElement(ContainSubstring("refresh = disabled")))
 				})
+			})
+		})
+
+		Describe("DownloaderConfig", func() {
+			It("defaults cachePath to empty (stateless)", func() {
+				cfg, err := WithDefaults[Downloader]()
+				Expect(err).Should(Succeed())
+				Expect(cfg.CachePath).Should(BeEmpty())
+			})
+
+			It("logs the cache path when configured", func() {
+				cfg, err := WithDefaults[Downloader]()
+				Expect(err).Should(Succeed())
+				cfg.CachePath = "/var/cache/blocky/lists"
+
+				cfg.LogConfig(logger)
+
+				Expect(hook.Messages).Should(ContainElement(ContainSubstring("cachePath = /var/cache/blocky/lists")))
+			})
+
+			It("logs disabled only at debug level when cachePath is empty", func() {
+				cfg, err := WithDefaults[Downloader]()
+				Expect(err).Should(Succeed())
+
+				// At the default info level the disabled note is suppressed (it is a debug line)...
+				logger.Logger.Level = logrus.InfoLevel
+				cfg.LogConfig(logger)
+				Expect(hook.Messages).ShouldNot(ContainElement(ContainSubstring("disabled")))
+
+				// ...and only appears once debug/trace logging is enabled.
+				logger.Logger.Level = logrus.TraceLevel
+				cfg.LogConfig(logger)
+				Expect(hook.Messages).Should(ContainElement(ContainSubstring("disabled")))
 			})
 		})
 	})
@@ -1228,9 +1452,217 @@ func writeConfigDir(tmpDir *helpertest.TmpFolder) {
 	)
 }
 
+var _ = Describe("Ports", func() {
+	suiteBeforeEach()
+
+	Describe("LogConfig", func() {
+		It("should log all port configurations", func() {
+			cfg := Ports{
+				DNS:      ListenConfig{":53"},
+				HTTP:     ListenConfig{":4000"},
+				HTTPS:    ListenConfig{":443"},
+				TLS:      ListenConfig{":853"},
+				DOHPath:  "/dns-query",
+				FreeBind: true,
+				ProxyProtocol: ProxyProtocolListeners{
+					ProxyProtocolTypeDns,
+					ProxyProtocolTypeHttp,
+					ProxyProtocolTypeHttps,
+					ProxyProtocolTypeTls,
+				},
+			}
+
+			cfg.LogConfig(logger)
+
+			Expect(hook.Calls).ShouldNot(BeEmpty())
+			Expect(hook.Messages).Should(ContainElements(
+				ContainSubstring("DNS"),
+				ContainSubstring("HTTP"),
+				ContainSubstring("HTTPS"),
+				ContainSubstring("TLS"),
+				ContainSubstring("DOHPath"),
+				ContainSubstring("FreeBind"),
+				ContainSubstring("PROXY protocol = [dns http https tls]"),
+			))
+		})
+	})
+	Describe("validate", func() {
+		It("should accept the default path", func() {
+			cfg := Ports{DOHPath: "/dns-query"}
+			Expect(cfg.validate()).Should(Succeed())
+		})
+
+		It("should accept a custom valid path", func() {
+			cfg := Ports{DOHPath: "/my-custom-path"}
+			Expect(cfg.validate()).Should(Succeed())
+		})
+
+		It("should reject an empty path", func() {
+			cfg := Ports{DOHPath: ""}
+			Expect(cfg.validate()).Should(MatchError(ContainSubstring("dohPath must not be empty")))
+		})
+
+		It("should reject a path without leading slash", func() {
+			cfg := Ports{DOHPath: "dns-query"}
+			Expect(cfg.validate()).Should(MatchError(ContainSubstring("dohPath must start with '/'")))
+		})
+
+		It("should reject a path with spaces", func() {
+			cfg := Ports{DOHPath: "/dns query"}
+			Expect(cfg.validate()).Should(MatchError(ContainSubstring("dohPath must not contain whitespace")))
+		})
+
+		It("should reject a path with a query string", func() {
+			cfg := Ports{DOHPath: "/dns-query?foo=bar"}
+			Expect(cfg.validate()).Should(MatchError(ContainSubstring("dohPath must not contain '?'")))
+		})
+
+		It("should reject a path with a fragment", func() {
+			cfg := Ports{DOHPath: "/dns-query#section"}
+			Expect(cfg.validate()).Should(MatchError(ContainSubstring("dohPath must not contain '#'")))
+		})
+	})
+})
+
+var _ = Describe("toEnable", func() {
+	suiteBeforeEach()
+
+	Describe("IsEnabled", func() {
+		It("should return false when not enabled", func() {
+			cfg := toEnable{Enable: false}
+			Expect(cfg.IsEnabled()).Should(BeFalse())
+		})
+
+		It("should return true when enabled", func() {
+			cfg := toEnable{Enable: true}
+			Expect(cfg.IsEnabled()).Should(BeTrue())
+		})
+	})
+
+	Describe("LogConfig", func() {
+		It("should log enabled", func() {
+			cfg := toEnable{Enable: true}
+			cfg.LogConfig(logger)
+
+			Expect(hook.Calls).ShouldNot(BeEmpty())
+			Expect(hook.Messages).Should(ContainElement(ContainSubstring("enabled")))
+		})
+	})
+})
+
+var _ = Describe("IPVersion", func() {
+	suiteBeforeEach()
+
+	Describe("Net", func() {
+		It("should return correct net for dual", func() {
+			Expect(IPVersionDual.Net()).Should(Equal("ip"))
+		})
+
+		It("should return correct net for v4", func() {
+			Expect(IPVersionV4.Net()).Should(Equal("ip4"))
+		})
+
+		It("should return correct net for v6", func() {
+			Expect(IPVersionV6.Net()).Should(Equal("ip6"))
+		})
+	})
+
+	Describe("QTypes", func() {
+		It("should return A and AAAA for dual", func() {
+			qtypes := IPVersionDual.QTypes()
+			Expect(qtypes).Should(HaveLen(2))
+		})
+
+		It("should return only A for v4", func() {
+			qtypes := IPVersionV4.QTypes()
+			Expect(qtypes).Should(HaveLen(1))
+		})
+
+		It("should return only AAAA for v6", func() {
+			qtypes := IPVersionV6.QTypes()
+			Expect(qtypes).Should(HaveLen(1))
+		})
+	})
+})
+
+var _ = Describe("BytesSource", func() {
+	suiteBeforeEach()
+
+	Describe("String", func() {
+		It("should return URL for HTTP source", func() {
+			s := BytesSource{Type: BytesSourceTypeHttp, From: "https://example.com/list.txt"}
+			Expect(s.String()).Should(Equal("https://example.com/list.txt"))
+		})
+
+		It("should return file:// prefixed path for file source", func() {
+			s := BytesSource{Type: BytesSourceTypeFile, From: "/tmp/list.txt"}
+			Expect(s.String()).Should(Equal("file:///tmp/list.txt"))
+		})
+
+		It("should return unknown source for invalid type", func() {
+			s := BytesSource{Type: BytesSourceType(99), From: "something"}
+			Expect(s.String()).Should(ContainSubstring("unknown source"))
+		})
+
+		It("should truncate long text sources", func() {
+			longText := "this is a very long inline text source"
+			s := BytesSource{Type: BytesSourceTypeText, From: longText}
+			result := s.String()
+			Expect(result).Should(HaveSuffix("..."))
+		})
+
+		It("should truncate to first line for multiline text sources", func() {
+			s := BytesSource{Type: BytesSourceTypeText, From: "first line\nsecond line\nthird line"}
+			result := s.String()
+			Expect(result).Should(Equal("first line"))
+		})
+
+		It("should truncate long first line in multiline text sources", func() {
+			s := BytesSource{Type: BytesSourceTypeText, From: "a very long first line here\nsecond line"}
+			result := s.String()
+			Expect(result).Should(HaveSuffix("..."))
+		})
+
+		It("should return short text source as-is", func() {
+			s := BytesSource{Type: BytesSourceTypeText, From: "short"}
+			Expect(s.String()).Should(Equal("short"))
+		})
+	})
+})
+
+var _ = Describe("TLSVersion", func() {
+	suiteBeforeEach()
+
+	Describe("validate", func() {
+		It("should warn and fix insecure TLS version", func() {
+			v := TLSVersion(tls.VersionTLS10)
+			v.validate(logger)
+
+			Expect(v).Should(BeNumerically(">=", TLSVersion(tls.VersionTLS12)))
+			Expect(hook.Messages).Should(ContainElement(ContainSubstring("insecure")))
+		})
+
+		It("should not change valid TLS version", func() {
+			v := TLSVersion(tls.VersionTLS13)
+			v.validate(logger)
+
+			Expect(v).Should(Equal(TLSVersion(tls.VersionTLS13)))
+		})
+	})
+})
+
+var _ = Describe("Config with RateLimit", func() {
+	It("exposes the RateLimit field", func() {
+		cfg := Config{}
+		Expect(cfg.RateLimit.IsEnabled()).Should(BeFalse())
+	})
+})
+
 // Tiny helper to get a new pointer with a value.
 //
 // Avoids needing 2 lines: `x := new(T)` and `*x = val`
+//
+//nolint:modernize // ptrOf sets a non-zero value, new(T) would give zero-value pointer
 func ptrOf[T any](val T) *T {
 	return &val
 }

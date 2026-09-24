@@ -7,6 +7,8 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,9 +17,8 @@ import (
 	"github.com/0xERR0R/blocky/config"
 	"github.com/0xERR0R/blocky/util"
 	"github.com/avast/retry-go/v4"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/go-connections/nat"
 	"github.com/miekg/dns"
+	"github.com/moby/moby/api/types/container"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/testcontainers/testcontainers-go"
@@ -35,13 +36,24 @@ const (
 	mariaDBImage      = "mariadb:11"
 	mokaImage         = "ghcr.io/0xerr0r/dns-mokka:0.4.0"
 	staticServerImage = "halverneus/static-file-server:latest"
+	nginxImage        = "nginx:1.27-alpine"
 	blockyImage       = "blocky-e2e"
 )
 
 // helper constants
 const (
-	modeOwner      = 700
-	startupTimeout = 30 * time.Second
+	// modeWorldReadable is used for files mounted into the blocky container: blocky
+	// runs as a non-root user (see Dockerfile `USER 100`) that doesn't own the
+	// copied files, so it can only read them via the world-readable bit.
+	modeWorldReadable = 0o444
+	// modeWorldReadableDir is used for host directories bind-mounted into containers,
+	// so a container user with a different UID can traverse and read them.
+	modeWorldReadableDir = 0o755
+	startupTimeout       = 30 * time.Second
+
+	// healthcheckStartInterval overrides Docker's 5s default start-interval so
+	// blocky (ready in <1s) is probed and marked healthy almost immediately.
+	healthcheckStartInterval = 250 * time.Millisecond
 )
 
 // createDNSMokkaContainer creates a DNS mokka container with the given rules attached to the test network
@@ -69,26 +81,92 @@ func createDNSMokkaContainer(ctx context.Context, alias string, e2eNet *testcont
 // createHTTPServerContainer creates a static HTTP server container that serves one file with the given lines
 // and is attached to the test network under the given alias.
 // It is automatically terminated when the test is finished.
+//
+// The file is served via a bind-mounted host directory so that the host file's
+// modification time is visible inside the container. This allows Go's
+// http.FileServer (used by halverneus/static-file-server) to emit a valid
+// Last-Modified header and return 304 for conditional requests.
 func createHTTPServerContainer(ctx context.Context, alias string, e2eNet *testcontainers.DockerNetwork,
 	filename string, lines ...string,
 ) (testcontainers.Container, error) {
-	file := createTempFile(lines...)
+	dir, err := os.MkdirTemp("", "blocky_e2e_httpdir-")
+	Expect(err).Should(Succeed())
+	Expect(os.Chmod(dir, modeWorldReadableDir)).Should(Succeed()) // container user (different UID) must traverse/read the bind mount
+	DeferCleanup(func() error {
+		return os.RemoveAll(dir)
+	})
+
+	f, err := os.OpenFile(filepath.Join(dir, filename), os.O_CREATE|os.O_WRONLY, modeWorldReadable)
+	Expect(err).Should(Succeed())
+	for i, l := range lines {
+		if i != 0 {
+			_, err = f.WriteString("\n")
+			Expect(err).Should(Succeed())
+		}
+		_, err = f.WriteString(l)
+		Expect(err).Should(Succeed())
+	}
+	Expect(f.Close()).Should(Succeed())
 
 	req := testcontainers.ContainerRequest{
-		Image: staticServerImage,
-
+		Image:        staticServerImage,
 		ExposedPorts: []string{"8080/tcp"},
-		Env:          map[string]string{"FOLDER": "/"},
-		Files: []testcontainers.ContainerFile{
-			{
-				HostFilePath:      file,
-				ContainerFilePath: "/" + filename,
-				FileMode:          modeOwner,
-			},
+		Env:          map[string]string{"FOLDER": "/data"},
+		HostConfigModifier: func(hc *container.HostConfig) {
+			hc.Binds = append(hc.Binds, dir+":/data:ro")
 		},
 	}
 
 	return startContainerWithNetwork(ctx, req, alias, e2eNet)
+}
+
+// createNginxStreamProxyContainer starts an nginx stream (L4) proxy in front of blocky on the test
+// network under the alias 'nginx'. It forwards TCP 853 -> blocky:853 (DoT) and 443 -> blocky:443
+// (DoH/HTTPS). When proxyProtocol is true, nginx prepends a HAProxy PROXY protocol header to each
+// upstream connection. blocky must already be running so nginx can resolve the 'blocky' alias at
+// startup. It is automatically terminated when the test is finished.
+func createNginxStreamProxyContainer(ctx context.Context, e2eNet *testcontainers.DockerNetwork,
+	proxyProtocol bool,
+) (testcontainers.Container, error) {
+	proxyProtocolDirective := ""
+	if proxyProtocol {
+		proxyProtocolDirective = "proxy_protocol on;"
+	}
+
+	// Minimal nginx.conf with only the stream module: TCP passthrough to blocky so the TLS
+	// handshake (DoT/DoH) terminates at blocky, optionally prefixed with a PROXY protocol header.
+	conf := fmt.Sprintf(`worker_processes 1;
+events {}
+stream {
+    server {
+        listen 853;
+        proxy_pass blocky:853;
+        %[1]s
+    }
+    server {
+        listen 443;
+        proxy_pass blocky:443;
+        %[1]s
+    }
+}
+`, proxyProtocolDirective)
+
+	req := testcontainers.ContainerRequest{
+		Image:        nginxImage,
+		ExposedPorts: []string{"853/tcp", "443/tcp"},
+		// The nginx image EXPOSEs port 80, which it does not listen on with our stream-only
+		// config, so wait for the DoT port we actually bind instead of the first exposed port.
+		WaitingFor: wait.ForListeningPort("853/tcp"),
+		Files: []testcontainers.ContainerFile{
+			{
+				HostFilePath:      createTempFile(conf),
+				ContainerFilePath: "/etc/nginx/nginx.conf",
+				FileMode:          modeWorldReadable,
+			},
+		},
+	}
+
+	return startContainerWithNetwork(ctx, req, "nginx", e2eNet)
 }
 
 // createRedisContainer creates a redis container attached to the test network under the alias 'redis'.
@@ -98,6 +176,45 @@ func createRedisContainer(ctx context.Context, e2eNet *testcontainers.DockerNetw
 	return deferTerminate(redis.Run(ctx,
 		redisImage,
 		redis.WithLogLevel(redis.LogLevelVerbose),
+		withNetwork("redis", e2eNet),
+	))
+}
+
+// createRedisContainerWithUnixSocket creates a redis container that listens only on a unix socket
+// (no TCP) attached to the test network under the alias 'redis'. The socket is created at
+// containerSocketDir+"/redis.sock" inside a directory that is bind-mounted from hostSocketDir, so both
+// the blocky container and the host can connect to redis purely via the socket.
+// It is automatically terminated when the test is finished.
+func createRedisContainerWithUnixSocket(ctx context.Context, e2eNet *testcontainers.DockerNetwork,
+	hostSocketDir, containerSocketDir string,
+) (testcontainers.Container, error) {
+	socketPath := containerSocketDir + "/redis.sock"
+
+	req := testcontainers.ContainerRequest{
+		Image: redisImage,
+		// Disable TCP (port 0) so the socket is the only way in; 777 lets the (non-root) blocky
+		// container connect to the socket created by the (root) redis process.
+		Cmd:        []string{"redis-server", "--port", "0", "--unixsocket", socketPath, "--unixsocketperm", "777"},
+		WaitingFor: wait.ForLog("Ready to accept connections unix"),
+		HostConfigModifier: func(hc *container.HostConfig) {
+			hc.Binds = append(hc.Binds, hostSocketDir+":"+containerSocketDir)
+		},
+	}
+
+	return startContainerWithNetwork(ctx, req, "redis", e2eNet)
+}
+
+// redisTestPassword is the password required by createRedisContainerWithPassword.
+const redisTestPassword = "e2e-redis-secret" //nolint:gosec // test-only password for the e2e redis container
+
+// createRedisContainerWithPassword creates a redis container that requires authentication,
+// attached to the test network under the alias 'redis'.
+// It is automatically terminated when the test is finished.
+func createRedisContainerWithPassword(ctx context.Context, e2eNet *testcontainers.DockerNetwork,
+) (*redis.RedisContainer, error) {
+	return deferTerminate(redis.Run(ctx,
+		redisImage,
+		testcontainers.WithCmd("redis-server", "--requirepass", redisTestPassword, "--loglevel", "verbose"),
 		withNetwork("redis", e2eNet),
 	))
 }
@@ -168,17 +285,22 @@ func buildBlockyContainerRequest(confFile string) testcontainers.ContainerReques
 
 	req := testcontainers.ContainerRequest{
 		Image:        image,
-		ExposedPorts: []string{"53/tcp", "53/udp", "4000/tcp"},
+		ExposedPorts: []string{"53/tcp", "53/udp", "4000/tcp", "4000/udp"},
 		Files: []testcontainers.ContainerFile{
 			{
 				HostFilePath:      confFile,
 				ContainerFilePath: "/app/config.yml",
-				FileMode:          modeOwner,
+				FileMode:          modeWorldReadable,
 			},
 		},
 		ConfigModifier: func(c *container.Config) {
 			c.Healthcheck = &container.HealthConfig{
 				Interval: time.Second,
+				// During the image's start period Docker probes at the
+				// start-interval, which defaults to 5s. blocky is ready in
+				// <1s, so without this every container wastes ~5s waiting to
+				// be marked healthy.
+				StartInterval: healthcheckStartInterval,
 			}
 			// Enable coverage collection if GOCOVERDIR is set
 			if coverDir != "" {
@@ -197,6 +319,7 @@ func buildBlockyContainerRequest(confFile string) testcontainers.ContainerReques
 	return req
 }
 
+<<<<<<< HEAD
 // createBlockyContainer creates a blocky container with a config provided by the given lines.
 // It is attached to the test network under the alias 'blocky'.
 // It is automatically terminated when the test is finished.
@@ -208,6 +331,13 @@ func buildBlockyContainerRequest(confFile string) testcontainers.ContainerReques
 // `databasePath` in the YAML.
 func createBlockyContainer(ctx context.Context, e2eNet *testcontainers.DockerNetwork,
 	lines ...string,
+=======
+// createBlockyContainerInternal builds and starts a blocky container from the given config
+// lines, mounting any extraFiles in addition to the generated config.yml and adding any
+// Docker bind mounts (each in "hostPath:containerPath" form).
+func createBlockyContainerInternal(ctx context.Context, e2eNet *testcontainers.DockerNetwork,
+	extraFiles []testcontainers.ContainerFile, binds []string, lines ...string,
+>>>>>>> upstream/main
 ) (testcontainers.Container, error) {
 	// Add timeout to context
 	ctx, cancel := context.WithTimeout(ctx, 2*startupTimeout)
@@ -229,11 +359,23 @@ func createBlockyContainer(ctx context.Context, e2eNet *testcontainers.DockerNet
 	}
 
 	req := buildBlockyContainerRequest(confFile)
+<<<<<<< HEAD
 	req.Files = append(req.Files, testcontainers.ContainerFile{
 		HostFilePath:      dbFile,
 		ContainerFilePath: "/app/config.db",
 		FileMode:          modeOwner,
 	})
+=======
+	req.Files = append(req.Files, extraFiles...)
+
+	if len(binds) > 0 {
+		baseHostConfigModifier := req.HostConfigModifier
+		req.HostConfigModifier = func(hc *container.HostConfig) {
+			baseHostConfigModifier(hc)
+			hc.Binds = append(hc.Binds, binds...)
+		}
+	}
+>>>>>>> upstream/main
 
 	container, err := startContainerWithNetwork(ctx, req, "blocky", e2eNet)
 	if err != nil {
@@ -255,6 +397,52 @@ func createBlockyContainer(ctx context.Context, e2eNet *testcontainers.DockerNet
 	}
 
 	return container, nil
+}
+
+// createBlockyContainerWithBinds creates a blocky container like createBlockyContainer, but additionally
+// mounts the given Docker bind mounts (each in "hostPath:containerPath" form) into the container.
+// It is automatically terminated when the test is finished.
+func createBlockyContainerWithBinds(ctx context.Context, e2eNet *testcontainers.DockerNetwork,
+	binds []string, lines ...string,
+) (testcontainers.Container, error) {
+	return createBlockyContainerInternal(ctx, e2eNet, nil, binds, lines...)
+}
+
+// createBlockyContainer creates a blocky container with a config provided by the given lines.
+// It is attached to the test network under the alias 'blocky'.
+// It is automatically terminated when the test is finished.
+func createBlockyContainer(ctx context.Context, e2eNet *testcontainers.DockerNetwork,
+	lines ...string,
+) (testcontainers.Container, error) {
+	return createBlockyContainerInternal(ctx, e2eNet, nil, nil, lines...)
+}
+
+// createBlockyContainerFromString creates a blocky container with a config provided as a single YAML string.
+// It is attached to the test network under the alias 'blocky'.
+// It is automatically terminated when the test is finished.
+func createBlockyContainerFromString(ctx context.Context, e2eNet *testcontainers.DockerNetwork,
+	configYAML string,
+) (testcontainers.Container, error) {
+	return createBlockyContainer(ctx, e2eNet, strings.Split(configYAML, "\n")...)
+}
+
+// createBlockyContainerWithFiles is like createBlockyContainerFromString but also
+// mounts each given host file into the container at the SAME absolute path, so a
+// config `file:` reference resolves both during the host-side LoadConfig pre-flight
+// and inside the container.
+func createBlockyContainerWithFiles(ctx context.Context, e2eNet *testcontainers.DockerNetwork,
+	hostFiles []string, configYAML string,
+) (testcontainers.Container, error) {
+	files := make([]testcontainers.ContainerFile, 0, len(hostFiles))
+	for _, f := range hostFiles {
+		files = append(files, testcontainers.ContainerFile{
+			HostFilePath:      f,
+			ContainerFilePath: f,
+			FileMode:          modeWorldReadable, // world-readable so the container user can read it
+		})
+	}
+
+	return createBlockyContainerInternal(ctx, e2eNet, files, nil, strings.Split(configYAML, "\n")...)
 }
 
 func checkBlockyReadiness(ctx context.Context, cfg *config.Config, container testcontainers.Container) error {
@@ -304,7 +492,7 @@ func checkBlockyReadiness(ctx context.Context, cfg *config.Config, container tes
 }
 
 func doHTTPRequest(ctx context.Context, container testcontainers.Container, containerPort string) error {
-	host, port, err := getContainerHostPort(ctx, container, nat.Port(containerPort+"/tcp"))
+	host, port, err := getContainerHostPort(ctx, container, containerPort+"/tcp")
 	if err != nil {
 		return err
 	}
@@ -331,6 +519,41 @@ func doHTTPRequest(ctx context.Context, container testcontainers.Container, cont
 	}
 
 	return nil
+}
+
+// createBlockyContainerWithCapDrop creates a blocky container that listens on
+// the given DNS port with ALL Linux capabilities dropped. It verifies the image
+// execs and serves DNS under a PSS-Restricted-style runtime (Kubernetes
+// Restricted profile / docker --cap-drop ALL). It builds on the standard blocky
+// container request, overriding only the exposed ports, the healthcheck target
+// port, and the dropped capabilities — so image resolution and coverage wiring
+// are inherited.
+func createBlockyContainerWithCapDrop(ctx context.Context, e2eNet *testcontainers.DockerNetwork,
+	dnsPort int, lines ...string,
+) (testcontainers.Container, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*startupTimeout)
+	defer cancel()
+
+	confFile := createTempFile(lines...)
+	portStr := strconv.Itoa(dnsPort)
+
+	req := buildBlockyContainerRequest(confFile)
+	req.ExposedPorts = []string{portStr + "/tcp", portStr + "/udp"}
+
+	baseConfigModifier := req.ConfigModifier
+	req.ConfigModifier = func(c *container.Config) {
+		baseConfigModifier(c)
+		// Point the healthcheck at the configured DNS port (the image default is 53).
+		c.Healthcheck.Test = []string{"CMD", "/app/blocky", "healthcheck", "-p", portStr}
+	}
+
+	baseHostConfigModifier := req.HostConfigModifier
+	req.HostConfigModifier = func(hc *container.HostConfig) {
+		baseHostConfigModifier(hc)
+		hc.CapDrop = []string{"ALL"}
+	}
+
+	return startContainerWithNetwork(ctx, req, "blocky", e2eNet)
 }
 
 // createTempFile creates a temporary file with the given lines which is deleted after the test

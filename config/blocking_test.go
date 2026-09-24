@@ -59,6 +59,36 @@ var _ = Describe("BlockingConfig", func() {
 			Expect(hook.Messages[0]).Should(Equal("clientGroupsBlock:"))
 			Expect(hook.Messages).Should(ContainElement(Equal("blockType = ZEROIP")))
 		})
+
+		It("should log time-range schedules", func() {
+			cfg.Schedules = map[string]Schedule{
+				"night": {Start: "22:00", End: "07:00", Weekdays: []Weekday{Weekday(time.Monday)}},
+			}
+			cfg.LogConfig(logger)
+
+			Expect(hook.Messages).Should(ContainElement(Equal("schedules:")))
+			Expect(hook.Messages).Should(ContainElement(ContainSubstring("night: 22:00 - 07:00")))
+		})
+
+		It("should log full-day schedules", func() {
+			cfg.Schedules = map[string]Schedule{
+				"weekend": {Weekdays: []Weekday{Weekday(time.Saturday), Weekday(time.Sunday)}},
+			}
+			cfg.LogConfig(logger)
+
+			Expect(hook.Messages).Should(ContainElement(Equal("schedules:")))
+			Expect(hook.Messages).Should(ContainElement(ContainSubstring("weekend: all day")))
+		})
+
+		It("should log listSchedules", func() {
+			cfg.ListSchedules = map[string][]string{
+				"gr1": {"night"},
+			}
+			cfg.LogConfig(logger)
+
+			Expect(hook.Messages).Should(ContainElement(Equal("listSchedules:")))
+			Expect(hook.Messages).Should(ContainElement(ContainSubstring("gr1 = [night]")))
+		})
 	})
 
 	Describe("migrate", func() {
@@ -84,6 +114,34 @@ var _ = Describe("BlockingConfig", func() {
 
 			Expect(cfg.Allowlists).Should(Equal(*cfg.Deprecated.WhiteLists))
 			Expect(cfg.Denylists).Should(Equal(*cfg.Deprecated.BlackLists))
+		})
+	})
+
+	Describe("validate", func() {
+		When("blocking is disabled", func() {
+			It("should not return error", func() {
+				cfg := Blocking{}
+				Expect(cfg.validate()).Should(Succeed())
+			})
+		})
+
+		When("only references existing lists", func() {
+			It("should not return error", func() {
+				Expect(cfg.validate()).Should(Succeed())
+			})
+		})
+
+		When("references non-existing lists", func() {
+			It("should return error", func() {
+				cfg := Blocking{
+					ClientGroupsBlock: map[string][]string{
+						"default": {"non-existing-group"},
+					},
+				}
+				err := cfg.validate()
+				Expect(err).Should(HaveOccurred())
+				Expect(err.Error()).Should(ContainSubstring("references undefined allowlist or denylist"))
+			})
 		})
 	})
 })

@@ -46,7 +46,8 @@ func Obfuscate(in string) string {
 	return in
 }
 
-// AnswerToString creates a user-friendly representation of an answer
+// AnswerToString creates a user-friendly representation of an answer.
+// The result is NOT obfuscated; callers that emit it to logs must wrap with Obfuscate.
 func AnswerToString(answer []dns.RR) string {
 	answers := make([]string, len(answer))
 
@@ -65,7 +66,7 @@ func AnswerToString(answer []dns.RR) string {
 		}
 	}
 
-	return Obfuscate(strings.Join(answers, ", "))
+	return strings.Join(answers, ", ")
 }
 
 // QuestionToString creates a user-friendly representation of a question
@@ -175,7 +176,7 @@ type kv struct {
 
 // IterateValueSorted iterates over maps value in a sorted order and applies the passed function
 func IterateValueSorted(in map[string]int, fn func(string, int)) {
-	ss := make([]kv, 0)
+	ss := make([]kv, 0, len(in))
 
 	for k, v := range in {
 		ss = append(ss, kv{k, v})

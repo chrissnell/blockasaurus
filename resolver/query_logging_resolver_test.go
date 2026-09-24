@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	. "github.com/0xERR0R/blocky/helpertest"
@@ -15,6 +16,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/mock"
 
+	"github.com/0xERR0R/blocky/cache/stringcache"
 	"github.com/0xERR0R/blocky/config"
 	. "github.com/0xERR0R/blocky/model"
 	"github.com/0xERR0R/blocky/util"
@@ -124,6 +126,27 @@ var _ = Describe("QueryLoggingResolver", func() {
 			})
 		})
 
+		When("type is none", func() {
+			BeforeEach(func() {
+				sutConfig = config.QueryLog{
+					Type:             config.QueryLogTypeNone,
+					CreationAttempts: 1,
+					CreationCooldown: config.Duration(time.Millisecond),
+				}
+			})
+			It("should pass the request through without building a log entry", func() {
+				Expect(sut.Resolve(ctx, newRequestWithClient("example.com.", A, "192.168.178.25", "client1"))).
+					Should(
+						SatisfyAll(
+							HaveResponseType(ResponseTypeRESOLVED),
+							HaveReturnCode(dns.RcodeSuccess),
+						))
+
+				m.AssertExpectations(GinkgoT())
+				Expect(sut.logChan).Should(BeEmpty())
+			})
+		})
+
 		Describe("ignore", func() {
 			var ignored *log.MockLoggerHook
 
@@ -169,12 +192,45 @@ var _ = Describe("QueryLoggingResolver", func() {
 					Expect(ignored.Calls).Should(BeEmpty())
 				})
 			})
+
+			Describe("Domains", func() {
+				BeforeEach(func() {
+					sutConfig.Ignore.Domains = []string{"ignored.example.com", "*.noisy.lan"}
+				})
+
+				It("should not log a matching exact domain", func() {
+					_, err := sut.Resolve(ctx,
+						newRequestWithClient("ignored.example.com.", A, "192.168.178.25", "client1"))
+					Expect(err).Should(Succeed())
+
+					Expect(sut.logChan).Should(BeEmpty())
+					Expect(ignored.Messages).Should(ContainElement(ContainSubstring("ignored querylog entry")))
+				})
+
+				It("should not log a matching wildcard domain", func() {
+					_, err := sut.Resolve(ctx,
+						newRequestWithClient("host.noisy.lan.", A, "192.168.178.25", "client1"))
+					Expect(err).Should(Succeed())
+
+					Expect(sut.logChan).Should(BeEmpty())
+					Expect(ignored.Messages).Should(ContainElement(ContainSubstring("ignored querylog entry")))
+				})
+
+				It("should log a non-matching domain", func() {
+					_, err := sut.Resolve(ctx,
+						newRequestWithClient("example.com.", A, "192.168.178.25", "client1"))
+					Expect(err).Should(Succeed())
+
+					Expect(sut.logChan).ShouldNot(BeEmpty())
+					Expect(ignored.Calls).Should(BeEmpty())
+				})
+			})
 		})
 
 		When("Configuration with logging per client", func() {
 			BeforeEach(func() {
 				sutConfig = config.QueryLog{
-					Target:           tmpDir.Path,
+					Target:           config.Secret(tmpDir.Path),
 					Type:             config.QueryLogTypeCsvClient,
 					CreationAttempts: 1,
 					CreationCooldown: config.Duration(time.Millisecond),
@@ -242,7 +298,7 @@ var _ = Describe("QueryLoggingResolver", func() {
 		When("Configuration with logging in one file for all clients", func() {
 			BeforeEach(func() {
 				sutConfig = config.QueryLog{
-					Target:           tmpDir.Path,
+					Target:           config.Secret(tmpDir.Path),
 					Type:             config.QueryLogTypeCsv,
 					CreationAttempts: 1,
 					CreationCooldown: config.Duration(time.Millisecond),
@@ -302,7 +358,7 @@ var _ = Describe("QueryLoggingResolver", func() {
 		When("Configuration with specific fields to log", func() {
 			BeforeEach(func() {
 				sutConfig = config.QueryLog{
-					Target:           tmpDir.Path,
+					Target:           config.Secret(tmpDir.Path),
 					Type:             config.QueryLogTypeCsv,
 					CreationAttempts: 1,
 					CreationCooldown: config.Duration(time.Millisecond),
@@ -349,8 +405,10 @@ var _ = Describe("QueryLoggingResolver", func() {
 	Describe("Slow writer", func() {
 		When("writer is too slow", func() {
 			BeforeEach(func() {
+				// Console keeps the resolver enabled (None now short-circuits) without
+				// needing a target; the writer is replaced with SlowMockWriter below.
 				sutConfig = config.QueryLog{
-					Type:             config.QueryLogTypeNone,
+					Type:             config.QueryLogTypeConsole,
 					CreationAttempts: 1,
 					CreationCooldown: config.Duration(time.Millisecond),
 				}
@@ -386,7 +444,7 @@ var _ = Describe("QueryLoggingResolver", func() {
 		When("log directory contains old files", func() {
 			BeforeEach(func() {
 				sutConfig = config.QueryLog{
-					Target:           tmpDir.Path,
+					Target:           config.Secret(tmpDir.Path),
 					Type:             config.QueryLogTypeCsv,
 					LogRetentionDays: 7,
 					CreationAttempts: 1,
@@ -439,6 +497,49 @@ var _ = Describe("QueryLoggingResolver", func() {
 				Expect(sut.cfg.Type).Should(Equal(config.QueryLogTypeConsole))
 			})
 		})
+
+		When("dnstap target is invalid", func() {
+			BeforeEach(func() {
+				sutConfig = config.QueryLog{
+					Target:           "not-a-valid-target",
+					Type:             config.QueryLogTypeDnstap,
+					CreationAttempts: 1,
+					CreationCooldown: config.Duration(time.Millisecond),
+				}
+			})
+			It("should use fallback", func() {
+				Expect(sut.cfg.Type).Should(Equal(config.QueryLogTypeConsole))
+			})
+		})
+	})
+
+	Describe("GetQueryLoggingWriter", func() {
+		It("creates a database writer", func() {
+			dbPath := filepath.Join(GinkgoT().TempDir(), "querylog.db")
+
+			writer, err := GetQueryLoggingWriter(ctx, config.QueryLog{
+				Type:          config.QueryLogTypeSqlite,
+				Target:        config.Secret(dbPath),
+				FlushInterval: config.Duration(time.Millisecond),
+			}, "test-instance")
+
+			Expect(err).Should(Succeed())
+			Expect(writer).ShouldNot(BeNil())
+			Expect(writer).Should(BeAssignableToTypeOf(&querylog.DatabaseWriter{}))
+		})
+
+		It("creates a dnstap writer", func() {
+			sockPath := filepath.Join(GinkgoT().TempDir(), "dnstap.sock")
+			writer, err := GetQueryLoggingWriter(ctx, config.QueryLog{
+				Type:          config.QueryLogTypeDnstap,
+				Target:        config.Secret("unix:" + sockPath),
+				FlushInterval: config.Duration(time.Millisecond),
+			}, "test-instance")
+			Expect(err).Should(Succeed())
+			Expect(writer).ShouldNot(BeNil())
+			Expect(writer).Should(BeAssignableToTypeOf(&querylog.DnstapWriter{}))
+			Expect(writer.(*querylog.DnstapWriter).Close()).Should(Succeed())
+		})
 	})
 
 	Describe("Hostname function tests", func() {
@@ -454,6 +555,61 @@ var _ = Describe("QueryLoggingResolver", func() {
 			Expect(err).Should(Succeed())
 
 			Expect(readInstanceID("/var/empty/nonexistent")).Should(Equal(expected))
+		})
+	})
+
+	Describe("newIgnoreDomainsMatcher", func() {
+		It("returns nil for an empty list", func() {
+			logger, _ := log.NewMockEntry()
+			Expect(newIgnoreDomainsMatcher(nil, logger)).Should(BeNil())
+		})
+
+		It("matches exact, wildcard and regex entries", func() {
+			logger, _ := log.NewMockEntry()
+			matcher := newIgnoreDomainsMatcher(
+				[]string{"example.com", "*.lan", "/\\.arpa$/"}, logger)
+			Expect(matcher).ShouldNot(BeNil())
+
+			groups := []string{queryLogIgnoreGroup}
+			Expect(matcher.Contains("example.com", groups)).ShouldNot(BeEmpty())
+			Expect(matcher.Contains("host.lan", groups)).ShouldNot(BeEmpty())
+			Expect(matcher.Contains("1.0.0.10.in-addr.arpa", groups)).ShouldNot(BeEmpty())
+			Expect(matcher.Contains("other.com", groups)).Should(BeEmpty())
+		})
+
+		It("warns and skips an invalid entry but keeps valid ones", func() {
+			logger, hook := log.NewMockEntry()
+			matcher := newIgnoreDomainsMatcher(
+				[]string{"/[invalid(/", "example.com"}, logger)
+
+			Expect(matcher).ShouldNot(BeNil())
+			Expect(matcher.Contains("example.com", []string{queryLogIgnoreGroup})).ShouldNot(BeEmpty())
+			Expect(hook.Messages).Should(ContainElement(ContainSubstring("invalid")))
+		})
+
+		It("warns and skips a lone slash entry without panicking", func() {
+			logger, hook := log.NewMockEntry()
+
+			var matcher stringcache.GroupedStringCache
+			Expect(func() {
+				matcher = newIgnoreDomainsMatcher([]string{"/", "example.com"}, logger)
+			}).ShouldNot(Panic())
+
+			Expect(matcher.Contains("example.com", []string{queryLogIgnoreGroup})).ShouldNot(BeEmpty())
+			Expect(hook.Messages).Should(ContainElement(ContainSubstring("invalid")))
+		})
+
+		It("warns and skips empty regex entries instead of matching every domain", func() {
+			logger, hook := log.NewMockEntry()
+
+			matcher := newIgnoreDomainsMatcher([]string{"//", "/ /", "example.com"}, logger)
+			Expect(matcher).ShouldNot(BeNil())
+
+			groups := []string{queryLogIgnoreGroup}
+			// an empty regex would match everything; the entries must be rejected
+			Expect(matcher.Contains("unrelated.example.net", groups)).Should(BeEmpty())
+			Expect(matcher.Contains("example.com", groups)).ShouldNot(BeEmpty())
+			Expect(hook.Messages).Should(ContainElement(ContainSubstring("invalid")))
 		})
 	})
 })

@@ -8,8 +8,10 @@ import (
 	"io"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/0xERR0R/blocky/cache/stringcache"
 	"github.com/0xERR0R/blocky/config"
 	. "github.com/0xERR0R/blocky/evt"
 	"github.com/0xERR0R/blocky/lists/parsers"
@@ -123,7 +125,7 @@ var _ = Describe("ListCache", func() {
 
 			It("should delete existing elements from group cache", func(ctx context.Context) {
 				group := sut.Match("blocked1.com", []string{"gr1"})
-				Expect(group).Should(ContainElement("gr1"))
+				Expect(group).Should(HaveKey("gr1"))
 
 				err := sut.refresh(ctx)
 				Expect(err).Should(Succeed())
@@ -147,10 +149,10 @@ var _ = Describe("ListCache", func() {
 
 			It("should still other domains", func() {
 				group := sut.Match("inlinedomain1.com", []string{"gr1"})
-				Expect(group).Should(ContainElement("gr1"))
+				Expect(group).Should(HaveKey("gr1"))
 
 				group = sut.Match("inlinedomain2.com", []string{"gr1"})
-				Expect(group).Should(ContainElement("gr1"))
+				Expect(group).Should(HaveKey("gr1"))
 			})
 		})
 		When("a temporary/transient err occurs on download", func() {
@@ -176,7 +178,7 @@ var _ = Describe("ListCache", func() {
 				By("Lists loaded without timeout", func() {
 					Eventually(func(g Gomega) {
 						group := sut.Match("blocked1.com", []string{"gr1"})
-						g.Expect(group).Should(ContainElement("gr1"))
+						g.Expect(group).Should(HaveKey("gr1"))
 					}, "1s").Should(Succeed())
 				})
 
@@ -184,14 +186,14 @@ var _ = Describe("ListCache", func() {
 
 				By("List couldn't be loaded due to timeout", func() {
 					group := sut.Match("blocked1.com", []string{"gr1"})
-					Expect(group).Should(ContainElement("gr1"))
+					Expect(group).Should(HaveKey("gr1"))
 				})
 
 				_ = sut.Refresh(ctx)
 
 				By("List couldn't be loaded due to timeout", func() {
 					group := sut.Match("blocked1.com", []string{"gr1"})
-					Expect(group).Should(ContainElement("gr1"))
+					Expect(group).Should(HaveKey("gr1"))
 				})
 			})
 		})
@@ -214,14 +216,14 @@ var _ = Describe("ListCache", func() {
 			It("should keep existing elements from group cache", func(ctx context.Context) {
 				By("Lists loaded without err", func() {
 					group := sut.Match("blocked1.com", []string{"gr1"})
-					Expect(group).Should(ContainElement("gr1"))
+					Expect(group).Should(HaveKey("gr1"))
 				})
 
 				Expect(sut.refresh(ctx)).Should(HaveOccurred())
 
 				By("Lists from first load is kept", func() {
 					group := sut.Match("blocked1.com", []string{"gr1"})
-					Expect(group).Should(ContainElement("gr1"))
+					Expect(group).Should(HaveKey("gr1"))
 				})
 			})
 		})
@@ -235,13 +237,13 @@ var _ = Describe("ListCache", func() {
 
 			It("should download the list and match against", func() {
 				group := sut.Match("blocked1.com", []string{"gr1", "gr2"})
-				Expect(group).Should(ContainElement("gr1"))
+				Expect(group).Should(HaveKey("gr1"))
 
 				group = sut.Match("blocked1a.com", []string{"gr1", "gr2"})
-				Expect(group).Should(ContainElement("gr1"))
+				Expect(group).Should(HaveKey("gr1"))
 
 				group = sut.Match("blocked1a.com", []string{"gr2"})
-				Expect(group).Should(ContainElement("gr2"))
+				Expect(group).Should(HaveKey("gr2"))
 			})
 		})
 		When("Configuration has some faulty urls", func() {
@@ -254,13 +256,13 @@ var _ = Describe("ListCache", func() {
 
 			It("should download the list and match against", func() {
 				group := sut.Match("blocked1.com", []string{"gr1", "gr2"})
-				Expect(group).Should(ContainElement("gr1"))
+				Expect(group).Should(HaveKey("gr1"))
 
 				group = sut.Match("blocked1a.com", []string{"gr1", "gr2"})
-				Expect(group).Should(ContainElements("gr1", "gr2"))
+				Expect(group).Should(SatisfyAll(HaveKey("gr1"), HaveKey("gr2")))
 
 				group = sut.Match("blocked1a.com", []string{"gr2"})
-				Expect(group).Should(ContainElement("gr2"))
+				Expect(group).Should(HaveKey("gr2"))
 			})
 		})
 		When("List will be updated", func() {
@@ -295,13 +297,13 @@ var _ = Describe("ListCache", func() {
 				Expect(sut.groupedCache.ElementCount("gr2")).Should(Equal(2))
 
 				group := sut.Match("blocked1.com", []string{"gr1", "gr2"})
-				Expect(group).Should(ContainElement("gr1"))
+				Expect(group).Should(HaveKey("gr1"))
 
 				group = sut.Match("blocked1a.com", []string{"gr1", "gr2"})
-				Expect(group).Should(ContainElement("gr1"))
+				Expect(group).Should(HaveKey("gr1"))
 
 				group = sut.Match("blocked1a.com", []string{"gr2"})
-				Expect(group).Should(ContainElement("gr2"))
+				Expect(group).Should(HaveKey("gr2"))
 			})
 		})
 		When("group with bigger files", func() {
@@ -338,10 +340,10 @@ var _ = Describe("ListCache", func() {
 			It("should match", func() {
 				Expect(sut.groupedCache.ElementCount("gr1")).Should(Equal(2))
 				group := sut.Match("inlinedomain1.com", []string{"gr1"})
-				Expect(group).Should(ContainElement("gr1"))
+				Expect(group).Should(HaveKey("gr1"))
 
 				group = sut.Match("inlinedomain2.com", []string{"gr1"})
-				Expect(group).Should(ContainElement("gr1"))
+				Expect(group).Should(HaveKey("gr1"))
 			})
 		})
 		When("Text file can't be parsed", func() {
@@ -358,7 +360,7 @@ var _ = Describe("ListCache", func() {
 
 			It("should still match already imported strings", func() {
 				group := sut.Match("inlinedomain1.com", []string{"gr1"})
-				Expect(group).Should(ContainElement("gr1"))
+				Expect(group).Should(HaveKey("gr1"))
 			})
 		})
 		When("Text file has too many errors", func() {
@@ -385,7 +387,7 @@ var _ = Describe("ListCache", func() {
 
 			It("should still parse the domain", func() {
 				group := sut.Match("inlinedomain1.com", []string{"gr1"})
-				Expect(group).Should(ContainElement("gr1"))
+				Expect(group).Should(HaveKey("gr1"))
 			})
 		})
 		When("inline regex content is defined", func() {
@@ -397,10 +399,10 @@ var _ = Describe("ListCache", func() {
 
 			It("should match", func() {
 				group := sut.Match("apple.com", []string{"gr1"})
-				Expect(group).Should(ContainElement("gr1"))
+				Expect(group).Should(HaveKey("gr1"))
 
 				group = sut.Match("apple.de", []string{"gr1"})
-				Expect(group).Should(ContainElement("gr1"))
+				Expect(group).Should(HaveKey("gr1"))
 			})
 		})
 	})
@@ -481,10 +483,10 @@ var _ = Describe("ListCache", func() {
 
 				// Verify the successful source's entries are available
 				group := sut.Match("blocked1.com", []string{"gr1"})
-				Expect(group).Should(ContainElement("gr1"), "entries from successful source should be available")
+				Expect(group).Should(HaveKey("gr1"), "entries from successful source should be available")
 
 				group = sut.Match("blocked2.com", []string{"gr1"})
-				Expect(group).Should(ContainElement("gr1"), "entries from successful source should be available")
+				Expect(group).Should(HaveKey("gr1"), "entries from successful source should be available")
 			})
 		})
 
@@ -513,9 +515,72 @@ var _ = Describe("ListCache", func() {
 				Expect(sut).ShouldNot(BeNil())
 
 				group := sut.Match("blocked1.com", []string{"gr1"})
-				Expect(group).Should(ContainElement("gr1"))
+				Expect(group).Should(HaveKey("gr1"))
 			})
 		})
+	})
+})
+
+var _ = Describe("ListCache.seedFromDisk", func() {
+	It("populates the group cache from on-disk bodies before any download", func(ctx context.Context) {
+		dir := GinkgoT().TempDir()
+		url := "http://example.com/list.txt"
+		Expect(os.WriteFile(cacheFilePath(dir, url), []byte("seeded.com\n"), 0o600)).Should(Succeed())
+
+		grouped := stringcache.NewChainedGroupedCache(
+			stringcache.NewInMemoryGroupedRegexCache(),
+			stringcache.NewInMemoryGroupedWildcardCache(),
+			stringcache.NewInMemoryGroupedStringCache(),
+		)
+
+		sut := &ListCache{
+			groupedCache: grouped,
+			cfg: config.SourceLoading{
+				Downloads: config.Downloader{CachePath: dir},
+			},
+			groupSources: map[string][]config.BytesSource{
+				"ads": {{Type: config.BytesSourceTypeHttp, From: url}},
+			},
+		}
+
+		sut.seedFromDisk(ctx)
+
+		Expect(sut.Match("seeded.com", []string{"ads"})).Should(HaveKey("ads"))
+	})
+
+	It("also seeds inline and file sources that share a group with an HTTP source", func(ctx context.Context) {
+		dir := GinkgoT().TempDir()
+		url := "http://example.com/list.txt"
+		Expect(os.WriteFile(cacheFilePath(dir, url), []byte("http-seeded.com\n"), 0o600)).Should(Succeed())
+
+		listFile := filepath.Join(GinkgoT().TempDir(), "local.txt")
+		Expect(os.WriteFile(listFile, []byte("file-seeded.com\n"), 0o600)).Should(Succeed())
+
+		grouped := stringcache.NewChainedGroupedCache(
+			stringcache.NewInMemoryGroupedRegexCache(),
+			stringcache.NewInMemoryGroupedWildcardCache(),
+			stringcache.NewInMemoryGroupedStringCache(),
+		)
+
+		sut := &ListCache{
+			groupedCache: grouped,
+			cfg: config.SourceLoading{
+				Downloads: config.Downloader{CachePath: dir},
+			},
+			groupSources: map[string][]config.BytesSource{
+				"ads": {
+					{Type: config.BytesSourceTypeHttp, From: url},
+					{Type: config.BytesSourceTypeFile, From: listFile},
+					{Type: config.BytesSourceTypeText, From: "inline-seeded.com"},
+				},
+			},
+		}
+
+		sut.seedFromDisk(ctx)
+
+		Expect(sut.Match("http-seeded.com", []string{"ads"})).Should(HaveKey("ads"))
+		Expect(sut.Match("file-seeded.com", []string{"ads"})).Should(HaveKey("ads"))
+		Expect(sut.Match("inline-seeded.com", []string{"ads"})).Should(HaveKey("ads"))
 	})
 })
 

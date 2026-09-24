@@ -9,6 +9,15 @@
 
 Blockasaurus is a DNS proxy and ad-blocker for the local network written in Go with following features:
 
+```mermaid
+flowchart LR
+    C[Client devices] -->|DNS query| B(Blocky)
+    B -->|allowed query| U[Upstream resolvers]
+    U -->|answer| B
+    B -->|blocked domain| X[Blocked response]
+    B -->|answer| C
+```
+
 ## Features
 
 - **Blocking** - :no_entry: Blocking of DNS queries with external lists (Ad-block, malware) and allowlisting
@@ -37,6 +46,8 @@ Blockasaurus is a DNS proxy and ad-blocker for the local network written in Go w
     * DNS over UDP and TCP
     * DNS over HTTPS (aka DoH)
     * DNS over TLS (aka DoT)
+    * DNS over QUIC (aka DoQ, RFC 9250)
+    * DNS over HTTPS/3 (aka DoH3, RFC 9114)
     * Apple configuration profiles (.mobileconfig) for one-tap iOS/macOS setup
 
 - **Security and Privacy** - :dark_sunglasses: Secure communication
@@ -59,7 +70,7 @@ Blockasaurus is a DNS proxy and ad-blocker for the local network written in Go w
     * Various REST API endpoints
     * CLI tool
 
-- **Simple configuration** - :baby: single configuration file in YAML format
+- **Simple configuration** - :baby: single or multiple configuration files in YAML format
 
     * Simple to maintain
     * Simple to backup
@@ -69,7 +80,7 @@ Blockasaurus is a DNS proxy and ad-blocker for the local network written in Go w
     * Stateless (no database, no temporary files)
     * Docker image with Multi-arch support
     * Single binary
-    * Supports x86-64 and ARM architectures -> runs fine on Raspberry PI
+    * Supports x86-64, ARM, and MIPS architectures -> runs fine on Raspberry PI and OpenWrt routers
     * Community supported Helm chart for k8s deployment
 
 
@@ -77,4 +88,16 @@ Blockasaurus is a DNS proxy and ad-blocker for the local network written in Go w
 
 Issues, feature suggestions and pull requests are welcome!
 
---8<-- "docs/includes/abbreviations.md"
+## Support Blocky :heart:
+
+Blocky is **free, open source, and developed in my spare time** — with no telemetry, no data
+collection, and no hidden filtering. **Thousands of people run Blocky; only a handful support it.**
+If Blocky is useful to you, please consider chipping in — your support directly funds ongoing
+development and helps keep Blocky independent and ad-free, forever. Every contribution, however
+small, is hugely appreciated. Thank you! :heart:
+
+[![Sponsor on GitHub](https://img.shields.io/badge/Sponsor-GitHub-EA4AAA?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/0xERR0R)
+[![Support on thanks.dev](https://img.shields.io/badge/thanks.dev-support-00A98F)](https://thanks.dev/u/gh/0xERR0R)
+[![Donate on Liberapay](https://img.shields.io/badge/Liberapay-donate-F6C915?logo=liberapay&logoColor=black)](https://liberapay.com/spx01)
+[![Buy me a coffee on Ko-fi](https://img.shields.io/badge/Ko--fi-donate-FF5E5B?logo=kofi&logoColor=white)](https://ko-fi.com/0xerr0r)
+[![Donate via PayPal](https://img.shields.io/badge/PayPal-donate-00457C?logo=paypal&logoColor=white)](https://paypal.me/spx01)

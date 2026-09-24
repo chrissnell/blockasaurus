@@ -1,4 +1,4 @@
-.PHONY: all clean generate build test check-fork-additions check-fork-additions-sync e2e-test e2e-test-coverage lint run fmt docker-build docker-push bump-minor bump-point deploy helm-deploy version help check-tools sync-handbook
+.PHONY: all clean generate generate-check build test fuzz check-fork-additions check-fork-additions-sync e2e-test e2e-test-coverage lint run fmt docker-build docker-push bump-minor bump-point deploy helm-deploy version help check-tools sync-handbook
 .DEFAULT_GOAL:=help
 
 VERSION:=$(shell cat VERSION)
@@ -35,9 +35,22 @@ GO_BUILD_LD_FLAGS:=\
 GO_BUILD_OUTPUT:=$(BIN_OUT_DIR)/$(BINARY_NAME)$(BINARY_SUFFIX)
 
 # define version of golangci-lint here. If defined in tools.go, go mod perfoms automatically downgrade to older version which doesn't work with golang >=1.18
-GOLANG_LINT_VERSION=v2.2.1
+GOLANG_LINT_VERSION=v2.12.2
 
 GINKGO_PROCS?=
+
+# Fuzzing. Fuzz target seed corpora run as ordinary tests on every `make test`;
+# this is the opt-in discovery mode that actively generates new inputs. `go test
+# -fuzz` only fuzzes one target in one package per invocation, so `make fuzz`
+# loops over every Fuzz* target in FUZZ_PKGS, time-boxing each at FUZZ_TIME.
+FUZZ_TIME?=30s
+FUZZ_PKGS?=./config ./util ./lists/parsers
+
+# Parallelism for e2e tests. e2e specs are dominated by container startup and
+# health-check waits rather than CPU, so oversubscribing beyond the core count
+# improves wall-clock time. Defaults to -p (one process per core) for local
+# runs; CI overrides this to oversubscribe the runner.
+GINKGO_E2E_PROCS?=-p
 
 export PATH=$(shell go env GOPATH)/bin:$(shell echo $$PATH)
 
@@ -73,6 +86,11 @@ else
 	go generate ./...
 endif
 
+generate-check: check-go ## Verify generated files (mocks, enums, config schema) are up to date
+	go tool mockery
+	go generate ./...
+	@git diff --exit-code || { echo "generated files are out of date; run 'make generate' and commit the result"; exit 1; }
+
 build: check-go generate ## Build binary
 	go build $(GO_BUILD_FLAGS) -ldflags="$(GO_BUILD_LD_FLAGS)" -o $(GO_BUILD_OUTPUT)
 ifdef BIN_USER
@@ -80,13 +98,22 @@ ifdef BIN_USER
 	chown $(BIN_USER) $(GO_BUILD_OUTPUT)
 endif
 ifdef BIN_AUTOCAB
-	$(info setting cap_net_bind_service to $(GO_BUILD_OUTPUT))
-	setcap 'cap_net_bind_service=+ep' $(GO_BUILD_OUTPUT)
+	$(info setting cap_net_bind_service (permitted) on $(GO_BUILD_OUTPUT))
+	setcap 'cap_net_bind_service=+p' $(GO_BUILD_OUTPUT)
 endif
 
 test: check-go check-fork-additions ## run tests
 	go tool ginkgo --label-filter="!e2e" --coverprofile=coverage.txt --covermode=atomic --cover -r ${GINKGO_PROCS}
 	go tool cover -html coverage.txt -o coverage.html
+
+fuzz: check-go ## run each fuzz target for FUZZ_TIME (default 30s); e.g. make fuzz FUZZ_TIME=2m
+	@set -e; \
+	for pkg in $(FUZZ_PKGS); do \
+		for target in $$(go test -list '^Fuzz' $$pkg | grep '^Fuzz'); do \
+			echo "==> fuzzing $$target in $$pkg for $(FUZZ_TIME)"; \
+			go test -run '^$$' -fuzz "^$$target$$" -fuzztime $(FUZZ_TIME) $$pkg; \
+		done; \
+	done
 
 e2e-test: check-go check-docker ## run e2e tests
 	docker buildx build \
@@ -97,7 +124,7 @@ e2e-test: check-go check-docker ## run e2e tests
 		-o type=docker \
 		-t blockasaurus-e2e \
 		.
-	go tool ginkgo -p --label-filter="e2e" --timeout 15m --flake-attempts 1 e2e
+	go tool ginkgo ${GINKGO_E2E_PROCS} --label-filter="e2e" --timeout 15m --flake-attempts 1 e2e
 
 e2e-test-coverage: check-go check-docker ## run e2e tests with code coverage
 	@echo "Building coverage-instrumented Docker image..."
@@ -115,7 +142,7 @@ e2e-test-coverage: check-go check-docker ## run e2e tests with code coverage
 	@rm -rf coverage/e2e/*
 	@chmod 777 coverage/e2e
 	BLOCKY_IMAGE=blockasaurus-e2e-coverage GOCOVERDIR=$(PWD)/coverage/e2e \
-		go tool ginkgo -p --label-filter="e2e" --timeout 15m --flake-attempts 1 e2e
+		go tool ginkgo ${GINKGO_E2E_PROCS} --label-filter="e2e" --timeout 15m --flake-attempts 1 e2e
 	@echo "Converting coverage data..."
 	go tool covdata textfmt -i=./coverage/e2e -o=coverage/e2e-coverage.out
 	@echo ""

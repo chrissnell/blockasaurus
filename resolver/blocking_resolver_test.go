@@ -2,6 +2,8 @@ package resolver
 
 import (
 	"context"
+	"maps"
+	"sync"
 	"time"
 
 	"github.com/0xERR0R/blocky/config"
@@ -10,10 +12,7 @@ import (
 	"github.com/0xERR0R/blocky/lists"
 	"github.com/0xERR0R/blocky/log"
 	. "github.com/0xERR0R/blocky/model"
-	"github.com/0xERR0R/blocky/redis"
 	"github.com/0xERR0R/blocky/util"
-	"github.com/alicebob/miniredis/v2"
-	"github.com/creasty/defaults"
 
 	"github.com/miekg/dns"
 	. "github.com/onsi/ginkgo/v2"
@@ -71,7 +70,7 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 		m = &mockResolver{}
 		m.On("Resolve", mock.Anything).Return(&Response{Res: mockAnswer}, nil)
 
-		sut, err = NewBlockingResolver(ctx, sutConfig, nil, systemResolverBootstrap)
+		sut, err = NewBlockingResolver(ctx, sutConfig, systemResolverBootstrap)
 		Expect(err).Should(Succeed())
 		sut.Next(m)
 	})
@@ -79,6 +78,19 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 	Describe("IsEnabled", func() {
 		It("is false", func() {
 			Expect(sut.IsEnabled()).Should(BeFalse())
+		})
+	})
+
+	Describe("Resolve when blocking is not configured", func() {
+		It("delegates straight to the next resolver", func() {
+			Expect(sut.Resolve(ctx, newRequestWithClient("example.com.", A, "1.2.1.2", "client1"))).
+				Should(
+					SatisfyAll(
+						HaveResponseType(ResponseTypeRESOLVED),
+						HaveReturnCode(dns.RcodeSuccess),
+					))
+
+			m.AssertExpectations(GinkgoT())
 		})
 	})
 
@@ -112,10 +124,69 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 				Expect(err).Should(Succeed())
 
 				// recreate to trigger a reload
-				sut, err = NewBlockingResolver(ctx, sutConfig, nil, systemResolverBootstrap)
+				sut, err = NewBlockingResolver(ctx, sutConfig, systemResolverBootstrap)
 				Expect(err).Should(Succeed())
 
 				Eventually(groupCnt, "1s").Should(HaveLen(2))
+			})
+		})
+		When("a subscriber registers after the initial list load", func() {
+			It("receives the current list counts again on ApplicationStarted", func() {
+				// sut is already built in JustBeforeEach, so the load-time
+				// BlockingCacheGroupChanged events have fired and a subscriber that
+				// registers now (like the later-built stats resolver) has missed them.
+				// The re-publish runs in a goroutine, so guard the map: the handler
+				// writes it concurrently with the Eventually poll that reads it.
+				var mu sync.Mutex
+				groupCnt := make(map[string]int)
+				snapshot := func() map[string]int {
+					mu.Lock()
+					defer mu.Unlock()
+
+					return maps.Clone(groupCnt)
+				}
+				handler := func(_ lists.ListCacheType, group string, cnt int) {
+					mu.Lock()
+					defer mu.Unlock()
+					groupCnt[group] = cnt
+				}
+				Expect(Bus().Subscribe(BlockingCacheGroupChanged, handler)).Should(Succeed())
+				DeferCleanup(func() {
+					_ = Bus().Unsubscribe(BlockingCacheGroupChanged, handler)
+				})
+
+				// the late subscriber has not seen any counts yet
+				Expect(snapshot()).Should(BeEmpty())
+
+				Bus().Publish(ApplicationStarted, "version", "buildtime")
+
+				Eventually(snapshot, "1s").Should(SatisfyAll(
+					HaveKeyWithValue("gr1", 1),
+					HaveKeyWithValue("gr2", 1),
+				))
+			})
+		})
+	})
+
+	Describe("Resolving FQDN client identifiers", func() {
+		When("rebinding protection is enabled", func() {
+			It("exempts identifier lookups by chain position while client queries stay filtered", func() {
+				// DDNS-to-LAN identifiers in clientGroupsBlock resolve to private
+				// IPs via the general upstreams; the rebinding resolver sits ABOVE
+				// blocking in the server chain (see createQueryResolver), so the
+				// internal lookups enter the chain below it and bypass it
+				mockAnswer.Answer = []dns.RR{rebindTestA("nas.ddns.example.com.", "192.168.1.5")}
+				rebinding := NewRebindingProtectionResolver(config.RebindingProtection{Enable: true})
+				chain := Chain(rebinding, sut, m)
+
+				ips, _ := sut.queryForFQIdentifierIPs(ctx, "nas.ddns.example.com")
+				Expect(ips).ShouldNot(BeNil())
+				Expect(*ips).ShouldNot(BeEmpty())
+				Expect((*ips)[0].String()).Should(Equal("192.168.1.5"))
+
+				// the same name queried by a client passes the full chain and is blocked
+				Expect(chain.Resolve(ctx, newRequestWithClient("nas.ddns.example.com.", A, "192.168.1.5"))).
+					Should(HaveResponseType(ResponseTypeREBIND))
 			})
 		})
 	})
@@ -223,8 +294,17 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 							BeDNSRecord("domain1.com.", A, "0.0.0.0"),
 							HaveTTL(BeNumerically("==", 21600)),
 							HaveResponseType(ResponseTypeBLOCKED),
-							HaveReason("BLOCKED (gr1)"),
+							HaveReason("BLOCKED (gr1: domain1.com)"),
 							HaveReturnCode(dns.RcodeSuccess),
+						))
+			})
+			It("should set a group-only ReasonLabel while keeping the detailed Reason", func() {
+				Expect(sut.Resolve(ctx, newRequestWithClient("domain1.com.", A, "1.2.1.2", "client1"))).
+					Should(
+						SatisfyAll(
+							HaveResponseType(ResponseTypeBLOCKED),
+							HaveReason("BLOCKED (gr1: domain1.com)"),
+							HaveReasonLabel("BLOCKED (gr1)"),
 						))
 			})
 			It("should block the A query if domain is on the denylist (multipart 1)", func() {
@@ -234,7 +314,7 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 							BeDNSRecord("domain1.com.", A, "0.0.0.0"),
 							HaveTTL(BeNumerically("==", 21600)),
 							HaveResponseType(ResponseTypeBLOCKED),
-							HaveReason("BLOCKED (gr1)"),
+							HaveReason("BLOCKED (gr1: domain1.com)"),
 							HaveReturnCode(dns.RcodeSuccess),
 						))
 			})
@@ -245,7 +325,7 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 							BeDNSRecord("domain1.com.", A, "0.0.0.0"),
 							HaveTTL(BeNumerically("==", 21600)),
 							HaveResponseType(ResponseTypeBLOCKED),
-							HaveReason("BLOCKED (gr1)"),
+							HaveReason("BLOCKED (gr1: domain1.com)"),
 							HaveReturnCode(dns.RcodeSuccess),
 						))
 			})
@@ -256,7 +336,7 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 							BeDNSRecord("blocked2.com.", A, "0.0.0.0"),
 							HaveTTL(BeNumerically("==", 21600)),
 							HaveResponseType(ResponseTypeBLOCKED),
-							HaveReason("BLOCKED (gr2)"),
+							HaveReason("BLOCKED (gr2: blocked2.com)"),
 							HaveReturnCode(dns.RcodeSuccess),
 						))
 			})
@@ -267,7 +347,7 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 							BeDNSRecord("domain1.com.", AAAA, "::"),
 							HaveTTL(BeNumerically("==", 21600)),
 							HaveResponseType(ResponseTypeBLOCKED),
-							HaveReason("BLOCKED (gr1)"),
+							HaveReason("BLOCKED (gr1: domain1.com)"),
 							HaveReturnCode(dns.RcodeSuccess),
 						))
 			})
@@ -289,7 +369,7 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 							BeDNSRecord("domain1.com.", A, "0.0.0.0"),
 							HaveTTL(BeNumerically("==", 21600)),
 							HaveResponseType(ResponseTypeBLOCKED),
-							HaveReason("BLOCKED (gr1)"),
+							HaveReason("BLOCKED (gr1: domain1.com)"),
 							HaveReturnCode(dns.RcodeSuccess),
 						))
 			})
@@ -329,7 +409,7 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 							BeDNSRecord("domain1.com.", A, "0.0.0.0"),
 							HaveTTL(BeNumerically("==", 21600)),
 							HaveResponseType(ResponseTypeBLOCKED),
-							HaveReason("BLOCKED (gr1)"),
+							HaveReason("BLOCKED (gr1: domain1.com)"),
 							HaveReturnCode(dns.RcodeSuccess),
 						))
 			})
@@ -340,7 +420,7 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 							BeDNSRecord("domain1.com.", A, "0.0.0.0"),
 							HaveTTL(BeNumerically("==", 21600)),
 							HaveResponseType(ResponseTypeBLOCKED),
-							HaveReason("BLOCKED (gr1)"),
+							HaveReason("BLOCKED (gr1: domain1.com)"),
 							HaveReturnCode(dns.RcodeSuccess),
 						))
 			})
@@ -354,7 +434,7 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 							BeDNSRecord("domain1.com.", A, "0.0.0.0"),
 							HaveTTL(BeNumerically("==", 21600)),
 							HaveResponseType(ResponseTypeBLOCKED),
-							HaveReason("BLOCKED (gr1)"),
+							HaveReason("BLOCKED (gr1: domain1.com)"),
 							HaveReturnCode(dns.RcodeSuccess),
 						))
 			})
@@ -365,7 +445,7 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 							BeDNSRecord("blocked2.com.", A, "0.0.0.0"),
 							HaveTTL(BeNumerically("==", 21600)),
 							HaveResponseType(ResponseTypeBLOCKED),
-							HaveReason("BLOCKED (gr2)"),
+							HaveReason("BLOCKED (gr2: blocked2.com)"),
 							HaveReturnCode(dns.RcodeSuccess),
 						))
 			})
@@ -378,7 +458,7 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 							BeDNSRecord("domain1.com.", A, "0.0.0.0"),
 							HaveTTL(BeNumerically("==", 21600)),
 							HaveResponseType(ResponseTypeBLOCKED),
-							HaveReason("BLOCKED (gr1)"),
+							HaveReason("BLOCKED (gr1: domain1.com)"),
 							HaveReturnCode(dns.RcodeSuccess),
 						))
 			})
@@ -392,7 +472,7 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 							BeDNSRecord("blocked3.com.", A, "0.0.0.0"),
 							HaveTTL(BeNumerically("==", 21600)),
 							HaveResponseType(ResponseTypeBLOCKED),
-							HaveReason("BLOCKED (defaultGroup)"),
+							HaveReason("BLOCKED (defaultGroup: blocked3.com)"),
 							HaveReturnCode(dns.RcodeSuccess),
 						))
 			})
@@ -419,11 +499,58 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 							HaveNoAnswer(),
 							HaveResponseType(ResponseTypeBLOCKED),
 							HaveReturnCode(dns.RcodeNameError),
-							HaveReason("BLOCKED (defaultGroup)"),
+							HaveReason("BLOCKED (defaultGroup: blocked3.com)"),
 							HaveAuthority(),
 							HaveSOARecord(60, 60), // 1 minute = 60 seconds
 						))
 			})
+		})
+
+		When("BlockType is Refused", func() {
+			BeforeEach(func() {
+				sutConfig = config.Blocking{
+					BlockTTL: config.Duration(time.Minute),
+					Denylists: map[string][]config.BytesSource{
+						"defaultGroup": config.NewBytesSources(defaultGroupFile.Path),
+					},
+					ClientGroupsBlock: map[string][]string{
+						"default": {"defaultGroup"},
+					},
+					BlockType: "Refused",
+				}
+			})
+
+			It("should return REFUSED without any records if query is blocked", func() {
+				Expect(sut.Resolve(ctx, newRequestWithClient("blocked3.com.", A, "1.2.1.2", "unknown"))).
+					Should(
+						SatisfyAll(
+							HaveNoAnswer(),
+							WithTransform(ToAuthority, BeEmpty()),
+							HaveResponseType(ResponseTypeBLOCKED),
+							HaveReturnCode(dns.RcodeRefused),
+							HaveReason("BLOCKED (defaultGroup: blocked3.com)"),
+						))
+			})
+
+			// Unlike zeroIP and custom IPs, which fall back to NXDOMAIN for anything
+			// but A/AAAA, refused answers every query type the same way.
+			DescribeTable("should return REFUSED for every query type",
+				func(qType dns.Type) {
+					Expect(sut.Resolve(ctx, newRequestWithClient("blocked3.com.", qType, "1.2.1.2", "unknown"))).
+						Should(
+							SatisfyAll(
+								HaveNoAnswer(),
+								WithTransform(ToAuthority, BeEmpty()),
+								HaveResponseType(ResponseTypeBLOCKED),
+								HaveReturnCode(dns.RcodeRefused),
+								HaveReason("BLOCKED (defaultGroup: blocked3.com)"),
+							))
+				},
+				Entry("AAAA", AAAA),
+				Entry("TXT", TXT),
+				Entry("MX", MX),
+				Entry("HTTPS", HTTPS),
+			)
 		})
 
 		When("BlockType is NXDOMAIN with custom BlockTTL", func() {
@@ -447,7 +574,7 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 							HaveNoAnswer(),
 							HaveResponseType(ResponseTypeBLOCKED),
 							HaveReturnCode(dns.RcodeNameError),
-							HaveReason("BLOCKED (defaultGroup)"),
+							HaveReason("BLOCKED (defaultGroup: blocked3.com)"),
 							HaveAuthority(),
 							HaveSOARecord(7200, 7200), // 2 hours in seconds
 						))
@@ -476,7 +603,7 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 							HaveTTL(BeNumerically("==", 1234)),
 							HaveResponseType(ResponseTypeBLOCKED),
 							HaveReturnCode(dns.RcodeSuccess),
-							HaveReason("BLOCKED (defaultGroup)"),
+							HaveReason("BLOCKED (defaultGroup: blocked3.com)"),
 						))
 			})
 
@@ -493,7 +620,7 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 								HaveTTL(BeNumerically("==", 1234)),
 								HaveResponseType(ResponseTypeBLOCKED),
 								HaveReturnCode(dns.RcodeSuccess),
-								HaveReason("BLOCKED (defaultGroup)"),
+								HaveReason("BLOCKED (defaultGroup: blocked3.com)"),
 							))
 				})
 			})
@@ -521,7 +648,7 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 							HaveTTL(BeNumerically("==", 21600)),
 							HaveResponseType(ResponseTypeBLOCKED),
 							HaveReturnCode(dns.RcodeSuccess),
-							HaveReason("BLOCKED (defaultGroup)"),
+							HaveReason("BLOCKED (defaultGroup: blocked3.com)"),
 						))
 			})
 
@@ -533,7 +660,7 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 							HaveTTL(BeNumerically("==", 21600)),
 							HaveResponseType(ResponseTypeBLOCKED),
 							HaveReturnCode(dns.RcodeSuccess),
-							HaveReason("BLOCKED (defaultGroup)"),
+							HaveReason("BLOCKED (defaultGroup: blocked3.com)"),
 						))
 			})
 		})
@@ -560,7 +687,7 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 							HaveTTL(BeNumerically("==", 21600)),
 							HaveResponseType(ResponseTypeBLOCKED),
 							HaveReturnCode(dns.RcodeSuccess),
-							HaveReason("BLOCKED (defaultGroup)"),
+							HaveReason("BLOCKED (defaultGroup: blocked3.com)"),
 						))
 			})
 		})
@@ -579,7 +706,7 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 								HaveTTL(BeNumerically("==", 21600)),
 								HaveResponseType(ResponseTypeBLOCKED),
 								HaveReturnCode(dns.RcodeSuccess),
-								HaveReason("BLOCKED IP (defaultGroup)"),
+								HaveReason("BLOCKED IP (defaultGroup: 123.145.123.145)"),
 							))
 				})
 			})
@@ -599,7 +726,7 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 								HaveTTL(BeNumerically("==", 21600)),
 								HaveResponseType(ResponseTypeBLOCKED),
 								HaveReturnCode(dns.RcodeSuccess),
-								HaveReason("BLOCKED IP (defaultGroup)"),
+								HaveReason("BLOCKED IP (defaultGroup: 2001:db8:85a3:8d3::370:7344)"),
 							))
 				})
 			})
@@ -622,7 +749,275 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 							HaveTTL(BeNumerically("==", 21600)),
 							HaveResponseType(ResponseTypeBLOCKED),
 							HaveReturnCode(dns.RcodeSuccess),
-							HaveReason("BLOCKED CNAME (defaultGroup)"),
+							HaveReason("BLOCKED CNAME (defaultGroup: badcnamedomain.com)"),
+						))
+			})
+		})
+	})
+
+	Describe("Schedule-based blocking", func() {
+		When("schedule is currently active", func() {
+			BeforeEach(func() {
+				// Create a schedule that's always active (all days, all hours)
+				sutConfig = config.Blocking{
+					BlockType: "ZEROIP",
+					BlockTTL:  config.Duration(time.Minute),
+					Denylists: map[string][]config.BytesSource{
+						"defaultGroup": config.NewBytesSources(defaultGroupFile.Path),
+					},
+					Schedules: map[string]config.Schedule{
+						"always": {
+							Weekdays: []config.Weekday{
+								config.Weekday(time.Sunday),
+								config.Weekday(time.Monday),
+								config.Weekday(time.Tuesday),
+								config.Weekday(time.Wednesday),
+								config.Weekday(time.Thursday),
+								config.Weekday(time.Friday),
+								config.Weekday(time.Saturday),
+							},
+						},
+					},
+					ClientGroupsBlock: map[string][]string{
+						"default": {"defaultGroup"},
+					},
+					ListSchedules: map[string][]string{
+						"defaultGroup": {"always"},
+					},
+				}
+			})
+
+			It("should block the request", func() {
+				Expect(sut.Resolve(ctx, newRequestWithClient("blocked3.com.", A, "1.2.1.2", "unknown"))).
+					Should(
+						SatisfyAll(
+							BeDNSRecord("blocked3.com.", A, "0.0.0.0"),
+							HaveTTL(BeNumerically("==", 60)),
+							HaveResponseType(ResponseTypeBLOCKED),
+							HaveReturnCode(dns.RcodeSuccess),
+						))
+			})
+		})
+
+		When("schedule is not currently active", func() {
+			BeforeEach(func() {
+				// Create a schedule for a day/time that is definitely not now
+				// Pick a weekday 3 days from now to avoid overnight spillover edge cases
+				notToday := (time.Now().Weekday() + 3) % 7
+
+				sutConfig = config.Blocking{
+					BlockType: "ZEROIP",
+					BlockTTL:  config.Duration(time.Minute),
+					Denylists: map[string][]config.BytesSource{
+						"defaultGroup": config.NewBytesSources(defaultGroupFile.Path),
+					},
+					Schedules: map[string]config.Schedule{
+						"never-now": {
+							Start:    "00:00",
+							End:      "00:01",
+							Weekdays: []config.Weekday{config.Weekday(notToday)},
+						},
+					},
+					ClientGroupsBlock: map[string][]string{
+						"default": {"defaultGroup"},
+					},
+					ListSchedules: map[string][]string{
+						"defaultGroup": {"never-now"},
+					},
+				}
+			})
+
+			It("should not block the request", func() {
+				Expect(sut.Resolve(ctx, newRequestWithClient("blocked3.com.", A, "1.2.1.2", "unknown"))).
+					Should(
+						SatisfyAll(
+							HaveResponseType(ResponseTypeRESOLVED),
+							HaveReturnCode(dns.RcodeSuccess),
+						))
+			})
+		})
+
+		When("mixing scheduled and unscheduled groups", func() {
+			BeforeEach(func() {
+				notToday := (time.Now().Weekday() + 3) % 7
+
+				sutConfig = config.Blocking{
+					BlockType: "ZEROIP",
+					BlockTTL:  config.Duration(time.Minute),
+					Denylists: map[string][]config.BytesSource{
+						"gr1":          config.NewBytesSources(group1File.Path),
+						"defaultGroup": config.NewBytesSources(defaultGroupFile.Path),
+					},
+					Schedules: map[string]config.Schedule{
+						"never-now": {
+							Start:    "00:00",
+							End:      "00:01",
+							Weekdays: []config.Weekday{config.Weekday(notToday)},
+						},
+					},
+					ClientGroupsBlock: map[string][]string{
+						"default": {"defaultGroup", "gr1"},
+					},
+					ListSchedules: map[string][]string{
+						"defaultGroup": {"never-now"}, // inactive
+					},
+				}
+			})
+
+			It("should block via the always-active group", func() {
+				Expect(sut.Resolve(ctx, newRequestWithClient("domain1.com.", A, "1.2.1.2", "unknown"))).
+					Should(
+						SatisfyAll(
+							BeDNSRecord("domain1.com.", A, "0.0.0.0"),
+							HaveTTL(BeNumerically("==", 60)),
+							HaveResponseType(ResponseTypeBLOCKED),
+							HaveReturnCode(dns.RcodeSuccess),
+						))
+			})
+
+			It("should not block via the inactive scheduled group", func() {
+				Expect(sut.Resolve(ctx, newRequestWithClient("blocked3.com.", A, "1.2.1.2", "unknown"))).
+					Should(
+						SatisfyAll(
+							HaveResponseType(ResponseTypeRESOLVED),
+							HaveReturnCode(dns.RcodeSuccess),
+						))
+			})
+		})
+
+		When("multiple list schedules are configured", func() {
+			BeforeEach(func() {
+				notToday := (time.Now().Weekday() + 3) % 7
+
+				sutConfig = config.Blocking{
+					BlockType: "ZEROIP",
+					BlockTTL:  config.Duration(time.Minute),
+					Denylists: map[string][]config.BytesSource{
+						"gr1":          config.NewBytesSources(group1File.Path),
+						"defaultGroup": config.NewBytesSources(defaultGroupFile.Path),
+					},
+					Schedules: map[string]config.Schedule{
+						"always": {
+							Weekdays: []config.Weekday{
+								config.Weekday(time.Sunday),
+								config.Weekday(time.Monday),
+								config.Weekday(time.Tuesday),
+								config.Weekday(time.Wednesday),
+								config.Weekday(time.Thursday),
+								config.Weekday(time.Friday),
+								config.Weekday(time.Saturday),
+							},
+						},
+						"never-now": {
+							Start:    "00:00",
+							End:      "00:01",
+							Weekdays: []config.Weekday{config.Weekday(notToday)},
+						},
+					},
+					ClientGroupsBlock: map[string][]string{
+						"default": {"gr1", "defaultGroup"},
+					},
+					ListSchedules: map[string][]string{
+						"gr1":          {"always"},
+						"defaultGroup": {"never-now"},
+					},
+				}
+			})
+
+			It("should block the list with an active schedule", func() {
+				Expect(sut.Resolve(ctx, newRequestWithClient("domain1.com.", A, "1.2.1.2", "unknown"))).
+					Should(
+						SatisfyAll(
+							BeDNSRecord("domain1.com.", A, "0.0.0.0"),
+							HaveTTL(BeNumerically("==", 60)),
+							HaveResponseType(ResponseTypeBLOCKED),
+							HaveReturnCode(dns.RcodeSuccess),
+						))
+			})
+
+			It("should not block the list with an inactive schedule", func() {
+				Expect(sut.Resolve(ctx, newRequestWithClient("blocked3.com.", A, "1.2.1.2", "unknown"))).
+					Should(
+						SatisfyAll(
+							HaveResponseType(ResponseTypeRESOLVED),
+							HaveReturnCode(dns.RcodeSuccess),
+						))
+			})
+		})
+
+		When("a list has multiple schedules (OR logic)", func() {
+			BeforeEach(func() {
+				notToday := (time.Now().Weekday() + 3) % 7
+
+				sutConfig = config.Blocking{
+					BlockType: "ZEROIP",
+					BlockTTL:  config.Duration(time.Minute),
+					Denylists: map[string][]config.BytesSource{
+						"defaultGroup": config.NewBytesSources(defaultGroupFile.Path),
+					},
+					Schedules: map[string]config.Schedule{
+						"always": {
+							Weekdays: []config.Weekday{
+								config.Weekday(time.Sunday),
+								config.Weekday(time.Monday),
+								config.Weekday(time.Tuesday),
+								config.Weekday(time.Wednesday),
+								config.Weekday(time.Thursday),
+								config.Weekday(time.Friday),
+								config.Weekday(time.Saturday),
+							},
+						},
+						"never-now": {
+							Start:    "00:00",
+							End:      "00:01",
+							Weekdays: []config.Weekday{config.Weekday(notToday)},
+						},
+					},
+					ClientGroupsBlock: map[string][]string{
+						"default": {"defaultGroup"},
+					},
+					ListSchedules: map[string][]string{
+						"defaultGroup": {"never-now", "always"},
+					},
+				}
+			})
+
+			It("should block because at least one schedule is active", func() {
+				Expect(sut.Resolve(ctx, newRequestWithClient("blocked3.com.", A, "1.2.1.2", "unknown"))).
+					Should(
+						SatisfyAll(
+							BeDNSRecord("blocked3.com.", A, "0.0.0.0"),
+							HaveTTL(BeNumerically("==", 60)),
+							HaveResponseType(ResponseTypeBLOCKED),
+							HaveReturnCode(dns.RcodeSuccess),
+						))
+			})
+		})
+
+		When("listSchedules references unknown schedule names", func() {
+			BeforeEach(func() {
+				sutConfig = config.Blocking{
+					BlockType: "ZEROIP",
+					BlockTTL:  config.Duration(time.Minute),
+					Denylists: map[string][]config.BytesSource{
+						"defaultGroup": config.NewBytesSources(defaultGroupFile.Path),
+					},
+					Schedules: map[string]config.Schedule{},
+					ClientGroupsBlock: map[string][]string{
+						"default": {"defaultGroup"},
+					},
+					ListSchedules: map[string][]string{
+						"defaultGroup": {"typo-schedule"},
+					},
+				}
+			})
+
+			It("should treat the group as inactive instead of always-active", func() {
+				Expect(sut.Resolve(ctx, newRequestWithClient("blocked3.com.", A, "1.2.1.2", "unknown"))).
+					Should(
+						SatisfyAll(
+							HaveResponseType(ResponseTypeRESOLVED),
+							HaveReturnCode(dns.RcodeSuccess),
 						))
 			})
 		})
@@ -756,6 +1151,95 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 			})
 		})
 
+		// A client that has a denylist group uses its allowlists as exceptions to that
+		// denylist, not as a whitelist: an allowlist-only group mixed into such a client
+		// must not put the whole client into "allow nothing else" mode (issue #2207).
+		When("An allowlist-only group is combined with a denylist group for the same client", func() {
+			var mixedDenyFile, mixedAllowFile *TmpFile
+
+			BeforeEach(func() {
+				mixedDenyFile = tmpDir.CreateStringFile("mixedDenyFile", "ads.example.com", "social.example.com")
+				mixedAllowFile = tmpDir.CreateStringFile("mixedAllowFile", "social.example.com")
+
+				sutConfig = config.Blocking{
+					BlockType: "ZEROIP",
+					BlockTTL:  config.Duration(60 * time.Second),
+					Denylists: map[string][]config.BytesSource{
+						"ads": config.NewBytesSources(mixedDenyFile.Path),
+					},
+					Allowlists: map[string][]config.BytesSource{
+						"exceptions": config.NewBytesSources(mixedAllowFile.Path),
+					},
+					ClientGroupsBlock: map[string][]string{
+						"default": {"ads"},
+						"laptop":  {"ads", "exceptions"},
+					},
+				}
+			})
+
+			It("resolves a domain that is on neither list", func() {
+				Expect(sut.Resolve(ctx, newRequestWithClient("wikipedia.org.", A, "1.2.1.2", "laptop"))).
+					Should(
+						SatisfyAll(
+							HaveNoAnswer(),
+							HaveResponseType(ResponseTypeRESOLVED),
+							HaveReturnCode(dns.RcodeSuccess),
+						))
+
+				m.AssertExpectations(GinkgoT())
+			})
+
+			It("still blocks a denylisted domain, naming the group that blocked it", func() {
+				Expect(sut.Resolve(ctx, newRequestWithClient("ads.example.com.", A, "1.2.1.2", "laptop"))).
+					Should(
+						SatisfyAll(
+							BeDNSRecord("ads.example.com.", A, "0.0.0.0"),
+							HaveResponseType(ResponseTypeBLOCKED),
+							HaveReturnCode(dns.RcodeSuccess),
+							HaveReason("BLOCKED (ads: ads.example.com)"),
+						))
+			})
+
+			It("allows a domain the allowlist-only group excepts from the other group's denylist", func() {
+				Expect(sut.Resolve(ctx, newRequestWithClient("social.example.com.", A, "1.2.1.2", "laptop"))).
+					Should(
+						SatisfyAll(
+							HaveNoAnswer(),
+							HaveResponseType(ResponseTypeRESOLVED),
+							HaveReturnCode(dns.RcodeSuccess),
+						))
+
+				m.AssertExpectations(GinkgoT())
+			})
+
+			It("leaves clients that do not have the allowlist-only group unaffected", func() {
+				Expect(sut.Resolve(ctx, newRequestWithClient("social.example.com.", A, "1.2.1.3", "phone"))).
+					Should(
+						SatisfyAll(
+							BeDNSRecord("social.example.com.", A, "0.0.0.0"),
+							HaveResponseType(ResponseTypeBLOCKED),
+							HaveReturnCode(dns.RcodeSuccess),
+							HaveReason("BLOCKED (ads: social.example.com)"),
+						))
+			})
+
+			// Deactivating the denylist group must not promote the remaining allowlist
+			// into a whitelist: disabling blocking can only ever block less, never more.
+			It("does not switch to allowlist-only mode when the denylist group is disabled", func() {
+				Expect(sut.DisableBlocking(ctx, 0, []string{"ads"})).Should(Succeed())
+
+				Expect(sut.Resolve(ctx, newRequestWithClient("wikipedia.org.", A, "1.2.1.2", "laptop"))).
+					Should(
+						SatisfyAll(
+							HaveNoAnswer(),
+							HaveResponseType(ResponseTypeRESOLVED),
+							HaveReturnCode(dns.RcodeSuccess),
+						))
+
+				m.AssertExpectations(GinkgoT())
+			})
+		})
+
 		When("IP address is on black and allowlist", func() {
 			BeforeEach(func() {
 				sutConfig = config.Blocking{
@@ -849,7 +1333,7 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 							SatisfyAll(
 								BeDNSRecord("blocked3.com.", A, "0.0.0.0"),
 								HaveResponseType(ResponseTypeBLOCKED),
-								HaveReason("BLOCKED (defaultGroup)"),
+								HaveReason("BLOCKED (defaultGroup: blocked3.com)"),
 								HaveReturnCode(dns.RcodeSuccess),
 							))
 				})
@@ -860,7 +1344,7 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 							SatisfyAll(
 								BeDNSRecord("domain1.com.", A, "0.0.0.0"),
 								HaveResponseType(ResponseTypeBLOCKED),
-								HaveReason("BLOCKED (group1)"),
+								HaveReason("BLOCKED (group1: domain1.com)"),
 								HaveReturnCode(dns.RcodeSuccess),
 							))
 				})
@@ -923,7 +1407,7 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 							SatisfyAll(
 								BeDNSRecord("domain1.com.", A, "0.0.0.0"),
 								HaveResponseType(ResponseTypeBLOCKED),
-								HaveReason("BLOCKED (group1)"),
+								HaveReason("BLOCKED (group1: domain1.com)"),
 								HaveReturnCode(dns.RcodeSuccess),
 							))
 				})
@@ -938,7 +1422,7 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 							SatisfyAll(
 								BeDNSRecord("blocked3.com.", A, "0.0.0.0"),
 								HaveResponseType(ResponseTypeBLOCKED),
-								HaveReason("BLOCKED (defaultGroup)"),
+								HaveReason("BLOCKED (defaultGroup: blocked3.com)"),
 								HaveReturnCode(dns.RcodeSuccess),
 							))
 				})
@@ -948,7 +1432,7 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 							SatisfyAll(
 								BeDNSRecord("domain1.com.", A, "0.0.0.0"),
 								HaveResponseType(ResponseTypeBLOCKED),
-								HaveReason("BLOCKED (group1)"),
+								HaveReason("BLOCKED (group1: domain1.com)"),
 								HaveReturnCode(dns.RcodeSuccess),
 							))
 				})
@@ -1004,7 +1488,7 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 							SatisfyAll(
 								BeDNSRecord("blocked3.com.", A, "0.0.0.0"),
 								HaveResponseType(ResponseTypeBLOCKED),
-								HaveReason("BLOCKED (defaultGroup)"),
+								HaveReason("BLOCKED (defaultGroup: blocked3.com)"),
 								HaveReturnCode(dns.RcodeSuccess),
 							))
 
@@ -1013,7 +1497,7 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 							SatisfyAll(
 								BeDNSRecord("domain1.com.", A, "0.0.0.0"),
 								HaveResponseType(ResponseTypeBLOCKED),
-								HaveReason("BLOCKED (group1)"),
+								HaveReason("BLOCKED (group1: domain1.com)"),
 								HaveReturnCode(dns.RcodeSuccess),
 							))
 				})
@@ -1028,7 +1512,7 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 							SatisfyAll(
 								BeDNSRecord("blocked3.com.", A, "0.0.0.0"),
 								HaveResponseType(ResponseTypeBLOCKED),
-								HaveReason("BLOCKED (defaultGroup)"),
+								HaveReason("BLOCKED (defaultGroup: blocked3.com)"),
 								HaveReturnCode(dns.RcodeSuccess),
 							))
 				})
@@ -1038,7 +1522,7 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 							SatisfyAll(
 								BeDNSRecord("domain1.com.", A, "0.0.0.0"),
 								HaveResponseType(ResponseTypeBLOCKED),
-								HaveReason("BLOCKED (group1)"),
+								HaveReason("BLOCKED (group1: domain1.com)"),
 								HaveReturnCode(dns.RcodeSuccess),
 							))
 				})
@@ -1061,7 +1545,7 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 							SatisfyAll(
 								BeDNSRecord("blocked3.com.", A, "0.0.0.0"),
 								HaveResponseType(ResponseTypeBLOCKED),
-								HaveReason("BLOCKED (defaultGroup)"),
+								HaveReason("BLOCKED (defaultGroup: blocked3.com)"),
 								HaveReturnCode(dns.RcodeSuccess),
 							))
 				})
@@ -1092,7 +1576,7 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 							SatisfyAll(
 								BeDNSRecord("blocked3.com.", A, "0.0.0.0"),
 								HaveResponseType(ResponseTypeBLOCKED),
-								HaveReason("BLOCKED (defaultGroup)"),
+								HaveReason("BLOCKED (defaultGroup: blocked3.com)"),
 								HaveReturnCode(dns.RcodeSuccess),
 							))
 
@@ -1101,7 +1585,7 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 							SatisfyAll(
 								BeDNSRecord("domain1.com.", A, "0.0.0.0"),
 								HaveResponseType(ResponseTypeBLOCKED),
-								HaveReason("BLOCKED (group1)"),
+								HaveReason("BLOCKED (group1: domain1.com)"),
 								HaveReturnCode(dns.RcodeSuccess),
 							))
 				})
@@ -1145,11 +1629,11 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 			It("should return error", func() {
 				_, err := NewBlockingResolver(ctx, config.Blocking{
 					BlockType: "wrong",
-				}, nil, systemResolverBootstrap)
+				}, systemResolverBootstrap)
 
 				Expect(err).Should(HaveOccurred())
 				Expect(err.Error()).Should(ContainSubstring(
-					"unknown blockType 'wrong', please use one of: ZeroIP, NxDomain or specify destination IP address(es)"))
+					"unknown blockType 'wrong', please use one of: ZeroIP, NxDomain, Refused or specify destination IP address(es)"))
 			})
 		})
 		When("strategy is failOnError", func() {
@@ -1161,83 +1645,90 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 						Init: config.Init{Strategy: config.InitStrategyFailOnError},
 					},
 					BlockType: "zeroIp",
-				}, nil, systemResolverBootstrap)
+				}, systemResolverBootstrap)
 				Expect(err).Should(HaveOccurred())
 			})
 		})
 	})
 
-	Describe("Redis is configured", func() {
-		var redisServer *miniredis.Miniredis
-		var redisClient *redis.Client
-		var err error
-		JustBeforeEach(func() {
-			redisServer, err = miniredis.Run()
+	Describe("Remote blocking state via event bus", func() {
+		When("BlockingStateChangedRemote with enabled=true is received", func() {
+			It("should enable blocking", func() {
+				Expect(sut.DisableBlocking(ctx, 0, []string{})).Should(Succeed())
+				Expect(sut.BlockingStatus().Enabled).Should(BeFalse())
 
-			Expect(err).Should(Succeed())
-
-			var rcfg config.Redis
-			err = defaults.Set(&rcfg)
-
-			Expect(err).Should(Succeed())
-			rcfg.Address = redisServer.Addr()
-			redisClient, err = redis.New(context.TODO(), &rcfg)
-
-			Expect(err).Should(Succeed())
-			Expect(redisClient).ShouldNot(BeNil())
-			sutConfig = config.Blocking{
-				BlockType: "ZEROIP",
-				BlockTTL:  config.Duration(time.Minute),
-			}
-
-			sut, err = NewBlockingResolver(ctx, sutConfig, redisClient, systemResolverBootstrap)
-			Expect(err).Should(Succeed())
-		})
-		JustAfterEach(func() {
-			redisServer.Close()
-		})
-		When("disable", func() {
-			It("should return disable", func() {
-				sut.EnableBlocking(context.TODO())
-
-				redisMockMsg := &redis.EnabledMessage{
-					State: false,
-				}
-				redisClient.EnabledChannel <- redisMockMsg
+				Bus().Publish(BlockingStateChangedRemote, BlockingState{Enabled: true})
 
 				Eventually(func() bool {
 					return sut.BlockingStatus().Enabled
-				}, "5s").Should(BeFalse())
+				}).Should(BeTrue())
 			})
 		})
-		When("disable", func() {
-			It("should return disable", func() {
-				sut.EnableBlocking(context.TODO())
-				redisMockMsg := &redis.EnabledMessage{
-					State:  false,
-					Groups: []string{"unknown"},
-				}
-				redisClient.EnabledChannel <- redisMockMsg
+		When("BlockingStateChangedRemote with enabled=false is received", func() {
+			It("should disable blocking", func() {
+				Bus().Publish(BlockingStateChangedRemote, BlockingState{
+					Enabled: false,
+					Groups:  []string{},
+				})
 
 				Eventually(func() bool {
 					return sut.BlockingStatus().Enabled
-				}, "5s").Should(BeTrue())
+				}).Should(BeFalse())
 			})
 		})
-		When("enable", func() {
-			It("should return enable", func() {
-				err = sut.DisableBlocking(context.TODO(), time.Hour, []string{})
-				Expect(err).Should(Succeed())
+	})
+})
 
-				redisMockMsg := &redis.EnabledMessage{
-					State: true,
-				}
-				redisClient.EnabledChannel <- redisMockMsg
+var _ = Describe("formatBlockReason", func() {
+	It("renders the matched group and rule", func() {
+		Expect(formatBlockReason(map[string]string{"gr1": "domain1.com"}, "")).
+			Should(Equal("BLOCKED (gr1: domain1.com)"))
+	})
 
-				Eventually(func() bool {
-					return sut.BlockingStatus().Enabled
-				}, "5s").Should(BeTrue())
-			})
-		})
+	It("includes the entry type when given (e.g. CNAME/IP)", func() {
+		Expect(formatBlockReason(map[string]string{"ads": "*.docler.com"}, "CNAME")).
+			Should(Equal("BLOCKED CNAME (ads: *.docler.com)"))
+	})
+
+	It("renders multiple matched groups sorted by group for deterministic output", func() {
+		matches := map[string]string{"zeta": "z.com", "alpha": "a.com", "mid": "m.com"}
+
+		// repeat to guard against Go's randomized map iteration order
+		for range 20 {
+			Expect(formatBlockReason(matches, "")).
+				Should(Equal("BLOCKED (alpha: a.com, mid: m.com, zeta: z.com)"))
+		}
+	})
+})
+
+var _ = Describe("formatBlockReasonLabel", func() {
+	It("renders the matched group name only, without the rule", func() {
+		Expect(formatBlockReasonLabel(map[string]string{"gr1": "domain1.com"}, "")).
+			Should(Equal("BLOCKED (gr1)"))
+	})
+
+	It("includes the entry type when given (e.g. CNAME/IP)", func() {
+		Expect(formatBlockReasonLabel(map[string]string{"ads": "*.docler.com"}, "CNAME")).
+			Should(Equal("BLOCKED CNAME (ads)"))
+	})
+
+	It("keeps the label bounded: different rules in the same group yield the same label", func() {
+		// This is the whole point of the label: the rule (regex/domain) is
+		// unbounded, but the group set is not. Both must map to one metric series.
+		a := formatBlockReasonLabel(map[string]string{"ads": "/snapchat/"}, "")
+		b := formatBlockReasonLabel(map[string]string{"ads": "tracker.example.com"}, "")
+
+		Expect(a).Should(Equal("BLOCKED (ads)"))
+		Expect(b).Should(Equal(a))
+	})
+
+	It("renders multiple matched groups sorted by group for deterministic output", func() {
+		matches := map[string]string{"zeta": "z.com", "alpha": "a.com", "mid": "m.com"}
+
+		// repeat to guard against Go's randomized map iteration order
+		for range 20 {
+			Expect(formatBlockReasonLabel(matches, "")).
+				Should(Equal("BLOCKED (alpha, mid, zeta)"))
+		}
 	})
 })

@@ -89,7 +89,8 @@ var _ = Describe("SudnResolver", Label("sudnResolver"), func() {
 
 			description := fmt.Sprintf("should %s %s IN %s", verb, qName, qType)
 
-			args := []any{qType, qName, expectedRCode}
+			args := make([]any, 0, 3+len(extraMatchers))
+			args = append(args, qType, qName, expectedRCode)
 			args = append(args, extraMatchers...)
 
 			return Entry(description, args...)
@@ -149,6 +150,11 @@ var _ = Describe("SudnResolver", Label("sudnResolver"), func() {
 			entry(A, "something.home.", dns.RcodeNameError),
 			entry(A, "something.lan.", dns.RcodeNameError),
 			entry(A, "something.onion.", dns.RcodeNameError),
+
+			// DNS names are case-insensitive (RFC 4343): mixed-case queries
+			// (clients, dns0x20 randomization) must not skip special-use handling
+			entry(A, "LOCALHOST.", dns.RcodeSuccess, BeDNSRecord("LOCALHOST.", A, loopbackV4.String())),
+			entry(A, "SoMeThInG.TeSt.", dns.RcodeNameError),
 		)
 
 		When("RFC 6762 Appendix G is disabled", func() {
@@ -202,5 +208,28 @@ var _ = Describe("SudnResolver", Label("sudnResolver"), func() {
 			Expect(err).Should(Succeed())
 			Expect(resp).ShouldNot(HaveResponseType(ResponseTypeSPECIAL))
 		})
+
+		// RFC 9462: Discovery of Designated Resolvers (DDR).
+		// Section 4 + 6.1 + 6.4: blocky has no Designated Resolvers to announce
+		// and MUST NOT forward queries for `resolver.arpa.` upstream. Reply
+		// NODATA (NOERROR + empty Answer) for every QTYPE across the zone.
+		DescribeTable("RFC 9462 resolver.arpa zone (NODATA)",
+			func(qType dns.Type, qName string) {
+				resp, err := sut.Resolve(ctx, newRequest(qName, qType))
+				Expect(err).Should(Succeed())
+				Expect(resp).Should(SatisfyAll(
+					HaveResponseType(ResponseTypeSPECIAL),
+					HaveReason("Special-Use Domain Name"),
+					HaveReturnCode(dns.RcodeSuccess),
+					HaveNoAnswer(),
+				))
+			},
+			Entry("SVCB for _dns.resolver.arpa.", dns.Type(dns.TypeSVCB), "_dns.resolver.arpa."),
+			Entry("A for _dns.resolver.arpa.", A, "_dns.resolver.arpa."),
+			Entry("AAAA for _dns.resolver.arpa.", AAAA, "_dns.resolver.arpa."),
+			Entry("A for the zone apex resolver.arpa.", A, "resolver.arpa."),
+			Entry("HTTPS for an arbitrary subdomain", HTTPS, "foo.bar.resolver.arpa."),
+			Entry("DS for the zone apex (no forwarding)", DS, "resolver.arpa."),
+		)
 	})
 })

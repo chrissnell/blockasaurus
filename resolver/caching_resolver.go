@@ -9,15 +9,14 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/0xERR0R/blocky/cache"
 	"github.com/0xERR0R/blocky/config"
 	"github.com/0xERR0R/blocky/evt"
 	"github.com/0xERR0R/blocky/metrics"
 	"github.com/0xERR0R/blocky/model"
-	"github.com/0xERR0R/blocky/redis"
 	"github.com/0xERR0R/blocky/util"
 	expirationcache "github.com/0xERR0R/expiration-cache"
 
-	"github.com/0xERR0R/blocky/cache"
 	"github.com/0xERR0R/blocky/cache/prefetching"
 	"github.com/miekg/dns"
 	"github.com/prometheus/client_golang/prometheus"
@@ -25,7 +24,15 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-const defaultCachingCleanUpInterval = 5 * time.Second
+const (
+	defaultCachingCleanUpInterval = 5 * time.Second
+
+	// cachedReason is the response reason used for cache hits.
+	cachedReason = "CACHED"
+)
+
+// CacheDecorator optionally wraps the result cache (e.g., with Redis sync).
+type CacheDecorator func(cache.ExpiringCache[[]byte]) (cache.ExpiringCache[[]byte], error)
 
 //nolint:gochecknoglobals
 var (
@@ -52,9 +59,12 @@ type CachingResolver struct {
 
 	emitMetricEvents bool // disabled by Bootstrap
 
-	resultCache cache.ExpiringCache[[]byte]
+	// prefetchDO makes prefetch reloads request DNSSEC records (DO bit) so a
+	// reload can't replace a signed entry with an unsigned one. Set from
+	// dnssec.validate — unsigned caches shouldn't grow with RRSIGs.
+	prefetchDO bool
 
-	redisClient *redis.Client
+	resultCache cache.ExpiringCache[[]byte]
 
 	compiledExclusions []*regexp.Regexp
 }
@@ -62,30 +72,35 @@ type CachingResolver struct {
 // NewCachingResolver creates a new resolver instance
 func NewCachingResolver(ctx context.Context,
 	cfg config.Caching,
-	redis *redis.Client,
+	dnssecCfg config.DNSSEC,
+	decorator CacheDecorator,
 ) (*CachingResolver, error) {
-	return newCachingResolver(ctx, cfg, redis, true)
+	return newCachingResolver(ctx, cfg, dnssecCfg, decorator, true)
 }
 
 func newCachingResolver(ctx context.Context,
 	cfg config.Caching,
-	redis *redis.Client,
+	dnssecCfg config.DNSSEC,
+	decorator CacheDecorator,
 	emitMetricEvents bool,
 ) (*CachingResolver, error) {
 	c := &CachingResolver{
-		configurable: withConfig(&cfg),
-		typed:        withType("caching"),
-
-		redisClient:      redis,
+		configurable:     withConfig(&cfg),
+		typed:            withType("caching"),
 		emitMetricEvents: emitMetricEvents,
+		prefetchDO:       dnssecCfg.Validate,
 	}
 
 	configureCaches(ctx, c, &cfg)
 	err := configureExclusions(c, &cfg)
 
-	if c.redisClient != nil {
-		go c.redisSubscriber(ctx)
-		c.redisClient.GetRedisCache(ctx)
+	if decorator != nil {
+		decorated, err := decorator(c.resultCache)
+		if err != nil {
+			return nil, fmt.Errorf("failed to apply cache decorator: %w", err)
+		}
+
+		c.resultCache = decorated
 	}
 
 	return c, err
@@ -95,6 +110,7 @@ func configureCaches(ctx context.Context, c *CachingResolver, cfg *config.Cachin
 	options := expirationcache.Options{
 		CleanupInterval: defaultCachingCleanUpInterval,
 		MaxSize:         uint(cfg.MaxItemsCount),
+		Shards:          cache.ShardCount(),
 		OnCacheHitFn: func(key string) {
 			cacheHits.Inc()
 		},
@@ -154,44 +170,39 @@ func (r *CachingResolver) reloadCacheEntry(ctx context.Context, cacheKey string)
 	logger.Debugf("prefetching '%s' (%s)", util.Obfuscate(domainName), qType)
 
 	req := newRequest(dns.Fqdn(domainName), qType)
-	response, err := r.next.Resolve(ctx, req)
 
+	// Prefetch reloads bypass the resolvers above the cache, including the DNSSEC
+	// resolver that sets DO on normal queries. When validation is enabled, request
+	// DNSSEC records so a reload can't replace a signed entry with an unsigned one
+	// (which would then fail re-validation as bogus on the next hit).
+	if r.prefetchDO {
+		req.Req.SetEdns0(ednsUDPSize, true)
+	}
+
+	response, err := r.next.Resolve(ctx, req)
 	if err != nil {
 		util.LogOnError(ctx, fmt.Sprintf("can't prefetch '%s' ", domainName), err)
 
 		return nil, 0
 	}
 
-	if response.Res.Rcode != dns.RcodeSuccess {
+	// only refresh entries the normal put path would cache: upstream-derived,
+	// successful, not truncated and without the CD flag (mirrors putInCache).
+	if !isCacheableResponseType(response.RType) ||
+		response.Res.Rcode != dns.RcodeSuccess || !isResponseCacheable(response.Res) {
 		return nil, 0
 	}
 
-	packed, err := response.Res.Pack()
+	// clamp the record TTLs before packing so the stored (and Redis-synced) bytes
+	// carry the same TTLs the normal put path produces.
+	ttl := r.adjustTTLs(response.Res.Answer)
+
+	packed, err := packForCache(ctx, response.Res)
 	if err != nil {
-		logger.Error("unable to pack response", err)
-
 		return nil, 0
 	}
 
-	return &packed, r.adjustTTLs(response.Res.Answer)
-}
-
-func (r *CachingResolver) redisSubscriber(ctx context.Context) {
-	ctx, logger := r.log(ctx)
-
-	for {
-		select {
-		case rc := <-r.redisClient.CacheChannel:
-			if rc != nil {
-				logger.Debug("Received key from redis: ", rc.Key)
-				ttl := r.adjustTTLs(rc.Response.Res.Answer)
-				r.putInCache(ctx, rc.Key, rc.Response, ttl, false)
-			}
-
-		case <-ctx.Done():
-			return
-		}
-	}
+	return &packed, ttl
 }
 
 // LogConfig implements `config.Configurable`.
@@ -215,7 +226,7 @@ func (r *CachingResolver) Resolve(ctx context.Context, request *model.Request) (
 	for _, question := range request.Req.Question {
 		domain := util.ExtractDomain(question)
 		cacheKey := util.GenerateCacheKey(dns.Type(question.Qtype), domain)
-		logger := logger.WithField("domain", util.Obfuscate(domain))
+		logger := logger.WithField(logFieldDomain, util.Obfuscate(domain))
 
 		val, ttl := r.getFromCache(logger, cacheKey)
 
@@ -225,10 +236,10 @@ func (r *CachingResolver) Resolve(ctx context.Context, request *model.Request) (
 			val.SetRcode(request.Req, val.Rcode)
 
 			// Adjust TTL
-			setTTLInCachedResponse(val, ttl)
+			r.setTTLInCachedResponse(val, ttl)
 
 			if val.Rcode == dns.RcodeSuccess {
-				return &model.Response{Res: val, RType: model.ResponseTypeCACHED, Reason: "CACHED"}, nil
+				return &model.Response{Res: val, RType: model.ResponseTypeCACHED, Reason: cachedReason}, nil
 			}
 
 			return &model.Response{Res: val, RType: model.ResponseTypeCACHED, Reason: "CACHED NEGATIVE"}, nil
@@ -239,7 +250,7 @@ func (r *CachingResolver) Resolve(ctx context.Context, request *model.Request) (
 
 		if err == nil {
 			cacheTTL := r.adjustTTLs(response.Res.Answer)
-			r.putInCache(ctx, cacheKey, response, cacheTTL, true)
+			r.putInCache(ctx, cacheKey, response, cacheTTL)
 		} else {
 			return nil, err
 		}
@@ -266,15 +277,37 @@ func (r *CachingResolver) getFromCache(logger *logrus.Entry, key string) (*dns.M
 	return res, ttl
 }
 
-func setTTLInCachedResponse(resp *dns.Msg, ttl time.Duration) {
-	minTTL := uint32(math.MaxInt32)
-	// find smallest TTL first
-	for _, rr := range resp.Answer {
-		minTTL = min(minTTL, rr.Header().Ttl)
+// setTTLInCachedResponse ages all records of a cached message by the time the entry has
+// already spent in the cache, so that every section counts down instead of repeating the
+// TTLs the upstream sent. `ttl` is the entry's remaining lifetime.
+func (r *CachingResolver) setTTLInCachedResponse(resp *dns.Msg, ttl time.Duration) {
+	// Mirrors putInCache: only a successful, non-empty answer is stored with the smallest
+	// answer TTL (see adjustTTLs). Everything else -- NXDOMAIN (even one carrying a CNAME
+	// chain) and NODATA -- is stored with the negative cache time. That baseline is what
+	// the remaining lifetime has been counting down from.
+	baseTTL := r.cfg.CacheTimeNegative.SecondsU32()
+
+	if resp.Rcode == dns.RcodeSuccess && len(resp.Answer) > 0 {
+		baseTTL = uint32(math.MaxInt32)
+		for _, rr := range resp.Answer {
+			baseTTL = min(baseTTL, rr.Header().Ttl)
+		}
 	}
 
-	for _, rr := range resp.Answer {
-		rr.Header().Ttl = rr.Header().Ttl - minTTL + uint32(ttl.Seconds())
+	var elapsed uint32
+	if remaining := uint32(ttl.Seconds()); baseTTL > remaining {
+		elapsed = baseTTL - remaining
+	}
+
+	for _, section := range [][]dns.RR{resp.Answer, resp.Ns, resp.Extra} {
+		for _, rr := range section {
+			// An OPT record's TTL field carries flags and the extended rcode, not a lifetime.
+			if rr.Header().Rrtype == dns.TypeOPT {
+				continue
+			}
+
+			rr.Header().Ttl = max(rr.Header().Ttl, elapsed) - elapsed
+		}
 	}
 }
 
@@ -322,32 +355,49 @@ func isResponseCacheable(msg *dns.Msg) bool {
 	return !msg.Truncated && !msg.CheckingDisabled
 }
 
-func (r *CachingResolver) putInCache(
-	ctx context.Context, cacheKey string, response *model.Response, ttl time.Duration, publish bool,
-) {
-	respCopy := response.Res.Copy()
+// packForCache copies the message, strips EDNS0 OPT records (which must never be
+// cached) and returns the packed wire bytes. Both the normal put path and the
+// prefetch reload path use it so cached and prefetched entries are byte-identical.
+func packForCache(ctx context.Context, msg *dns.Msg) ([]byte, error) {
+	msgCopy := msg.Copy()
+	util.RemoveEdns0Record(msgCopy)
 
-	// don't cache any EDNS OPT records
-	util.RemoveEdns0Record(respCopy)
-
-	packed, err := respCopy.Pack()
+	packed, err := msgCopy.Pack()
 	util.LogOnError(ctx, "error on packing", err)
 
-	if err == nil {
-		if response.Res.Rcode == dns.RcodeSuccess && isResponseCacheable(response.Res) {
-			// put value into cache
-			r.resultCache.Put(cacheKey, &packed, ttl)
-		} else if response.Res.Rcode == dns.RcodeNameError {
-			if r.cfg.CacheTimeNegative.IsAboveZero() {
-				// put negative cache if result code is NXDOMAIN
-				r.resultCache.Put(cacheKey, &packed, r.cfg.CacheTimeNegative.ToDuration())
-			}
-		}
+	return packed, err
+}
+
+// isCacheableResponseType reports whether the response originates from the general
+// upstreams, directly (RESOLVED) or via DNS64 synthesis (SYNTHESIZED). Only such
+// answers may be cached: the rebinding protection resolver sits above the cache and
+// inspects CACHED responses, so caching answers from trusted local sources
+// (conditional upstream, special-use domains) would re-label them as CACHED on hits
+// and subject them to inspection.
+func isCacheableResponseType(rType model.ResponseType) bool {
+	return rType == model.ResponseTypeRESOLVED || rType == model.ResponseTypeSYNTHESIZED
+}
+
+func (r *CachingResolver) putInCache(
+	ctx context.Context, cacheKey string, response *model.Response, ttl time.Duration,
+) {
+	if !isCacheableResponseType(response.RType) {
+		return
 	}
 
-	if publish && r.redisClient != nil {
-		res := *respCopy
-		r.redisClient.PublishCache(cacheKey, &res)
+	packed, err := packForCache(ctx, response.Res)
+	if err != nil {
+		return
+	}
+
+	if response.Res.Rcode == dns.RcodeSuccess && isResponseCacheable(response.Res) {
+		// put value into cache
+		r.resultCache.Put(cacheKey, &packed, ttl)
+	} else if response.Res.Rcode == dns.RcodeNameError {
+		if r.cfg.CacheTimeNegative.IsAboveZero() {
+			// put negative cache if result code is NXDOMAIN
+			r.resultCache.Put(cacheKey, &packed, r.cfg.CacheTimeNegative.ToDuration())
+		}
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 
 const UpstreamDefaultCfgName = "default"
 
+<<<<<<< HEAD
 // upstreamsYAMLSentinel rejects any `upstreams:` section in YAML. Upstream
 // configuration lives in the SQLite config store and is managed via the web UI.
 // A hard error is returned with a pointer to the migration docs.
@@ -20,18 +21,45 @@ func (upstreamsYAMLSentinel) UnmarshalYAML(_ func(any) error) error {
 			"remove the 'upstreams:' block from your YAML configuration and manage " +
 			"upstream groups + settings via the web UI (see docs/migration-upstreams.md)",
 	)
+=======
+// QUICConfig holds QUIC-specific upstream settings.
+type QUICConfig struct {
+	// Maximum idle duration before the QUIC connection is closed.
+	MaxIdleTimeout Duration `default:"30s" yaml:"maxIdleTimeout"`
+	// Interval at which keep-alive packets are sent to maintain the QUIC connection.
+	KeepAlivePeriod Duration `default:"15s" yaml:"keepAlivePeriod"`
+>>>>>>> upstream/main
 }
 
 // Upstreams upstream servers configuration
 type Upstreams struct {
-	Init      Init             `yaml:"init"`
-	Timeout   Duration         `default:"2s"            yaml:"timeout"` // always > 0
-	Groups    UpstreamGroups   `yaml:"groups"`
-	Strategy  UpstreamStrategy `default:"parallel_best" yaml:"strategy"`
-	UserAgent string           `yaml:"userAgent"`
+	// Initialization strategy controlling when upstream resolvers are tested on startup.
+	Init Init `yaml:"init"`
+	// Timeout for upstream DNS connections; a value <= 0 is reset to the default.
+	Timeout Duration `default:"2s" yaml:"timeout"`
+	// Named groups of upstream DNS resolvers; the "default" group is required.
+	Groups UpstreamGroups `yaml:"groups"`
+	// Strategy for selecting which upstream(s) to use per query (parallel_best, random, strict).
+	Strategy UpstreamStrategy `default:"parallel_best" yaml:"strategy"`
+	// HTTP User-Agent header sent when connecting to DoH upstream servers.
+	UserAgent string `yaml:"userAgent"`
+	// QUIC-specific connection settings used when DoQ upstreams are configured.
+	QUIC QUICConfig `yaml:"quic"`
 }
 
 type UpstreamGroups map[string][]Upstream
+
+func (c *Upstreams) hasQuicUpstream() bool {
+	for _, upstreams := range c.Groups {
+		for _, u := range upstreams {
+			if u.Net == NetProtocolQuic {
+				return true
+			}
+		}
+	}
+
+	return false
+}
 
 func (c *Upstreams) validate(logger *logrus.Entry) {
 	defaults := mustDefault[Upstreams]()
@@ -39,6 +67,22 @@ func (c *Upstreams) validate(logger *logrus.Entry) {
 	if !c.Timeout.IsAboveZero() {
 		logger.Warnf("upstreams.timeout <= 0, setting to %s", defaults.Timeout)
 		c.Timeout = defaults.Timeout
+	}
+
+	if c.hasQuicUpstream() {
+		if !c.QUIC.MaxIdleTimeout.IsAboveZero() {
+			logger.Warnf("upstreams.quic.maxIdleTimeout <= 0, setting to %s", defaults.QUIC.MaxIdleTimeout)
+			c.QUIC.MaxIdleTimeout = defaults.QUIC.MaxIdleTimeout
+		}
+
+		if !c.QUIC.KeepAlivePeriod.IsAboveZero() {
+			logger.Warnf("upstreams.quic.keepAlivePeriod <= 0, setting to %s", defaults.QUIC.KeepAlivePeriod)
+			c.QUIC.KeepAlivePeriod = defaults.QUIC.KeepAlivePeriod
+		}
+
+		if c.QUIC.KeepAlivePeriod.ToDuration() >= c.QUIC.MaxIdleTimeout.ToDuration() {
+			logger.Warn("upstreams.quic.keepAlivePeriod >= maxIdleTimeout, keep-alive won't prevent idle timeout")
+		}
 	}
 }
 
@@ -62,6 +106,12 @@ func (c *Upstreams) LogConfig(logger *logrus.Entry) {
 		for _, upstream := range upstreams {
 			logger.Infof("    - %s", upstream)
 		}
+	}
+
+	if c.hasQuicUpstream() {
+		logger.Info("quic:")
+		logger.Info("  maxIdleTimeout: ", c.QUIC.MaxIdleTimeout)
+		logger.Info("  keepAlivePeriod: ", c.QUIC.KeepAlivePeriod)
 	}
 }
 

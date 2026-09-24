@@ -1,7 +1,12 @@
+<<<<<<< HEAD
 // Modified by Chris Snell, 2026
 // SPDX-License-Identifier: Apache-2.0
 
 //go:generate go tool go-enum -f=$GOFILE --marshal --names --values
+=======
+//go:generate go tool go-enum -f=$GOFILE --marshal --names --values --template ../tools/schemagen/templates/enum_description.tmpl
+//go:generate go run ../tools/schemagen
+>>>>>>> upstream/main
 package config
 
 import (
@@ -12,6 +17,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +26,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	. "github.com/0xERR0R/blocky/config/migration"
+	"github.com/0xERR0R/blocky/config/schema"
 	"github.com/0xERR0R/blocky/log"
 	"github.com/0xERR0R/blocky/util"
 	"github.com/creasty/defaults"
@@ -30,6 +37,7 @@ const (
 	udpPort   = 53
 	tlsPort   = 853
 	httpsPort = 443
+	quicPort  = 853
 
 	secretObfuscator = "********"
 )
@@ -48,13 +56,14 @@ type Configurable interface {
 // tcp+udp // TCP and UDP protocols
 // tcp-tls // TCP-TLS protocol
 // https // HTTPS protocol
+// quic // DNS-over-QUIC protocol
 // )
 type NetProtocol uint16
 
 // IPVersion represents IP protocol version(s). ENUM(
-// dual // IPv4 and IPv6
-// v4   // IPv4 only
-// v6   // IPv6 only
+// dual // Use both IPv4 and IPv6.
+// v4 // Use IPv4 only.
+// v6 // Use IPv6 only.
 // )
 type IPVersion uint8
 
@@ -95,20 +104,22 @@ func (v *TLSVersion) validate(logger *logrus.Entry) {
 }
 
 // QueryLogType type of the query log ENUM(
-// console // use logger as fallback
-// none // no logging
-// mysql // MySQL or MariaDB database
-// postgresql // PostgreSQL database
-// csv // CSV file per day
-// csv-client // CSV file per day and client
-// timescale // Timescale database
+// console // Log to console output (used when no type is set).
+// none // Do not log any queries.
+// mysql // Log each query to an external MySQL or MariaDB database.
+// postgresql // Log each query to an external PostgreSQL database.
+// csv // Log to a CSV file (one per day).
+// csv-client // Log to a CSV file (one per day and per client).
+// timescale // Log each query to an external Timescale database.
+// sqlite // Log each query to a local SQLite database file.
+// dnstap // Export query/response events via dnstap (Frame Streams).
 // )
 type QueryLogType int16
 
 // InitStrategy startup strategy ENUM(
-// blocking // synchronously download blocking lists on startup
-// failOnError // synchronously download blocking lists on startup and shutdown on error
-// fast // asyncronously download blocking lists on startup
+// blocking // Initialization runs before DNS resolution starts; errors are logged but Blocky keeps running if possible.
+// failOnError // Like blocking but Blocky exits with an error if initialization fails.
+// fast // Blocky serves DNS immediately and runs initialization in the background.
 // )
 type InitStrategy uint16
 
@@ -144,8 +155,15 @@ func (s InitStrategy) Do(ctx context.Context, init func(context.Context) error, 
 // ENUM(clientIP,clientName,responseReason,responseAnswer,question,duration)
 type QueryLogField string
 
-// UpstreamStrategy data field to be logged
-// ENUM(parallel_best,strict,random)
+// ProxyProtocolType is a TCP listener family that requires a PROXY protocol header.
+// ENUM(dns,http,https,tls)
+type ProxyProtocolType string
+
+// UpstreamStrategy upstream server usage strategy ENUM(
+// parallel_best // Picks 2 random weighted resolvers per query and returns the fastest answer (default).
+// strict // Queries upstreams in strict order; the next is tried only if the previous fails.
+// random // Picks one random weighted resolver per query; another is tried on failure.
+// )
 type UpstreamStrategy uint8
 
 //nolint:gochecknoglobals
@@ -153,6 +171,7 @@ var netDefaultPort = map[NetProtocol]uint16{
 	NetProtocolTcpUdp: udpPort,
 	NetProtocolTcpTls: tlsPort,
 	NetProtocolHttps:  httpsPort,
+	NetProtocolQuic:   quicPort,
 }
 
 //nolint:gochecknoglobals
@@ -252,6 +271,7 @@ func (b *BootstrappedUpstream) UnmarshalYAML(unmarshal func(any) error) error {
 
 // Config main configuration
 type Config struct {
+<<<<<<< HEAD
 	Upstreams        Upstreams           `yaml:"-"`
 	// UpstreamsYAML is a write-only sentinel that rejects any legacy `upstreams:`
 	// section in YAML. Upstream configuration lives in the SQLite config store and
@@ -282,6 +302,64 @@ type Config struct {
 	DNSSEC               DNSSEC               `yaml:"dnssec"`
 	ClientGroupEndpoints ClientGroupEndpoints `yaml:"clientGroupEndpoints"`
 	DatabasePath         string               `yaml:"databasePath"`
+=======
+	// Upstream DNS servers and strategy configuration.
+	Upstreams Upstreams `yaml:"upstreams"`
+	// IP version used for outgoing connections (dual, v4, v6).
+	ConnectIPVersion IPVersion `yaml:"connectIPVersion"`
+	// Custom static DNS mappings and zone definitions.
+	CustomDNS CustomDNS `yaml:"customDNS"`
+	// Conditional upstream resolvers for specific domains.
+	Conditional ConditionalUpstream `yaml:"conditional"`
+	// Blocking configuration with allow/denylists and client groups.
+	Blocking Blocking `yaml:"blocking"`
+	// Client name lookup configuration for resolving client identifiers.
+	ClientLookup ClientLookup `yaml:"clientLookup"`
+	// DNS response caching settings.
+	Caching Caching `yaml:"caching"`
+	// Query logging configuration.
+	QueryLog QueryLog `yaml:"queryLog"`
+	// Prometheus metrics configuration.
+	Prometheus Metrics `yaml:"prometheus"`
+	// In-memory statistics subsystem (24h window), served at /api/stats.
+	Statistics Statistics `yaml:"statistics"`
+	// Redis configuration for cache and state synchronization between instances.
+	Redis Redis `yaml:"redis"`
+	// Logging configuration.
+	Log log.Config `yaml:"log"`
+	// Listen addresses for DNS, HTTP, HTTPS, and TLS.
+	Ports Ports `yaml:"ports"`
+	// Minimum TLS version the DoT and DoH servers use to serve encrypted DNS requests.
+	MinTLSServeVer TLSVersion `default:"1.2" yaml:"minTlsServeVersion"`
+	// Path to the TLS certificate file for DoH and DoT; if empty, a self-signed certificate is generated.
+	CertFile string `yaml:"certFile"`
+	// Path to the TLS key file for DoH and DoT; if empty, a self-signed certificate is generated.
+	KeyFile string `yaml:"keyFile"`
+	// Bootstrap DNS servers used to resolve DoH/DoT upstream hostnames.
+	BootstrapDNS BootstrapDNS `yaml:"bootstrapDns"`
+	// Local hosts file resolution settings.
+	HostsFile HostsFile `yaml:"hostsFile"`
+	// When enabled, blocky returns NXDOMAIN immediately for non-FQDN queries.
+	FQDNOnly FQDNOnly `yaml:"fqdnOnly"`
+	// DNS query type filtering configuration.
+	Filtering Filtering `yaml:"filtering"`
+	// Extended DNS Errors (RFC 8914) configuration.
+	EDE EDE `yaml:"ede"`
+	// EDNS Client Subnet options.
+	ECS ECS `yaml:"ecs"`
+	// Special Use Domain Names (SUDN) blocking configuration.
+	SUDN SUDN `yaml:"specialUseDomains"`
+	// DNS64 synthesis configuration for IPv6-only clients (RFC 6147).
+	DNS64 DNS64 `yaml:"dns64"`
+	// DNSSEC validation configuration.
+	DNSSEC DNSSEC `yaml:"dnssec"`
+	// HTTP/3 (DoH3) server configuration.
+	HTTP3 HTTP3 `yaml:"http3"`
+	// Per-client DNS query rate limiting configuration.
+	RateLimit RateLimit `yaml:"rateLimit"`
+	// DNS rebinding protection configuration.
+	RebindingProtection RebindingProtection `yaml:"rebindingProtection"`
+>>>>>>> upstream/main
 
 	// Deprecated options
 	Deprecated struct {
@@ -302,6 +380,7 @@ type Config struct {
 }
 
 type Ports struct {
+<<<<<<< HEAD
 	DNS        ListenConfig `default:"53"         yaml:"dns"`
 	HTTP       ListenConfig `yaml:"http"`
 	HTTPS      ListenConfig `yaml:"https"`
@@ -326,6 +405,139 @@ func (c *Ports) LogConfig(logger *logrus.Entry) {
 		logger.Infof("Admin       = %s", c.AdminPort)
 		logger.Infof("Admin (TLS) = %s", c.AdminPortTLS)
 	}
+=======
+	// Listen address(es) for DNS over TCP and UDP (default: 53).
+	DNS ListenConfig `default:"53" yaml:"dns"`
+	// Listen address(es) for HTTP (metrics, REST API, DoH).
+	HTTP ListenConfig `yaml:"http"`
+	// Listen address(es) for HTTPS (metrics, REST API, DoH).
+	HTTPS ListenConfig `yaml:"https"`
+	// Listen address(es) for DNS-over-TLS (DoT).
+	TLS ListenConfig `yaml:"tls"`
+	// URL path for DoH queries.
+	DOHPath string `default:"/dns-query" yaml:"dohPath"`
+	// Allow binding the DNS and DoT listeners to addresses that are not yet assigned to a network
+	// interface, via the Linux IP_FREEBIND socket option (e.g. for Tailscale/WireGuard/VRRP addresses
+	// brought up after startup). Has no effect on wildcard binds and is ignored, with a warning, on
+	// non-Linux platforms.
+	FreeBind bool `default:"false" yaml:"freeBind"`
+	// PROXY protocol listener families. List the TCP listeners that sit behind a trusted proxy and
+	// must require a PROXY protocol header before the connection is handled, e.g. [https, tls].
+	ProxyProtocol ProxyProtocolListeners `yaml:"proxyProtocol"`
+}
+
+// ProxyProtocolListeners is the set of TCP listener families that require a PROXY protocol header.
+type ProxyProtocolListeners []ProxyProtocolType
+
+// Has reports whether the given listener family requires the PROXY protocol.
+func (p ProxyProtocolListeners) Has(t ProxyProtocolType) bool {
+	return slices.Contains(p, t)
+}
+
+func (c *Ports) LogConfig(logger *logrus.Entry) {
+	logger.Infof("DNS      = %s", c.DNS)
+	logger.Infof("TLS      = %s", c.TLS)
+	logger.Infof("HTTP     = %s", c.HTTP)
+	logger.Infof("HTTPS    = %s", c.HTTPS)
+	logger.Infof("DOHPath  = %s", c.DOHPath)
+	logger.Infof("FreeBind = %t", c.FreeBind)
+	logger.Infof("PROXY protocol = %s", c.ProxyProtocol)
+}
+
+func (c *Ports) validate() error {
+	if c.DOHPath == "" {
+		return errors.New("dohPath must not be empty")
+	}
+
+	if !strings.HasPrefix(c.DOHPath, "/") {
+		return fmt.Errorf("dohPath must start with '/', got %q", c.DOHPath)
+	}
+
+	if strings.ContainsAny(c.DOHPath, " \t") {
+		return fmt.Errorf("dohPath must not contain whitespace, got %q", c.DOHPath)
+	}
+
+	if strings.Contains(c.DOHPath, "?") {
+		return fmt.Errorf("dohPath must not contain '?', got %q", c.DOHPath)
+	}
+
+	if strings.Contains(c.DOHPath, "#") {
+		return fmt.Errorf("dohPath must not contain '#', got %q", c.DOHPath)
+	}
+
+	seenProxyProtocolListeners := make(map[ProxyProtocolType]struct{}, len(c.ProxyProtocol))
+	for _, listener := range c.ProxyProtocol {
+		if _, ok := seenProxyProtocolListeners[listener]; ok {
+			return fmt.Errorf("ports.proxyProtocol contains duplicate listener family %q", listener)
+		}
+
+		seenProxyProtocolListeners[listener] = struct{}{}
+	}
+
+	for _, listener := range c.ProxyProtocol {
+		if listenConfig, ok := c.proxyProtocolListenConfig(listener); ok && len(listenConfig) == 0 {
+			return fmt.Errorf("ports.proxyProtocol includes %q but ports.%s is empty", listener, listener)
+		}
+	}
+
+	return nil
+}
+
+func (c *Ports) proxyProtocolListenConfig(listener ProxyProtocolType) (ListenConfig, bool) {
+	switch listener {
+	case ProxyProtocolTypeDns:
+		return c.DNS, true
+	case ProxyProtocolTypeHttp:
+		return c.HTTP, true
+	case ProxyProtocolTypeHttps:
+		return c.HTTPS, true
+	case ProxyProtocolTypeTls:
+		return c.TLS, true
+	default:
+		return nil, false
+	}
+}
+
+// privilegedPortCeiling is the first non-privileged TCP/UDP port. Ports below
+// it require CAP_NET_BIND_SERVICE (or root) to bind on Linux.
+const privilegedPortCeiling = 1024
+
+// PrivilegedPorts returns the configured listen addresses across DNS, HTTP,
+// HTTPS and TLS whose port is below privilegedPortCeiling.
+func (p *Ports) PrivilegedPorts() []string {
+	var privileged []string
+
+	for _, lc := range []ListenConfig{p.DNS, p.HTTP, p.HTTPS, p.TLS} {
+		for _, addr := range lc {
+			// Port 0 (OS-assigned ephemeral port) is never privileged.
+			if port, ok := extractPort(addr); ok && port > 0 && port < privilegedPortCeiling {
+				privileged = append(privileged, addr)
+			}
+		}
+	}
+
+	return privileged
+}
+
+// extractPort returns the port number of a listen address. It accepts every
+// ListenConfig form: "53", ":53", "1.2.3.4:53", "[::1]:853", "host:5353".
+func extractPort(addr string) (uint16, bool) {
+	if addr == "" {
+		return 0, false
+	}
+
+	portStr := addr
+	if _, splitPort, err := net.SplitHostPort(addr); err == nil {
+		portStr = splitPort
+	}
+
+	port, err := strconv.ParseUint(portStr, 10, 16)
+	if err != nil {
+		return 0, false
+	}
+
+	return uint16(port), true
+>>>>>>> upstream/main
 }
 
 // split in two types to avoid infinite recursion. See `BootstrapDNS.UnmarshalYAML`.
@@ -350,6 +562,8 @@ type (
 	bootstrappedUpstream struct {
 		Upstream Upstream `yaml:"upstream"`
 		IPs      []net.IP `yaml:"ips"`
+		// Optional: read bootstrap nameservers from a resolv.conf(5) file at this path instead of listing them inline.
+		ResolvFile string `yaml:"resolvFile"`
 	}
 )
 
@@ -373,6 +587,7 @@ func (c *toEnable) LogConfig(logger *logrus.Entry) {
 }
 
 type Init struct {
+	// Startup strategy controlling how initialization failures are handled.
 	Strategy InitStrategy `default:"blocking" yaml:"strategy"`
 }
 
@@ -383,10 +598,14 @@ func (c *Init) LogConfig(logger *logrus.Entry) {
 type SourceLoading struct {
 	Init `yaml:",inline"`
 
-	Concurrency        uint       `default:"4"      yaml:"concurrency"`
-	MaxErrorsPerSource int        `default:"5"      yaml:"maxErrorsPerSource"`
-	RefreshPeriod      Duration   `default:"4h"     yaml:"refreshPeriod"`
-	Downloads          Downloader `yaml:"downloads"`
+	// Maximum number of sources downloaded and processed concurrently (default: 4).
+	Concurrency uint `default:"4" yaml:"concurrency"`
+	// Maximum parse errors per source before the source is considered invalid; -1 disables the limit.
+	MaxErrorsPerSource int `default:"5" yaml:"maxErrorsPerSource"`
+	// How often sources are reloaded; a value of 0 or less disables periodic refresh (default: 4h).
+	RefreshPeriod Duration `default:"4h" yaml:"refreshPeriod"`
+	// HTTP(S) download settings for remote sources.
+	Downloads Downloader `yaml:"downloads"`
 }
 
 func (c *SourceLoading) LogConfig(logger *logrus.Entry) {
@@ -456,18 +675,37 @@ func recoverToError(do func(context.Context) error, onPanic func(any) error) fun
 }
 
 type Downloader struct {
-	Timeout           Duration `default:"5s"    yaml:"timeout"`
-	ReadTimeout       Duration `default:"20s"   yaml:"readTimeout"`
-	ReadHeaderTimeout Duration `default:"20s"   yaml:"readHeaderTimeout"`
-	WriteTimeout      Duration `default:"20s"   yaml:"writeTimeout"`
-	Attempts          uint     `default:"3"     yaml:"attempts"`
-	Cooldown          Duration `default:"500ms" yaml:"cooldown"`
+	// Timeout per download attempt (default: 5s).
+	Timeout Duration `default:"5s" yaml:"timeout"`
+	// Timeout for reading the download response body (default: 20s).
+	ReadTimeout Duration `default:"20s" yaml:"readTimeout"`
+	// Timeout for reading the download response headers (default: 20s).
+	ReadHeaderTimeout Duration `default:"20s" yaml:"readHeaderTimeout"`
+	// Timeout for writing the downloaded file (default: 20s).
+	WriteTimeout Duration `default:"20s" yaml:"writeTimeout"`
+	// Number of download attempts before giving up (default: 3).
+	Attempts uint `default:"3" yaml:"attempts"`
+	// Pause between consecutive download attempts (default: 500ms).
+	Cooldown Duration `default:"500ms" yaml:"cooldown"`
+	// Directory for the on-disk download cache. When empty (default), downloads are
+	// fully stateless: nothing is written to disk and every source is downloaded in
+	// full on every refresh. When set, blocky uses HTTP conditional requests and
+	// serves unchanged/unavailable sources from this directory. Must be writable by
+	// the user blocky runs as (UID 100 in the container image), otherwise caching is
+	// silently skipped and downloads stay stateless.
+	CachePath string `yaml:"cachePath"`
 }
 
 func (c *Downloader) LogConfig(logger *logrus.Entry) {
 	logger.Infof("timeout = %s", c.Timeout)
 	logger.Infof("attempts = %d", c.Attempts)
 	logger.Debugf("cooldown = %s", c.Cooldown)
+
+	if c.CachePath != "" {
+		logger.Infof("cachePath = %s", c.CachePath)
+	} else {
+		logger.Debug("cachePath = (disabled, stateless downloads)")
+	}
 }
 
 func WithDefaults[T any]() (T, error) {
@@ -519,32 +757,20 @@ func loadConfig(logger *logrus.Entry, path string, mandatory bool) (rCfg *Config
 		return nil, fmt.Errorf("can't read config file(s): %w", err)
 	}
 
-	var (
-		data       []byte
-		prettyPath string
-	)
-
-	if fs.IsDir() {
-		prettyPath = filepath.Join(path, "*")
-
-		data, err = readFromDir(path, data)
-		if err != nil {
-			return nil, fmt.Errorf("can't read config files: %w", err)
-		}
-	} else {
-		prettyPath = path
-
-		data, err = os.ReadFile(path)
-		if err != nil {
-			return nil, fmt.Errorf("can't read config file: %w", err)
-		}
+	data, sources, prettyPath, err := readConfigSource(logger, path, fs)
+	if err != nil {
+		return nil, err
 	}
 
 	cfg.CustomDNS.Zone.configPath = prettyPath
 
-	err = unmarshalConfig(logger, data, &cfg)
+	err = unmarshalConfig(logger, data, &cfg, sources)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config from %s: %w", prettyPath, err)
+	}
+
+	if err := cfg.Ports.validate(); err != nil {
+		logger.Fatal(err)
 	}
 
 	// Normalize rewrite keys to lowercase after unmarshaling
@@ -554,12 +780,52 @@ func loadConfig(logger *logrus.Entry, path string, mandatory bool) (rCfg *Config
 	return &cfg, nil
 }
 
+// readConfigSource reads the raw config bytes for path, which is either a
+// single YAML file or a directory of YAML files merged in walk order. For a
+// directory it logs the merge order (so failures still name the files), then
+// merges and returns the per-file sources for post-merge error attribution.
+// prettyPath is the user-facing path used in error messages.
+func readConfigSource(
+	logger *logrus.Entry, path string, fs os.FileInfo,
+) (data []byte, sources []configFile, prettyPath string, err error) {
+	if fs.IsDir() {
+		prettyPath = filepath.Join(path, "*")
+
+		sources, err = readFromDir(path)
+		if err != nil {
+			return nil, nil, "", fmt.Errorf("can't read config files: %w", err)
+		}
+
+		logConfigSources(logger, sources)
+
+		data, err = mergeConfigFiles(sources)
+		if err != nil {
+			return nil, nil, "", fmt.Errorf("can't merge config files: %w", err)
+		}
+
+		return data, sources, prettyPath, nil
+	}
+
+	prettyPath = path
+
+	data, err = os.ReadFile(path)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("can't read config file: %w", err)
+	}
+
+	return data, sources, prettyPath, nil
+}
+
 // isYAMLFile checks if a file path has a YAML extension (.yml or .yaml)
 func isYAMLFile(filePath string) bool {
 	return strings.HasSuffix(filePath, ".yml") || strings.HasSuffix(filePath, ".yaml")
 }
 
-func readFromDir(path string, data []byte) ([]byte, error) {
+// readFromDir collects all YAML config files under path in lexical walk
+// order, which defines the merge precedence (later files win).
+func readFromDir(path string) ([]configFile, error) {
+	var files []configFile
+
 	err := filepath.WalkDir(path, func(filePath string, d os.DirEntry, err error) error {
 		if err != nil {
 			return fmt.Errorf("error accessing %s: %w", filePath, err)
@@ -584,13 +850,12 @@ func readFromDir(path string, data []byte) ([]byte, error) {
 			return nil
 		}
 
-		fileData, err := os.ReadFile(filePath)
+		fileData, err := os.ReadFile(filePath) //nolint:gosec // config dir is admin-controlled; TOCTOU risk is acceptable
 		if err != nil {
 			return fmt.Errorf("failed to read config file %s: %w", filePath, err)
 		}
 
-		data = append(data, []byte("\n")...)
-		data = append(data, fileData...)
+		files = append(files, configFile{path: filePath, data: fileData})
 
 		return nil
 	})
@@ -598,7 +863,22 @@ func readFromDir(path string, data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to walk directory %s: %w", path, err)
 	}
 
-	return data, nil
+	return files, nil
+}
+
+// logConfigSources logs the merge order so users can tell which file wins a
+// conflict.
+func logConfigSources(logger *logrus.Entry, files []configFile) {
+	if len(files) == 0 {
+		return
+	}
+
+	paths := make([]string, 0, len(files))
+	for _, f := range files {
+		paths = append(paths, f.path)
+	}
+
+	logger.Infof("loading config files in merge order (later files win conflicts): %s", strings.Join(paths, ", "))
 }
 
 // isRegularFile follows symlinks, so the result is `true` for a symlink to a regular file.
@@ -613,10 +893,32 @@ func isRegularFile(path string) (bool, error) {
 	return isRegular, nil
 }
 
-func unmarshalConfig(logger *logrus.Entry, data []byte, cfg *Config) error {
+// unmarshalConfig decodes data into cfg. sources, when non-empty, are the
+// individual files that were merged to produce data; they are used to attribute
+// schema findings to specific source files on the error path.
+func unmarshalConfig(logger *logrus.Entry, data []byte, cfg *Config, sources []configFile) error {
 	err := yaml.UnmarshalStrict(data, cfg)
 	if err != nil {
+		// Enrich the already-failing path with field-path schema errors,
+		// keeping the underlying yaml error for detail. This never rejects a
+		// config blocky would accept: we only reach here because
+		// UnmarshalStrict already failed.
+		// In folder mode the yaml error's line numbers refer to the merged
+		// document, not any source file; the reconciled findings below carry
+		// the file attribution.
+		if lines := reconcileSchemaErrors(data, sources); len(lines) > 0 {
+			return fmt.Errorf("wrong file structure: %w\n%s", err, strings.Join(lines, "\n"))
+		}
+
 		return fmt.Errorf("wrong file structure: %w", err)
+	}
+
+	// Success path: the schema disagreeing here is a potential gap in the
+	// schema, never a config error. Warn, never fail.
+	if schemaErrs, sErr := schema.ValidateYAML(data); sErr == nil && len(schemaErrs) > 0 {
+		for _, e := range schemaErrs {
+			logger.Warnf("config does not match schema (possible schema gap, please report): %s", e)
+		}
 	}
 
 	usesDepredOpts := cfg.migrate(logger)
@@ -627,6 +929,70 @@ func unmarshalConfig(logger *logrus.Entry, data []byte, cfg *Config) error {
 	cfg.validate(logger)
 
 	return nil
+}
+
+// reconcileSchemaErrors validates the merged document and returns an indented
+// bullet list of findings attributed to their source files where possible.
+//
+// Algorithm:
+//   - mergedFindings = schema.ValidateYAML(data)  — ground truth post-merge.
+//   - perSource[i]   = set of finding strings from validating sources[i],
+//     merged with itself first so multi-document files are checked in full.
+//   - For each merged finding: emit one line per matching source file, or a
+//     plain line when no source file reproduces the finding.
+//
+// Each merged finding appears exactly once. False per-file findings (not
+// present in the merged set) are never shown. With sources nil/empty every
+// finding is plain — byte-identical to the former single-file output.
+func reconcileSchemaErrors(data []byte, sources []configFile) []string {
+	mergedErrs, sErr := schema.ValidateYAML(data)
+	if sErr != nil || len(mergedErrs) == 0 {
+		return nil
+	}
+
+	// Build a per-source set of finding strings for attribution.
+	perSource := make([]map[string]struct{}, len(sources))
+
+	for i, src := range sources {
+		set := make(map[string]struct{})
+
+		// Validate the source the same multi-document-aware way it was merged.
+		// schema.ValidateYAML uses yaml.v2's single-document Unmarshal, so a
+		// multi-document file (---) would otherwise only have its first
+		// document checked, dropping attribution for findings introduced by a
+		// later document. Merging the file with itself collapses its documents
+		// exactly as the real merge did, so attribution sees every document.
+		if srcData, mErr := mergeConfigFiles([]configFile{src}); mErr == nil {
+			if srcErrs, sErr2 := schema.ValidateYAML(srcData); sErr2 == nil {
+				for _, e := range srcErrs {
+					set[e.String()] = struct{}{}
+				}
+			}
+		}
+
+		perSource[i] = set
+	}
+
+	// Emit each merged finding once, attributed to matching source files or plain.
+	lines := make([]string, 0, len(mergedErrs))
+
+	for _, f := range mergedErrs {
+		key := f.String()
+		attributed := false
+
+		for i, src := range sources {
+			if _, ok := perSource[i][key]; ok {
+				lines = append(lines, "  - "+src.path+": "+key)
+				attributed = true
+			}
+		}
+
+		if !attributed {
+			lines = append(lines, "  - "+key)
+		}
+	}
+
+	return lines
 }
 
 func (cfg *Config) migrate(logger *logrus.Entry) bool {
@@ -666,8 +1032,21 @@ func (cfg *Config) validate(logger *logrus.Entry) {
 	cfg.MinTLSServeVer.validate(logger)
 	cfg.Upstreams.validate(logger)
 
+	// Blocking validation
+	if err := cfg.Blocking.validate(); err != nil {
+		logger.Warn(err)
+	}
+
 	// DNS64 validation
 	if err := cfg.DNS64.validate(logger, &cfg.Filtering, &cfg.Caching); err != nil {
+		logger.Fatal(err)
+	}
+
+	if err := cfg.RateLimit.validate(); err != nil {
+		logger.Fatal(err)
+	}
+
+	if err := cfg.RebindingProtection.validate(); err != nil {
 		logger.Fatal(err)
 	}
 }

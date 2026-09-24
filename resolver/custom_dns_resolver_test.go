@@ -172,11 +172,12 @@ var _ = Describe("CustomDNSResolver", func() {
 					// will not delegate to next resolver
 					m.AssertNotCalled(GinkgoT(), "Resolve", mock.Anything)
 				})
-				It("TXT query for defined mapping should return NOERROR and empty result", func() {
+				It("TXT query for defined mapping should return NOERROR with an SOA in the authority section", func() {
 					Expect(sut.Resolve(ctx, newRequest("custom.domain.", TXT))).
 						Should(
 							SatisfyAll(
 								HaveNoAnswer(),
+								HaveSOARecord(TTL, TTL),
 								HaveResponseType(ResponseTypeCUSTOMDNS),
 								HaveReason("CUSTOM DNS"),
 								HaveReturnCode(dns.RcodeSuccess),
@@ -184,11 +185,12 @@ var _ = Describe("CustomDNSResolver", func() {
 					// will not delegate to next resolver
 					m.AssertNotCalled(GinkgoT(), "Resolve", mock.Anything)
 				})
-				It("ip6 query should return NOERROR and empty result", func() {
+				It("ip6 query should return NOERROR with an SOA in the authority section", func() {
 					Expect(sut.Resolve(ctx, newRequest("custom.domain.", AAAA))).
 						Should(
 							SatisfyAll(
 								HaveNoAnswer(),
+								HaveSOARecord(TTL, TTL),
 								HaveResponseType(ResponseTypeCUSTOMDNS),
 								HaveReason("CUSTOM DNS"),
 								HaveReturnCode(dns.RcodeSuccess),
@@ -486,6 +488,50 @@ var _ = Describe("CustomDNSResolver", func() {
 				})
 			})
 		})
+		When("Reverse DNS request uses a different case", func() {
+			It("should resolve the defined domain name", func() {
+				By("ipv4", func() {
+					Expect(sut.Resolve(ctx, newRequest("123.143.168.192.IN-ADDR.ARPA.", PTR))).
+						Should(
+							SatisfyAll(
+								WithTransform(ToAnswer, SatisfyAll(
+									HaveLen(2),
+									ContainElements(
+										BeDNSRecord("123.143.168.192.IN-ADDR.ARPA.", PTR, "custom.domain."),
+										BeDNSRecord("123.143.168.192.IN-ADDR.ARPA.", PTR, "multiple.ips.")),
+								)),
+								HaveResponseType(ResponseTypeCUSTOMDNS),
+								HaveReason("CUSTOM DNS"),
+								HaveReturnCode(dns.RcodeSuccess),
+							))
+
+					// will not delegate to next resolver
+					m.AssertNotCalled(GinkgoT(), "Resolve", mock.Anything)
+				})
+
+				By("ipv6", func() {
+					Expect(sut.Resolve(ctx, newRequest("4.3.3.7.0.7.3.0.E.2.A.8.0.0.0.0.0.0.0.0.3.A.5.8.8.B.D.0.1.0.0.2.IP6.ARPA.",
+						PTR))).
+						Should(
+							SatisfyAll(
+								WithTransform(ToAnswer, SatisfyAll(
+									HaveLen(2),
+									ContainElements(
+										BeDNSRecord("4.3.3.7.0.7.3.0.E.2.A.8.0.0.0.0.0.0.0.0.3.A.5.8.8.B.D.0.1.0.0.2.IP6.ARPA.",
+											PTR, "ip6.domain."),
+										BeDNSRecord("4.3.3.7.0.7.3.0.E.2.A.8.0.0.0.0.0.0.0.0.3.A.5.8.8.B.D.0.1.0.0.2.IP6.ARPA.",
+											PTR, "multiple.ips.")),
+								)),
+								HaveResponseType(ResponseTypeCUSTOMDNS),
+								HaveReason("CUSTOM DNS"),
+								HaveReturnCode(dns.RcodeSuccess),
+							))
+
+					// will not delegate to next resolver
+					m.AssertNotCalled(GinkgoT(), "Resolve", mock.Anything)
+				})
+			})
+		})
 		When("Domain mapping is defined", func() {
 			It("subdomain must also match", func() {
 				Expect(sut.Resolve(ctx, newRequest("ABC.CUSTOM.DOMAIN.", A))).
@@ -500,6 +546,22 @@ var _ = Describe("CustomDNSResolver", func() {
 				// will not delegate to next resolver
 				m.AssertNotCalled(GinkgoT(), "Resolve", mock.Anything)
 			})
+		})
+	})
+
+	Describe("LookupReverse", func() {
+		It("returns the mapped domain names for a known IPv4 address", func() {
+			Expect(sut.LookupReverse(net.ParseIP("192.168.143.123"))).
+				Should(ConsistOf("custom.domain", "multiple.ips"))
+		})
+
+		It("returns the mapped domain names for a known IPv6 address", func() {
+			Expect(sut.LookupReverse(net.ParseIP("2001:0db8:85a3:0000:0000:8a2e:0370:7334"))).
+				Should(ConsistOf("ip6.domain", "multiple.ips"))
+		})
+
+		It("returns nil for an unknown IP", func() {
+			Expect(sut.LookupReverse(net.ParseIP("8.8.8.8"))).Should(BeNil())
 		})
 	})
 
@@ -530,6 +592,98 @@ var _ = Describe("CustomDNSResolver", func() {
 			m = &mockResolver{}
 			m.On("Resolve", mock.Anything).Return(&Response{Res: new(dns.Msg)}, nil)
 			sut.Next(m)
+		})
+
+		When("the mapping has no answer of the requested type and fallbackUpstream is set", func() {
+			BeforeEach(func() {
+				cfg.FallbackUpstream = true
+			})
+
+			It("should ask the next resolver with the original name", func() {
+				var seen *string
+
+				m, seen = newRecordingResolver(AAAA, "2001:db8::1")
+				sut.Next(m)
+
+				// custom.domain has an A record only, so the AAAA query ends up
+				// as an empty CUSTOM DNS answer
+				Expect(sut.Resolve(ctx, newRequest("www.source.test.", AAAA))).
+					Should(
+						SatisfyAll(
+							HaveResponseType(ResponseTypeRESOLVED),
+							HaveReturnCode(dns.RcodeSuccess),
+						))
+
+				Expect(*seen).Should(Equal("www.source.test."))
+			})
+		})
+
+		When("the rewritten domain is not in the mapping", func() {
+			BeforeEach(func() {
+				cfg.Rewrite["nomatch.test"] = "nomatch.example"
+			})
+
+			It("should ask the next resolver with the original name", func() {
+				var seen *string
+
+				m, seen = newRecordingResolver(A, "192.192.192.192")
+				sut.Next(m)
+
+				Expect(sut.Resolve(ctx, newRequest("www.nomatch.test.", A))).
+					Should(
+						SatisfyAll(
+							BeDNSRecord("www.nomatch.test.", A, "192.192.192.192"),
+							HaveResponseType(ResponseTypeRESOLVED),
+							HaveReturnCode(dns.RcodeSuccess),
+						))
+
+				Expect(*seen).Should(Equal("www.nomatch.test."))
+				Expect(m.Calls).Should(HaveLen(1))
+			})
+		})
+
+		When("the mapping has no answer of the requested type and filterUnmappedTypes is false", func() {
+			BeforeEach(func() {
+				cfg.FilterUnmappedTypes = false
+			})
+
+			It("should ask the next resolver with the original name", func() {
+				var seen *string
+
+				m, seen = newRecordingResolver(AAAA, "2001:db8::1")
+				sut.Next(m)
+
+				// custom.domain has an A record only, so the AAAA query is unmapped
+				Expect(sut.Resolve(ctx, newRequest("www.source.test.", AAAA))).
+					Should(
+						SatisfyAll(
+							HaveResponseType(ResponseTypeRESOLVED),
+							HaveReturnCode(dns.RcodeSuccess),
+						))
+
+				Expect(*seen).Should(Equal("www.source.test."))
+				Expect(m.Calls).Should(HaveLen(1))
+			})
+		})
+
+		When("the mapping itself fails and fallbackUpstream is set", func() {
+			BeforeEach(func() {
+				cfg.FallbackUpstream = true
+				cfg.Rewrite["loop.test"] = "cname.recursive"
+			})
+
+			It("should ask the next resolver with the original name", func() {
+				var seen *string
+
+				m, seen = newRecordingResolver(A, "192.192.192.192")
+				sut.Next(m)
+
+				// the rewrite target is a self-referential CNAME: processRequest errors
+				Expect(sut.Resolve(ctx, newRequest("www.loop.test.", A))).
+					Should(HaveResponseType(ResponseTypeRESOLVED))
+
+				Expect(*seen).Should(Equal("www.loop.test."))
+			})
 		})
 
 		When("request matches rewrite rule", func() {

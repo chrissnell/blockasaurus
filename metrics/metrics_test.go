@@ -27,6 +27,8 @@ func init() {
 }
 
 func AssertRegistryComplete(t *testing.T, reg *prometheus.Registry) {
+	t.Helper()
+
 	mfs, err := reg.Gather()
 	if err != nil {
 		t.Fatalf("failed to gather metrics: %v", err)
@@ -52,6 +54,7 @@ func AssertRegistryComplete(t *testing.T, reg *prometheus.Registry) {
 		"blockasaurus_denylist_cache_entries",
 		"blockasaurus_allowlist_cache_entries",
 		// these require a request
+<<<<<<< HEAD
 		"blockasaurus_query_total",
 		"blockasaurus_request_duration_seconds",
 		"blockasaurus_response_total",
@@ -66,6 +69,25 @@ func AssertRegistryComplete(t *testing.T, reg *prometheus.Registry) {
 		"blockasaurus_prefetch_hits_total",
 		"blockasaurus_prefetch_domain_name_cache_entries",
 		"blockasaurus_failed_downloads_total",
+=======
+		"blocky_query_total",
+		"blocky_request_duration_seconds",
+		"blocky_response_total",
+		"blocky_client_response_total",
+		// these should be default
+		"blocky_error_total",
+		"blocky_blocking_enabled",
+		"blocky_cache_entries",
+		"blocky_cache_hits_total",
+		"blocky_cache_misses_total",
+		"blocky_redis_cache_buffer_drops_total",
+		"blocky_last_list_group_refresh_timestamp_seconds",
+		"blocky_prefetches_total",
+		"blocky_prefetch_hits_total",
+		"blocky_prefetch_domain_name_cache_entries",
+		"blocky_failed_downloads_total",
+		"blocky_dnstap_frames_dropped_total",
+>>>>>>> upstream/main
 	}
 
 	if len(found) != len(expected) {

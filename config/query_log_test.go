@@ -1,11 +1,14 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/creasty/defaults"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"gopkg.in/yaml.v2"
 )
 
 var _ = Describe("QueryLogConfig", func() {
@@ -57,9 +60,17 @@ var _ = Describe("QueryLogConfig", func() {
 			Expect(hook.Messages).Should(ContainElement(ContainSubstring("sudn:")))
 		})
 
+		It("should log the ignored domains", func() {
+			cfg.Ignore.Domains = []string{"example.com", "*.lan", "/\\.arpa$/"}
+
+			cfg.LogConfig(logger)
+
+			Expect(hook.Messages).Should(ContainElement(ContainSubstring("domains (3):")))
+		})
+
 		DescribeTable("secret censoring", func(target string) {
 			cfg.Type = QueryLogTypeMysql
-			cfg.Target = target
+			cfg.Target = Secret(target)
 
 			cfg.LogConfig(logger)
 
@@ -71,6 +82,46 @@ var _ = Describe("QueryLogConfig", func() {
 			Entry("no password", "localhost"),
 			Entry("not a URL", "invalid!://"),
 		)
+	})
+
+	Describe("ignore.domains parsing", func() {
+		It("parses the domains list", func() {
+			yamlStr := "type: console\nignore:\n  domains:\n    - example.com\n    - \"*.lan\"\n"
+
+			var qlCfg QueryLog
+			Expect(yaml.UnmarshalStrict([]byte(yamlStr), &qlCfg)).Should(Succeed())
+			Expect(qlCfg.Ignore.Domains).Should(Equal([]string{"example.com", "*.lan"}))
+		})
+	})
+
+	Describe("secret target handling", func() {
+		It("loads the target DSN from a file and censors it when logging", func() {
+			dir := GinkgoT().TempDir()
+			path := filepath.Join(dir, "dsn")
+			Expect(os.WriteFile(path, []byte("postgresql://u:secretpw@host/db\n"), 0o600)).Should(Succeed())
+
+			yamlStr := "type: postgresql\ntarget: file:" + path + "\n"
+
+			var qlCfg QueryLog
+			Expect(yaml.UnmarshalStrict([]byte(yamlStr), &qlCfg)).Should(Succeed())
+			Expect(qlCfg.Target.Reveal()).Should(Equal("postgresql://u:secretpw@host/db"))
+			Expect(qlCfg.censoredTarget()).ShouldNot(ContainSubstring("secretpw"))
+			Expect(qlCfg.censoredTarget()).Should(ContainSubstring(secretObfuscator))
+		})
+
+		It("censors the embedded password of an inline DSN", func() {
+			cfg := QueryLog{Type: QueryLogTypePostgresql, Target: "postgresql://u:secretpw@host/db"}
+			Expect(cfg.censoredTarget()).ShouldNot(ContainSubstring("secretpw"))
+			Expect(cfg.censoredTarget()).Should(ContainSubstring(secretObfuscator))
+		})
+	})
+
+	Describe("QueryLogType enum", func() {
+		It("parses the sqlite type", func() {
+			t, err := ParseQueryLogType("sqlite")
+			Expect(err).Should(Succeed())
+			Expect(t).Should(Equal(QueryLogTypeSqlite))
+		})
 	})
 
 	Describe("SetDefaults", func() {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"sync/atomic"
 
 	"github.com/sirupsen/logrus"
@@ -22,6 +23,9 @@ import (
 const (
 	groupProducersBufferCap = 1000
 	regexWarningThreshold   = 500
+
+	logFieldGroup      = "group"
+	logFieldTotalCount = "total_count"
 )
 
 // ListCacheType represents the type of cached list ENUM(
@@ -32,8 +36,10 @@ type ListCacheType int
 
 // Matcher checks if a domain is in a list
 type Matcher interface {
-	// Match matches passed domain name against cached list entries
-	Match(domain string, groupsToCheck []string) (groups []string)
+	// Match matches passed domain name against cached list entries.
+	// Returns a map of matching group -> the rule that matched, or nil/empty
+	// when the domain is not in any of the groups.
+	Match(domain string, groupsToCheck []string) (matches map[string]string)
 }
 
 // ListCache generic cache of strings divided in groups
@@ -90,6 +96,10 @@ func NewListCache(ctx context.Context,
 		downloader:   downloader,
 	}
 
+	if cfg.Strategy == config.InitStrategyFast {
+		c.seedFromDisk(ctx)
+	}
+
 	err := cfg.StartPeriodicRefresh(ctx, c.refresh, func(err error) {
 		logger().WithError(err).Errorf("could not init %s", t)
 	})
@@ -104,14 +114,27 @@ func logger() *logrus.Entry {
 	return log.PrefixedLog("list_cache")
 }
 
-// Match matches passed domain name against cached list entries
-func (b *ListCache) Match(domain string, groupsToCheck []string) (groups []string) {
+// Match matches passed domain name against cached list entries.
+// Returns a map of matching group -> the rule that matched, or nil/empty when
+// the domain is not in any of the groups.
+func (b *ListCache) Match(domain string, groupsToCheck []string) (matches map[string]string) {
 	return b.groupedCache.Contains(domain, groupsToCheck)
 }
 
 // Refresh triggers the refresh of a list
 func (b *ListCache) Refresh(ctx context.Context) error {
 	return b.refresh(ctx)
+}
+
+// PublishGroupCounts re-emits a BlockingCacheGroupChanged event with the current
+// element count for every configured group. The initial counts are emitted while
+// the lists load during construction, before later-constructed subscribers (such
+// as the stats resolver) attach to the bus; re-publishing lets those subscribers
+// pick up the point-in-time counts without waiting for the next list refresh.
+func (b *ListCache) PublishGroupCounts() {
+	for group := range b.groupSources {
+		evt.Bus().Publish(evt.BlockingCacheGroupChanged, b.listType, group, b.groupedCache.ElementCount(group))
+	}
 }
 
 func (b *ListCache) refresh(ctx context.Context) error {
@@ -128,8 +151,8 @@ func (b *ListCache) refresh(ctx context.Context) error {
 				count := b.groupedCache.ElementCount(group)
 
 				logger := logger().WithFields(logrus.Fields{
-					"group":       group,
-					"total_count": count,
+					logFieldGroup:      group,
+					logFieldTotalCount: count,
 				})
 
 				if count == 0 {
@@ -146,8 +169,8 @@ func (b *ListCache) refresh(ctx context.Context) error {
 			evt.Bus().Publish(evt.BlockingCacheGroupChanged, b.listType, group, count)
 
 			logger().WithFields(logrus.Fields{
-				"group":       group,
-				"total_count": count,
+				logFieldGroup:      group,
+				logFieldTotalCount: count,
 			}).Info("group import finished")
 
 			return nil
@@ -209,6 +232,86 @@ func (b *ListCache) createCacheForGroup(
 	return nil
 }
 
+// seedFromDisk pre-populates each group's cache from locally-available sources, so
+// blocky can answer queries before the first network refresh completes. HTTP sources
+// are seeded from their on-disk download copy (when present); inline and file sources
+// are already local and seeded directly. It reuses the same parallel import path as a
+// normal refresh and is best-effort: groups or sources without local data are skipped
+// and a seed failure never aborts startup.
+func (b *ListCache) seedFromDisk(ctx context.Context) {
+	dir := b.cfg.Downloads.CachePath
+	if dir == "" {
+		return
+	}
+
+	localSources := b.localSeedSources(dir)
+	if len(localSources) == 0 {
+		return
+	}
+
+	unlimitedGrp, _ := jobgroup.WithContext(ctx)
+	defer unlimitedGrp.Close()
+
+	producersGrp := jobgroup.WithMaxConcurrency(unlimitedGrp, b.cfg.Concurrency)
+	defer producersGrp.Close()
+
+	for group, sources := range localSources {
+		unlimitedGrp.Go(func(ctx context.Context) error {
+			if err := b.createCacheForGroup(producersGrp, unlimitedGrp, group, sources); err != nil {
+				logger().WithError(err).WithField(logFieldGroup, group).Debug("disk seed: skipping group with no usable local data")
+
+				return nil // best-effort: never fail startup on a seed error
+			}
+
+			logger().WithFields(logrus.Fields{
+				logFieldGroup:      group,
+				logFieldTotalCount: b.groupedCache.ElementCount(group),
+			}).Debug("seeded group cache from disk")
+
+			return nil
+		})
+	}
+
+	_ = unlimitedGrp.Wait()
+}
+
+// localSeedSources maps each group's configured sources to the ones loadable without
+// the network at startup: an HTTP source is replaced by its on-disk cache copy when one
+// exists, while inline and file sources are kept as-is. Groups with no locally-available
+// source are omitted.
+func (b *ListCache) localSeedSources(dir string) map[string][]config.BytesSource {
+	out := make(map[string][]config.BytesSource, len(b.groupSources))
+
+	for group, sources := range b.groupSources {
+		local := make([]config.BytesSource, 0, len(sources))
+
+		for _, source := range sources {
+			if source.Type != config.BytesSourceTypeHttp {
+				local = append(local, source) // inline/file sources are already local
+
+				continue
+			}
+
+			path := cacheFilePath(dir, source.From)
+			if _, err := os.Stat(path); err != nil {
+				if !errors.Is(err, os.ErrNotExist) {
+					logger().WithError(err).WithField("path", path).Debug("disk seed: cannot stat cache file")
+				}
+
+				continue // no cached copy yet
+			}
+
+			local = append(local, config.BytesSource{Type: config.BytesSourceTypeFile, From: path})
+		}
+
+		if len(local) > 0 {
+			out[group] = local
+		}
+	}
+
+	return out
+}
+
 // downloads file (or reads local file) and writes each line in the file to the result channel
 func (b *ListCache) parseFile(ctx context.Context, opener SourceOpener, resultCh chan<- string) error {
 	count := 0
@@ -241,9 +344,12 @@ func (b *ListCache) parseFile(ctx context.Context, opener SourceOpener, resultCh
 
 			// For IPs, we want to ensure the string is the Go representation so that when
 			// we compare responses, a same IP matches, even if it was written differently
-			// in the list.
-			if ip := net.ParseIP(host); ip != nil {
-				host = ip.String()
+			// in the list. The cheap MightBeIP pre-check avoids calling net.ParseIP on
+			// the vast majority of entries, which are domain names.
+			if parsers.MightBeIP(host) {
+				if ip := net.ParseIP(host); ip != nil {
+					host = ip.String()
+				}
 			}
 
 			resultCh <- host

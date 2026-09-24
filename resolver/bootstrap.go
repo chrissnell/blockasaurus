@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math/rand"
 	"net"
 	"net/http"
+	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -17,7 +20,6 @@ import (
 	"github.com/hashicorp/go-multierror"
 	"github.com/miekg/dns"
 	"github.com/sirupsen/logrus"
-	"golang.org/x/exp/maps"
 )
 
 var errArbitrarySystemResolverRequest = errors.New(
@@ -71,7 +73,7 @@ func NewBootstrap(ctx context.Context, cfg *config.Config) (b *Bootstrap, err er
 
 	ctx, logger := b.log(ctx)
 
-	bootstraped, err := newBootstrapedResolvers(b, cfg.BootstrapDNS, cfg.Upstreams)
+	bootstraped, err := newBootstrapedResolvers(b, cfg.BootstrapDNS, cfg.Upstreams, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create bootstrap resolvers: %w", err)
 	}
@@ -98,7 +100,7 @@ func NewBootstrap(ctx context.Context, cfg *config.Config) (b *Bootstrap, err er
 	}
 
 	b.bootstraped = bootstraped
-	cachingResolver, _ := newCachingResolver(ctx, cachingCfg, nil, false)
+	cachingResolver, _ := newCachingResolver(ctx, cachingCfg, config.DNSSEC{}, nil, false)
 
 	b.resolver = Chain(
 		NewFilteringResolver(cfg.Filtering),
@@ -133,6 +135,11 @@ func (b *Bootstrap) UpstreamIPs(ctx context.Context, r *UpstreamResolver) (*IPSe
 
 	if ip := net.ParseIP(hostname); ip != nil { // nil-safe when hostname is an IP: makes writing tests easier
 		return newIPSet([]net.IP{ip}), nil
+	}
+
+	// Use IPs from DNS stamp if available (avoids bootstrap resolution)
+	if ips := r.Upstream().IPs; len(ips) > 0 {
+		return newIPSet(ips), nil
 	}
 
 	ips, err := b.resolveUpstream(ctx, r, hostname)
@@ -213,19 +220,30 @@ func (b *Bootstrap) dialContext(ctx context.Context, network, addr string) (net.
 		return nil, fmt.Errorf("failed to resolve host '%s' via bootstrap DNS: %w", host, err)
 	}
 
-	ip := ips[rand.Intn(len(ips))] //nolint:gosec
+	// Shuffle so that load is spread across the resolved addresses. On a dial
+	// failure we fall back to the remaining addresses (e.g. the other IP
+	// family) instead of consuming the whole attempt — the standard dialer
+	// does this dual-stack fallback for us, but we bypass it by resolving the
+	// host ourselves and dialing a single address.
+	rand.Shuffle(len(ips), func(i, j int) { ips[i], ips[j] = ips[j], ips[i] })
 
-	logger.WithField("ip", ip).Tracef("dialing %s", host)
+	var dialErr *multierror.Error
 
-	// Use the standard dialer to actually connect
-	addrWithIP := net.JoinHostPort(ip.String(), port)
+	for _, ip := range ips {
+		logger.WithField("ip", ip).Tracef("dialing %s", host)
 
-	conn, err := b.dialer.DialContext(ctx, network, addrWithIP)
-	if err != nil {
-		return nil, fmt.Errorf("failed to dial '%s' (resolved from '%s'): %w", addrWithIP, host, err)
+		// Use the standard dialer to actually connect
+		addrWithIP := net.JoinHostPort(ip.String(), port)
+
+		conn, err := b.dialer.DialContext(ctx, network, addrWithIP)
+		if err == nil {
+			return conn, nil
+		}
+
+		dialErr = multierror.Append(dialErr, fmt.Errorf("dial '%s': %w", addrWithIP, err))
 	}
 
-	return conn, nil
+	return nil, fmt.Errorf("failed to dial '%s' (resolved from '%s'): %w", addr, host, dialErr.ErrorOrNil())
 }
 
 func (b *Bootstrap) resolve(ctx context.Context, hostname string, qTypes []dns.Type) (ips []net.IP, err error) {
@@ -291,7 +309,7 @@ func (b *Bootstrap) resolveType(ctx context.Context, hostname string, qType dns.
 type bootstrapedResolvers map[Resolver][]net.IP
 
 func newBootstrapedResolvers(
-	b *Bootstrap, cfg config.BootstrapDNS, upstreamsCfg config.Upstreams,
+	b *Bootstrap, cfg config.BootstrapDNS, upstreamsCfg config.Upstreams, logger *logrus.Entry,
 ) (bootstrapedResolvers, error) {
 	upstreamIPs := make(bootstrapedResolvers, len(cfg))
 
@@ -299,6 +317,14 @@ func newBootstrapedResolvers(
 
 	for i, upstreamCfg := range cfg {
 		i := i + 1 // user visible index should start at 1
+
+		if upstreamCfg.ResolvFile != "" {
+			if err := b.addResolvFileUpstreams(upstreamIPs, upstreamCfg, upstreamsCfg, logger); err != nil {
+				multiErr = multierror.Append(multiErr, fmt.Errorf("item %d: %w", i, err))
+			}
+
+			continue
+		}
 
 		upstream := upstreamCfg.Upstream
 
@@ -344,8 +370,60 @@ func newBootstrapedResolvers(
 	return upstreamIPs, nil
 }
 
+// defaultDNSPort is the fallback bootstrap port. resolv.conf(5) carries no
+// per-nameserver port, so dns.ClientConfigFromFile always reports "53"; we
+// still parse cc.Port defensively in case that ever changes.
+const defaultDNSPort uint16 = 53
+
+// addResolvFileUpstreams reads nameservers from a resolv.conf(5) file and adds
+// one plain-DNS bootstrap upstream per nameserver to upstreamIPs. This lets
+// systems whose DHCP-provided resolvers live outside /etc/resolv.conf (e.g.
+// OpenWrt's /tmp/resolv.conf.auto) point blocky at the right file.
+func (b *Bootstrap) addResolvFileUpstreams(
+	upstreamIPs bootstrapedResolvers, upstreamCfg config.BootstrappedUpstream,
+	upstreamsCfg config.Upstreams, logger *logrus.Entry,
+) error {
+	if !upstreamCfg.Upstream.IsDefault() || len(upstreamCfg.IPs) > 0 {
+		return errors.New("resolvFile cannot be combined with upstream/ips in the same entry")
+	}
+
+	path := upstreamCfg.ResolvFile
+
+	cc, err := dns.ClientConfigFromFile(path)
+	if err != nil {
+		return fmt.Errorf("resolvFile '%s': %w", path, err)
+	}
+
+	port := defaultDNSPort
+	if p, err := strconv.ParseUint(cc.Port, 10, 16); err == nil {
+		port = uint16(p)
+	}
+
+	var added int
+
+	for _, server := range cc.Servers {
+		ip := net.ParseIP(server)
+		if ip == nil {
+			continue
+		}
+
+		upstream := config.Upstream{Net: config.NetProtocolTcpUdp, Host: server, Port: port}
+		resolver := newUpstreamResolverUnchecked(newUpstreamConfig(upstream, upstreamsCfg), b)
+		upstreamIPs[resolver] = []net.IP{ip}
+		added++
+	}
+
+	if added == 0 {
+		return fmt.Errorf("resolvFile '%s': no usable nameservers", path)
+	}
+
+	logger.Infof("loaded %d bootstrap nameserver(s) from resolvFile '%s'", added, path)
+
+	return nil
+}
+
 func (br bootstrapedResolvers) Resolvers() []Resolver {
-	return maps.Keys(br)
+	return slices.Collect(maps.Keys(br))
 }
 
 type IPSet struct {
@@ -365,7 +443,7 @@ func (ips *IPSet) Current() net.IP {
 
 func (ips *IPSet) Next() {
 	oldIP := ips.index
-	newIP := uint32(int(ips.index+1) % len(ips.values))
+	newIP := uint32(int(ips.index+1) % len(ips.values)) //nolint:gosec // index and len are small practical values
 
 	// We don't care about the result: if the call fails,
 	// it means the value was incremented by another goroutine

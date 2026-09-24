@@ -11,6 +11,7 @@ import (
 
 	"gorm.io/gorm/logger"
 
+	"github.com/0xERR0R/blocky/config"
 	"github.com/0xERR0R/blocky/log"
 	"github.com/hashicorp/go-multierror"
 
@@ -46,21 +47,28 @@ type DatabaseWriter struct {
 	dbFlushPeriod    time.Duration
 }
 
-func NewDatabaseWriter(ctx context.Context, dbType, target string, logRetentionDays uint64,
+func NewDatabaseWriter(ctx context.Context, dbType config.QueryLogType, target string, logRetentionDays uint64,
 	dbFlushPeriod time.Duration,
 ) (*DatabaseWriter, error) {
-	switch dbType {
-	case "mysql":
+	switch dbType { //nolint:exhaustive // non-database query-log types are handled in GetQueryLoggingWriter
+	case config.QueryLogTypeMysql:
 		return newDatabaseWriter(ctx, mysql.Open(target), logRetentionDays, dbFlushPeriod, dbType)
-	case "postgresql", "timescale":
+	case config.QueryLogTypePostgresql, config.QueryLogTypeTimescale:
 		return newDatabaseWriter(ctx, postgres.Open(target), logRetentionDays, dbFlushPeriod, dbType)
+	case config.QueryLogTypeSqlite:
+		dialector, err := newSQLiteDialector(target)
+		if err != nil {
+			return nil, err
+		}
+
+		return newDatabaseWriter(ctx, dialector, logRetentionDays, dbFlushPeriod, dbType)
 	}
 
 	return nil, fmt.Errorf("incorrect database type provided: %s", dbType)
 }
 
 func newDatabaseWriter(ctx context.Context, target gorm.Dialector, logRetentionDays uint64,
-	dbFlushPeriod time.Duration, dbType string,
+	dbFlushPeriod time.Duration, dbType config.QueryLogType,
 ) (*DatabaseWriter, error) {
 	db, err := gorm.Open(target, &gorm.Config{
 		Logger: logger.New(
@@ -74,6 +82,20 @@ func newDatabaseWriter(ctx context.Context, target gorm.Dialector, logRetentionD
 	})
 	if err != nil {
 		return nil, fmt.Errorf("can't create database connection: %w", err)
+	}
+
+	// SQLite is a single local file: a write holds an exclusive lock on the whole
+	// database, so letting the pool open several connections only turns blocky's own
+	// concurrent access (the periodic flush vs. the retention cleanup) into
+	// SQLITE_BUSY errors. Serialize through one connection instead; external readers
+	// use their own connections and are unaffected.
+	if dbType == config.QueryLogTypeSqlite {
+		sqlDB, err := db.DB()
+		if err != nil {
+			return nil, fmt.Errorf("can't access sqlite connection pool: %w", err)
+		}
+
+		sqlDB.SetMaxOpenConns(1)
 	}
 
 	// Migrate the schema
@@ -92,16 +114,21 @@ func newDatabaseWriter(ctx context.Context, target gorm.Dialector, logRetentionD
 	return w, nil
 }
 
-func databaseMigration(db *gorm.DB, dbType string, logRetentionDays uint64) error {
+func databaseMigration(db *gorm.DB, dbType config.QueryLogType, logRetentionDays uint64) error {
 	if err := db.AutoMigrate(&logEntry{}); err != nil {
 		return fmt.Errorf("failed to auto-migrate database schema for querylog: %w", err)
 	}
 
-	tableName := db.NamingStrategy.TableName(reflect.TypeOf(logEntry{}).Name())
+	tableName := db.NamingStrategy.TableName(reflect.TypeFor[logEntry]().Name())
 
 	// create unmapped primary key
-	switch dbType {
-	case "mysql":
+	switch dbType { //nolint:exhaustive // only database-backed targets reach migration
+	case config.QueryLogTypeSqlite:
+		// SQLite gives every table an implicit auto-incrementing rowid that already
+		// acts as the primary key, so unlike the other targets no extra id column is
+		// added here (and SQLite cannot ALTER TABLE ... ADD a PRIMARY KEY column).
+
+	case config.QueryLogTypeMysql:
 		tx := db.Exec("ALTER TABLE `" + tableName + "` ADD `id` INT PRIMARY KEY AUTO_INCREMENT")
 		if tx.Error != nil {
 			// mysql doesn't support "add column if not exist"
@@ -114,11 +141,11 @@ func databaseMigration(db *gorm.DB, dbType string, logRetentionDays uint64) erro
 			return tx.Error
 		}
 
-	case "postgres":
+	case config.QueryLogTypePostgresql:
 		return db.Exec("ALTER TABLE " + tableName + " ADD column if not exists id bigserial primary key").Error
 
-	case "timescale":
-		requestTSColName := db.NamingStrategy.ColumnName(reflect.TypeOf(logEntry{}).Name(), "RequestTS")
+	case config.QueryLogTypeTimescale:
+		requestTSColName := db.NamingStrategy.ColumnName(reflect.TypeFor[logEntry]().Name(), "RequestTS")
 
 		// Create a Timescale hypertable
 		tx := db.Exec(`SELECT create_hypertable(
@@ -188,7 +215,7 @@ func (d *DatabaseWriter) Write(entry *LogEntry) {
 }
 
 func (d *DatabaseWriter) CleanUp() {
-	deletionDate := time.Now().AddDate(0, 0, int(-d.logRetentionDays))
+	deletionDate := time.Now().AddDate(0, 0, int(-d.logRetentionDays)) //nolint:gosec // G115: correct via two's complement
 
 	log.PrefixedLog("database_writer").Debugf("deleting log entries with request_ts < %s", deletionDate)
 	d.db.Where("request_ts < ?", deletionDate).Delete(&logEntry{})

@@ -1,12 +1,13 @@
 package config
 
 import (
+	"errors"
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/miekg/dns"
-	"golang.org/x/exp/maps"
 )
 
 type QTypeSet map[QType]struct{}
@@ -36,14 +37,28 @@ func (s *QTypeSet) Insert(qType dns.Type) {
 }
 
 func (s *QTypeSet) UnmarshalYAML(unmarshal func(any) error) error {
-	var input []QType
+	// Unmarshal into []any first so a YAML null entry (an unquoted
+	// `NULL`, `null` or `~`, which YAML reads as null rather than the string)
+	// surfaces as a nil element and can be rejected. Decoding straight into
+	// []QType would silently turn it into query type None (0).
+	var input []any
 	if err := unmarshal(&input); err != nil {
 		return err
 	}
 
 	*s = make(QTypeSet, len(input))
 
-	for _, qType := range input {
+	for _, raw := range input {
+		if raw == nil {
+			return errors.New("invalid query type: null. " +
+				"Quote YAML keywords like 'NULL' so they are read as a DNS type")
+		}
+
+		var qType QType
+		if err := qType.UnmarshalText([]byte(fmt.Sprintf("%v", raw))); err != nil {
+			return err
+		}
+
 		(*s)[qType] = struct{}{}
 	}
 
@@ -62,9 +77,7 @@ func (c *QType) UnmarshalText(data []byte) error {
 
 	t, found := dns.StringToType[input]
 	if !found {
-		types := maps.Keys(dns.StringToType)
-
-		sort.Strings(types)
+		types := slices.Sorted(maps.Keys(dns.StringToType))
 
 		return fmt.Errorf("unknown DNS query type: '%s'. Please use following types '%s'",
 			input, strings.Join(types, ", "))

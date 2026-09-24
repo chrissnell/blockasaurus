@@ -83,7 +83,12 @@ var _ = Describe("root command", func() {
 		It("should create root command with all subcommands", func() {
 			cmd := NewRootCommand()
 
+<<<<<<< HEAD
 			subCmdNames := []string{}
+=======
+			// Check if all subcommands are added
+			subCmdNames := make([]string, 0, len(cmd.Commands()))
+>>>>>>> upstream/main
 			for _, subCmd := range cmd.Commands() {
 				subCmdNames = append(subCmdNames, subCmd.Name())
 			}

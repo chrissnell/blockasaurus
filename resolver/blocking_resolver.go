@@ -3,15 +3,15 @@ package resolver
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"golang.org/x/exp/maps"
 
 	"github.com/hashicorp/go-multierror"
 
@@ -24,7 +24,6 @@ import (
 	"github.com/0xERR0R/blocky/lists"
 	"github.com/0xERR0R/blocky/log"
 	"github.com/0xERR0R/blocky/model"
-	"github.com/0xERR0R/blocky/redis"
 	"github.com/0xERR0R/blocky/util"
 
 	"github.com/miekg/dns"
@@ -46,6 +45,8 @@ func createBlockHandler(cfg config.Blocking) (blockHandler, error) {
 		return zeroIPBlockHandler{
 			BlockTimeSec: blockTime,
 		}, nil
+	case "refused":
+		return refusedBlockHandler{}, nil
 	default:
 		// Try parsing as IP address(es)
 		var ips []net.IP
@@ -66,16 +67,23 @@ func createBlockHandler(cfg config.Blocking) (blockHandler, error) {
 			}, nil
 		}
 
-		return nil,
-			fmt.Errorf("unknown blockType '%s', please use one of: ZeroIP, NxDomain or specify destination IP address(es)",
-				cfgBlockType)
+		return nil, fmt.Errorf(
+			"unknown blockType '%s', please use one of: ZeroIP, NxDomain, Refused "+
+				"or specify destination IP address(es)",
+			cfgBlockType)
 	}
 }
 
 type status struct {
 	// true: blocking of all groups is enabled
-	// false: blocking is disabled. Either all groups or only particular
-	enabled        bool
+	// false: blocking is disabled, either for all groups or only for the
+	// particular groups listed in disabledGroups
+	enabled bool
+	// disabledGroups must only ever be reassigned wholesale, never mutated in
+	// place (no in-place append, no element writes): groupsToCheckForClient
+	// snapshots the slice header under a brief read lock and then reads the
+	// backing array after releasing the lock, so any in-place mutation would be
+	// an unsynchronized write racing that lock-free read.
 	disabledGroups []string
 	enableTimer    *time.Timer
 	disableEnd     time.Time
@@ -93,21 +101,43 @@ type BlockingResolver struct {
 	blockHandler        blockHandler
 	allowlistOnlyGroups map[string]bool
 	status              *status
-	clientGroupsBlock   map[string][]string
-	redisClient         *redis.Client
+	clientGroups        clientGroupsIndex
 	fqdnIPCache         cache.ExpiringCache[[]net.IP]
 }
 
-func clientGroupsBlock(cfg config.Blocking) map[string][]string {
-	cgb := make(map[string][]string, len(cfg.ClientGroupsBlock))
+// scheduledGroup pairs a list group name with optional schedules.
+// If schedules has entries, at least one must be active (OR logic).
+// If hasScheduleMapping is true but schedules is empty (unresolved names),
+// the group is treated as inactive to avoid silent always-active fallback.
+type scheduledGroup struct {
+	group              string
+	schedules          []*config.Schedule
+	hasScheduleMapping bool
+}
+
+func clientGroupsBlock(cfg config.Blocking) map[string][]scheduledGroup {
+	// Pre-resolve list schedules
+	listScheds := make(map[string][]*config.Schedule, len(cfg.ListSchedules))
+
+	for listName, schedNames := range cfg.ListSchedules {
+		for _, schedName := range schedNames {
+			if sched, ok := cfg.Schedules[schedName]; ok {
+				sched.Compile()
+				listScheds[listName] = append(listScheds[listName], &sched)
+			} else {
+				log.Log().Warnf("listSchedules '%s' references unknown schedule '%s', skipping", listName, schedName)
+			}
+		}
+	}
+
+	cgb := make(map[string][]scheduledGroup, len(cfg.ClientGroupsBlock))
 
 	for identifier, cfgGroups := range cfg.ClientGroupsBlock {
 		for ipart := range strings.SplitSeq(strings.ToLower(identifier), ",") {
-			existingGroups, found := cgb[ipart]
-			if found {
-				cgb[ipart] = append(existingGroups, cfgGroups...)
-			} else {
-				cgb[ipart] = cfgGroups
+			for _, g := range cfgGroups {
+				_, hasMapped := cfg.ListSchedules[g]
+				sg := scheduledGroup{group: g, schedules: listScheds[g], hasScheduleMapping: hasMapped}
+				cgb[ipart] = append(cgb[ipart], sg)
 			}
 		}
 	}
@@ -115,10 +145,89 @@ func clientGroupsBlock(cfg config.Blocking) map[string][]string {
 	return cgb
 }
 
+// clientGroupsIndex pre-classifies the client→group mapping once at config load
+// so per-query resolution avoids re-parsing CIDRs and re-lowercasing identifiers
+// on every request (see PERFORMANCE.md, finding #8). It is immutable after
+// construction.
+type clientGroupsIndex struct {
+	// byID maps an exact, already-lowercased identifier (IP literal, FQDN, literal
+	// client name or "default") to its groups. Used for exact ClientIP, "default"
+	// and literal client-name lookups. Identifiers containing glob metacharacters
+	// are not kept here; they live in names and are matched via filepath.Match.
+	byID map[string][]scheduledGroup
+	// cidrs holds identifiers that parse as a CIDR, with the network pre-parsed.
+	cidrs []cidrGroups
+	// fqdns holds identifiers classified as FQDN candidates (resolved via the
+	// fqdnIPCache at query time).
+	fqdns []fqdnGroups
+	// names holds identifiers containing glob metacharacters, matched against
+	// client names with filepath.Match. This is usually a tiny set, so literal
+	// client names avoid scanning it via the byID exact lookup.
+	names []nameGlob
+}
+
+type cidrGroups struct {
+	ipNet  *net.IPNet
+	groups []scheduledGroup
+}
+
+type fqdnGroups struct {
+	identifier string
+	groups     []scheduledGroup
+}
+
+type nameGlob struct {
+	pattern string
+	groups  []scheduledGroup
+}
+
+// isClientNameGlob reports whether an identifier contains filepath.Match
+// metacharacters. Only such identifiers need a per-name filepath.Match; everything
+// else matches a client name exactly and is resolved via the byID map.
+func isClientNameGlob(identifier string) bool {
+	return strings.ContainsAny(identifier, `*?[\`)
+}
+
+func newClientGroupsIndex(cfg config.Blocking) clientGroupsIndex {
+	byID := clientGroupsBlock(cfg)
+
+	idx := clientGroupsIndex{byID: byID}
+
+	for id, groups := range byID {
+		// Move glob identifiers out of byID into the names bucket: they are only
+		// ever matched against client names via filepath.Match, never by exact
+		// lookup, and a glob string is neither a valid CIDR nor a resolvable FQDN.
+		// Removing them keeps the exact byID lookup faithful (a client whose name
+		// literally equals a glob pattern must not match it as a literal).
+		if isClientNameGlob(id) {
+			idx.names = append(idx.names, nameGlob{pattern: id, groups: groups})
+			delete(byID, id)
+
+			continue
+		}
+
+		// Pre-parse CIDR identifiers so per-query matching is a cheap
+		// ipNet.Contains instead of a net.ParseCIDR allocation per entry.
+		if _, ipNet, err := net.ParseCIDR(id); err == nil {
+			idx.cidrs = append(idx.cidrs, cidrGroups{ipNet: ipNet, groups: groups})
+		}
+
+		// Mirror the previous per-query isFQDN(identifier) check so FQDN
+		// candidates are resolved via the fqdnIPCache without rescanning the
+		// whole map. A CIDR identifier can also be an FQDN candidate (e.g.
+		// "10.0.0.0/8" contains a dot); keeping it in both buckets is faithful
+		// to the original branching.
+		if isFQDN(id) {
+			idx.fqdns = append(idx.fqdns, fqdnGroups{identifier: id, groups: groups})
+		}
+	}
+
+	return idx
+}
+
 // NewBlockingResolver returns a new configured instance of the resolver
 func NewBlockingResolver(ctx context.Context,
 	cfg config.Blocking,
-	redis *redis.Client,
 	bootstrap *Bootstrap,
 ) (r *BlockingResolver, err error) {
 	blockHandler, err := createBlockHandler(cfg)
@@ -151,53 +260,64 @@ func NewBlockingResolver(ctx context.Context,
 			enabled:     true,
 			enableTimer: time.NewTimer(0),
 		},
-		clientGroupsBlock: clientGroupsBlock(cfg),
-		redisClient:       redis,
+		clientGroups: newClientGroupsIndex(cfg),
 	}
 
 	res.fqdnIPCache = expirationcache.NewCacheWithOnExpired[[]net.IP](ctx, expirationcache.Options{
 		CleanupInterval: defaultBlockingCleanUpInterval,
+		Shards:          cache.ShardCount(),
 	}, func(ctx context.Context, key string) (val *[]net.IP, ttl time.Duration) {
 		return res.queryForFQIdentifierIPs(ctx, key)
 	})
 
-	if res.redisClient != nil {
-		go res.redisSubscriber(ctx)
-	}
-
-	err = evt.Bus().SubscribeOnce(evt.ApplicationStarted, func(_ ...string) {
-		go res.initFQDNIPCache(ctx)
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to subscribe to ApplicationStarted event: %w", err)
+	if err := res.subscribeEvents(ctx); err != nil {
+		return nil, err
 	}
 
 	return res, nil
 }
 
-func (r *BlockingResolver) redisSubscriber(ctx context.Context) {
-	ctx, logger := r.log(ctx)
+func (r *BlockingResolver) subscribeEvents(ctx context.Context) error {
+	err := evt.Bus().SubscribeOnce(evt.ApplicationStarted, func(_ ...string) {
+		// Run off the publish path: the event bus holds a global lock while
+		// invoking handlers, so publishing from within a handler would deadlock.
+		go func() {
+			// Re-emit the current list counts now that the whole resolver chain is
+			// wired: the counts published while lists loaded during construction were
+			// missed by subscribers built after this resolver (e.g. the stats resolver).
+			r.denylistMatcher.PublishGroupCounts()
+			r.allowlistMatcher.PublishGroupCounts()
 
-	for {
-		select {
-		case em := <-r.redisClient.EnabledChannel:
-			if em != nil {
-				logger.Debug("Received state from redis: ", em)
+			r.initFQDNIPCache(ctx)
+		}()
+	})
+	if err != nil {
+		return fmt.Errorf("failed to subscribe to ApplicationStarted event: %w", err)
+	}
 
-				if em.State {
-					r.internalEnableBlocking()
-				} else {
-					err := r.internalDisableBlocking(ctx, em.Duration, em.Groups)
-					if err != nil {
-						logger.Warn("Blocking couldn't be disabled:", err)
-					}
+	remoteHandler := func(state evt.BlockingState) {
+		go func() {
+			if state.Enabled {
+				r.internalEnableBlocking()
+			} else {
+				if disableErr := r.internalDisableBlocking(ctx, state.Duration, state.Groups); disableErr != nil {
+					log.PrefixedLog("blocking").Warn("blocking couldn't be disabled: ", disableErr)
 				}
 			}
-
-		case <-ctx.Done():
-			return
-		}
+		}()
 	}
+
+	err = evt.Bus().Subscribe(evt.BlockingStateChangedRemote, remoteHandler)
+	if err != nil {
+		return fmt.Errorf("failed to subscribe to %s: %w", evt.BlockingStateChangedRemote, err)
+	}
+
+	go func() {
+		<-ctx.Done()
+		_ = evt.Bus().Unsubscribe(evt.BlockingStateChangedRemote, remoteHandler)
+	}()
+
+	return nil
 }
 
 // RefreshLists triggers the refresh of all allow/denylists in the cache
@@ -215,7 +335,7 @@ func (r *BlockingResolver) RefreshLists(ctx context.Context) error {
 }
 
 func (r *BlockingResolver) retrieveAllBlockingGroups() []string {
-	result := maps.Keys(r.cfg.Denylists)
+	result := slices.Collect(maps.Keys(r.cfg.Denylists))
 
 	result = append(result, "default")
 	slices.Sort(result)
@@ -226,10 +346,7 @@ func (r *BlockingResolver) retrieveAllBlockingGroups() []string {
 // EnableBlocking enables the blocking against the denylists
 func (r *BlockingResolver) EnableBlocking(ctx context.Context) {
 	r.internalEnableBlocking()
-
-	if r.redisClient != nil {
-		r.redisClient.PublishEnabled(ctx, &redis.EnabledMessage{State: true})
-	}
+	evt.Bus().Publish(evt.BlockingStateChanged, evt.BlockingState{Enabled: true})
 }
 
 func (r *BlockingResolver) internalEnableBlocking() {
@@ -246,9 +363,9 @@ func (r *BlockingResolver) internalEnableBlocking() {
 // DisableBlocking deactivates the blocking for a particular duration (or forever if 0).
 func (r *BlockingResolver) DisableBlocking(ctx context.Context, duration time.Duration, disableGroups []string) error {
 	err := r.internalDisableBlocking(ctx, duration, disableGroups)
-	if err == nil && r.redisClient != nil {
-		r.redisClient.PublishEnabled(ctx, &redis.EnabledMessage{
-			State:    false,
+	if err == nil {
+		evt.Bus().Publish(evt.BlockingStateChanged, evt.BlockingState{
+			Enabled:  false,
 			Duration: duration,
 			Groups:   disableGroups,
 		})
@@ -277,7 +394,10 @@ func (r *BlockingResolver) internalDisableBlocking(ctx context.Context, duration
 			}
 		}
 
-		s.disabledGroups = disableGroups
+		// Clone so status owns the backing array: the caller keeps a reference to
+		// disableGroups, and groupsToCheckForClient reads s.disabledGroups
+		// lock-free, so an external in-place mutation must not be able to race it.
+		s.disabledGroups = slices.Clone(disableGroups)
 	}
 
 	s.enabled = false
@@ -312,8 +432,11 @@ func (r *BlockingResolver) BlockingStatus() api.BlockingStatus {
 	}
 
 	return api.BlockingStatus{
-		Enabled:         r.status.enabled,
-		DisabledGroups:  r.status.disabledGroups,
+		Enabled: r.status.enabled,
+		// Clone so callers cannot mutate status.disabledGroups in place: it is
+		// read lock-free in groupsToCheckForClient, so handing out the live slice
+		// would let an external write race that read.
+		DisabledGroups:  slices.Clone(r.status.disabledGroups),
 		AutoEnableInSec: int(autoEnableDuration.Seconds()),
 	}
 }
@@ -335,9 +458,10 @@ func determineAllowlistOnlyGroups(cfg *config.Blocking) (result map[string]bool)
 
 // sets answer and/or return code for DNS response, if request should be blocked
 func (r *BlockingResolver) handleBlocked(logger *logrus.Entry,
-	request *model.Request, question dns.Question, reason string,
+	request *model.Request, question dns.Question, reason, reasonLabel string,
 ) (*model.Response, error) {
 	modelResp := model.NewResponseWithReason(request, model.ResponseTypeBLOCKED, reason)
+	modelResp.ReasonLabel = reasonLabel
 	r.blockHandler.handleBlock(question, modelResp.Res)
 
 	logger.Debugf("blocking request '%s'", reason)
@@ -356,28 +480,19 @@ func (r *BlockingResolver) LogConfig(logger *logrus.Entry) {
 	log.WithIndent(logger, "  ", r.allowlistMatcher.LogConfig)
 }
 
-func (r *BlockingResolver) hasAllowlistOnlyAllowed(groupsToCheck []string) bool {
-	for _, group := range groupsToCheck {
-		if _, found := r.allowlistOnlyGroups[group]; found {
-			return true
-		}
-	}
-
-	return false
-}
-
-func (r *BlockingResolver) handleDenylist(ctx context.Context, groupsToCheck []string,
+func (r *BlockingResolver) handleDenylist(ctx context.Context, groupsToCheck []string, allowlistOnly bool,
 	request *model.Request, logger *logrus.Entry,
 ) (bool, *model.Response, error) {
-	logger.WithField("groupsToCheck", strings.Join(groupsToCheck, "; ")).Debug("checking groups for request")
-	allowlistOnlyAllowed := r.hasAllowlistOnlyAllowed(groupsToCheck)
+	if isDebugEnabled(logger) {
+		logger.WithField("groupsToCheck", strings.Join(groupsToCheck, "; ")).Debug("checking groups for request")
+	}
 
 	for _, question := range request.Req.Question {
 		domain := util.ExtractDomain(question)
-		logger := logger.WithField("domain", domain)
+		logger := logger.WithField(logFieldDomain, domain)
 
-		if groups := r.matches(groupsToCheck, r.allowlistMatcher, domain); len(groups) > 0 {
-			logger.WithField("groups", groups).Debugf("domain is allowlisted")
+		if matches := r.matches(groupsToCheck, r.allowlistMatcher, domain); len(matches) > 0 {
+			logger.WithField("matches", matches).Debug("domain is allowlisted")
 
 			resp, err := r.next.Resolve(ctx, request)
 			if err != nil {
@@ -387,8 +502,8 @@ func (r *BlockingResolver) handleDenylist(ctx context.Context, groupsToCheck []s
 			return true, resp, err
 		}
 
-		if allowlistOnlyAllowed {
-			resp, err := r.handleBlocked(logger, request, question, "BLOCKED (ALLOWLIST ONLY)")
+		if allowlistOnly {
+			resp, err := r.handleBlocked(logger, request, question, "BLOCKED (ALLOWLIST ONLY)", "")
 			if err != nil {
 				err = fmt.Errorf("failed to handle allowlist-only block for %s: %w", domain, err)
 			}
@@ -396,8 +511,9 @@ func (r *BlockingResolver) handleDenylist(ctx context.Context, groupsToCheck []s
 			return true, resp, err
 		}
 
-		if groups := r.matches(groupsToCheck, r.denylistMatcher, domain); len(groups) > 0 {
-			resp, err := r.handleBlocked(logger, request, question, fmt.Sprintf("BLOCKED (%s)", strings.Join(groups, ",")))
+		if matches := r.matches(groupsToCheck, r.denylistMatcher, domain); len(matches) > 0 {
+			resp, err := r.handleBlocked(logger, request, question,
+				formatBlockReason(matches, ""), formatBlockReasonLabel(matches, ""))
 
 			return true, resp, err
 		}
@@ -408,11 +524,18 @@ func (r *BlockingResolver) handleDenylist(ctx context.Context, groupsToCheck []s
 
 // Resolve checks the query against the denylist and delegates to next resolver if domain is not blocked
 func (r *BlockingResolver) Resolve(ctx context.Context, request *model.Request) (*model.Response, error) {
+	// When no client groups are configured there is nothing to block, so skip the
+	// per-request logger derivation and group resolution entirely (matches the
+	// disabled-path early-return in hosts_file/rebinding resolvers).
+	if !r.IsEnabled() {
+		return r.next.Resolve(ctx, request)
+	}
+
 	ctx, logger := r.log(ctx)
-	groupsToCheck := r.groupsToCheckForClient(request)
+	groupsToCheck, allowlistOnly := r.groupsToCheckForClient(request)
 
 	if len(groupsToCheck) > 0 {
-		handled, resp, err := r.handleDenylist(ctx, groupsToCheck, request, logger)
+		handled, resp, err := r.handleDenylist(ctx, groupsToCheck, allowlistOnly, request, logger)
 		if handled {
 			return resp, err
 		}
@@ -426,11 +549,11 @@ func (r *BlockingResolver) Resolve(ctx context.Context, request *model.Request) 
 			if len(entryToCheck) > 0 {
 				logger := logger.WithField("response_entry", entryToCheck)
 
-				if groups := r.matches(groupsToCheck, r.allowlistMatcher, entryToCheck); len(groups) > 0 {
-					logger.WithField("groups", groups).Debugf("%s is allowlisted", tName)
-				} else if groups := r.matches(groupsToCheck, r.denylistMatcher, entryToCheck); len(groups) > 0 {
-					return r.handleBlocked(logger, request, request.Req.Question[0], fmt.Sprintf("BLOCKED %s (%s)", tName,
-						strings.Join(groups, ",")))
+				if matches := r.matches(groupsToCheck, r.allowlistMatcher, entryToCheck); len(matches) > 0 {
+					logger.WithField("matches", matches).Debugf("%s is allowlisted", tName)
+				} else if matches := r.matches(groupsToCheck, r.denylistMatcher, entryToCheck); len(matches) > 0 {
+					return r.handleBlocked(logger, request, request.Req.Question[0],
+						formatBlockReason(matches, tName), formatBlockReasonLabel(matches, tName))
 				}
 			}
 		}
@@ -445,7 +568,8 @@ func extractEntryToCheckFromResponse(rr dns.RR) (entryToCheck, tName string) {
 		entryToCheck = v.A.String()
 		tName = "IP"
 	case *dns.AAAA:
-		entryToCheck = strings.ToLower(v.AAAA.String())
+		// net.IP.String already emits lower-case hex, so no ToLower is needed.
+		entryToCheck = v.AAAA.String()
 		tName = "IP"
 	case *dns.CNAME:
 		entryToCheck = util.ExtractDomainOnly(v.Target)
@@ -455,18 +579,78 @@ func extractEntryToCheckFromResponse(rr dns.RR) (entryToCheck, tName string) {
 	return entryToCheck, tName
 }
 
-func (r *BlockingResolver) isGroupDisabled(group string) bool {
+// groupsToCheckForClient returns the groups which should be checked for the client's
+// request, and whether those groups form an exclusive allowlist (block everything not
+// allowlisted).
+func (r *BlockingResolver) groupsToCheckForClient(request *model.Request) ([]string, bool) {
+	// Snapshot disabledGroups under a brief read lock, then release it before the
+	// (lock-free) group collection and filtering below. The field's invariant
+	// (reassigned wholesale, never mutated in place) is what keeps the captured
+	// slice a stable view without holding the lock across the loop. Do not
+	// re-acquire status.lock inside the loop: that recursive RLock deadlocks
+	// against a pending writer, which Go's RWMutex forbids.
 	r.status.lock.RLock()
-	defer r.status.lock.RUnlock()
+	disabledGroups := r.status.disabledGroups
+	r.status.lock.RUnlock()
 
-	return slices.Contains(r.status.disabledGroups, group)
+	groups := r.collectGroupsForClient(request)
+
+	if len(groups) == 0 {
+		// return default
+		groups = r.clientGroups.byID["default"]
+	}
+
+	// Exclusive mode is derived from the client's configured groups, not from the
+	// active ones filtered below: a client that also has a denylist group uses its
+	// allowlists as exceptions to that denylist, so deactivating the denylist group
+	// -- via a schedule or the disable API -- must not promote those exceptions into
+	// a whitelist that blocks everything else.
+	allowlistOnly := len(groups) > 0
+
+	for _, sg := range groups {
+		if !r.allowlistOnlyGroups[sg.group] {
+			allowlistOnly = false
+
+			break
+		}
+	}
+
+	now := time.Now()
+
+	var result []string
+
+	for _, sg := range groups {
+		if slices.Contains(disabledGroups, sg.group) {
+			continue
+		}
+
+		// Skip groups whose schedule is not currently active.
+		// If hasScheduleMapping is set but no schedules resolved, treat as inactive
+		// to avoid a typo silently making a group always-active.
+		if sg.hasScheduleMapping && (len(sg.schedules) == 0 || !isAnyScheduleActive(sg.schedules, now)) {
+			continue
+		}
+
+		result = append(result, sg.group)
+	}
+
+	// formatBlockReason renders groups in a stable order; a 0/1-element result is
+	// already sorted, so only sort when there is something to order.
+	if len(result) > 1 {
+		sort.Strings(result)
+	}
+
+	return result, allowlistOnly
 }
 
-// returns groups which should be checked for client's request
-func (r *BlockingResolver) groupsToCheckForClient(request *model.Request) []string {
-	r.status.lock.RLock()
-	defer r.status.lock.RUnlock()
+func isAnyScheduleActive(schedules []*config.Schedule, now time.Time) bool {
+	for _, s := range schedules {
+		if s.IsActive(now) {
+			return true
+		}
+	}
 
+<<<<<<< HEAD
 	var groups []string
 	var matchedClient string
 
@@ -479,16 +663,46 @@ func (r *BlockingResolver) groupsToCheckForClient(request *model.Request) []stri
 				if matchedClient == "" {
 					matchedClient = blockGroup
 				}
+=======
+	return false
+}
+
+func (r *BlockingResolver) collectGroupsForClient(request *model.Request) []scheduledGroup {
+	var groups []scheduledGroup
+
+	cg := r.clientGroups
+
+	// try client names: identifiers are already lowercased at config load, so the
+	// client name is lowered once here instead of both sides per map entry.
+	for _, cName := range request.ClientNames {
+		lowerName := strings.ToLower(cName)
+
+		// Literal identifiers (the vast majority — IPs, FQDNs, plain names) match a
+		// client name exactly, so resolve them with a single map lookup instead of
+		// running filepath.Match against every entry.
+		if groupsByName, found := cg.byID[lowerName]; found {
+			groups = append(groups, groupsByName...)
+		}
+
+		// Only the (usually tiny) set of glob identifiers needs a pattern match.
+		for _, ng := range cg.names {
+			if matched, _ := filepath.Match(ng.pattern, lowerName); matched {
+				groups = append(groups, ng.groups...)
+>>>>>>> upstream/main
 			}
 		}
 	}
 
 	// try IP
+<<<<<<< HEAD
 	ipStr := request.ClientIP.String()
 
 	groupsByIP, found := r.clientGroupsBlock[ipStr]
 
 	if found {
+=======
+	if groupsByIP, found := cg.byID[request.ClientIP.String()]; found {
+>>>>>>> upstream/main
 		groups = append(groups, groupsByIP...)
 
 		if matchedClient == "" {
@@ -496,6 +710,7 @@ func (r *BlockingResolver) groupsToCheckForClient(request *model.Request) []stri
 		}
 	}
 
+<<<<<<< HEAD
 	for clientIdentifier, groupsByCidr := range r.clientGroupsBlock {
 		// try CIDR
 		if util.CidrContainsIP(clientIdentifier, request.ClientIP) {
@@ -515,11 +730,32 @@ func (r *BlockingResolver) groupsToCheckForClient(request *model.Request) []stri
 							matchedClient = clientIdentifier
 						}
 					}
+=======
+	// try CIDR using the networks pre-parsed at config load
+	for _, c := range cg.cidrs {
+		if c.ipNet.Contains(request.ClientIP) {
+			groups = append(groups, c.groups...)
+		}
+	}
+
+	// try FQDN identifiers via their resolved IPs
+	if r.fqdnIPCache != nil {
+		for _, f := range cg.fqdns {
+			ips, _ := r.fqdnIPCache.Get(f.identifier)
+			if ips == nil {
+				continue
+			}
+
+			for _, ip := range *ips {
+				if ip.Equal(request.ClientIP) {
+					groups = append(groups, f.groups...)
+>>>>>>> upstream/main
 				}
 			}
 		}
 	}
 
+<<<<<<< HEAD
 	if len(groups) == 0 {
 		// return default
 		groups = r.clientGroupsBlock["default"]
@@ -539,12 +775,52 @@ func (r *BlockingResolver) groupsToCheckForClient(request *model.Request) []stri
 	sort.Strings(result)
 
 	return result
+=======
+	return groups
+>>>>>>> upstream/main
 }
 
 func (r *BlockingResolver) matches(groupsToCheck []string, m lists.Matcher,
 	domain string,
-) []string {
+) map[string]string {
 	return m.Match(domain, groupsToCheck)
+}
+
+// formatBlockReason renders a block reason of the form
+// "BLOCKED[ TYPE] (group: rule[, group: rule...])". Matched groups are sorted
+// so the rendered reason is deterministic when more than one group matches.
+func formatBlockReason(matches map[string]string, typeName string) string {
+	return renderBlockReason(matches, typeName, true)
+}
+
+// formatBlockReasonLabel renders a low-cardinality block reason of the form
+// "BLOCKED[ TYPE] (group[, group...])" — group names only, without the matched
+// rule. It is used as the `reason` Prometheus metric label so the label stays
+// bounded by the number of configured groups, regardless of deny-list size.
+func formatBlockReasonLabel(matches map[string]string, typeName string) string {
+	return renderBlockReason(matches, typeName, false)
+}
+
+func renderBlockReason(matches map[string]string, typeName string, includeRules bool) string {
+	reason := "BLOCKED"
+	if typeName != "" {
+		reason += " " + typeName
+	}
+
+	if len(matches) == 0 {
+		return reason
+	}
+
+	entries := make([]string, 0, len(matches))
+	for _, group := range slices.Sorted(maps.Keys(matches)) {
+		if includeRules {
+			entries = append(entries, fmt.Sprintf("%s: %s", group, matches[group]))
+		} else {
+			entries = append(entries, group)
+		}
+	}
+
+	return fmt.Sprintf("%s (%s)", reason, strings.Join(entries, ", "))
 }
 
 type blockHandler interface {
@@ -558,6 +834,8 @@ type zeroIPBlockHandler struct {
 type nxDomainBlockHandler struct {
 	BlockTimeSec uint32
 }
+
+type refusedBlockHandler struct{}
 
 type ipBlockHandler struct {
 	destinations    []net.IP
@@ -590,6 +868,10 @@ func (b nxDomainBlockHandler) handleBlock(question dns.Question, response *dns.M
 	// Add SOA to authority section per RFC 2308
 	soa := util.CreateSOAForNegativeResponse(question, b.BlockTimeSec)
 	response.Ns = []dns.RR{soa}
+}
+
+func (b refusedBlockHandler) handleBlock(_ dns.Question, response *dns.Msg) {
+	response.Rcode = dns.RcodeRefused
 }
 
 func (b ipBlockHandler) handleBlock(question dns.Question, response *dns.Msg) {
@@ -646,13 +928,9 @@ func (r *BlockingResolver) queryForFQIdentifierIPs(ctx context.Context, identifi
 }
 
 func (r *BlockingResolver) initFQDNIPCache(ctx context.Context) {
-	identifiers := maps.Keys(r.clientGroupsBlock)
-
-	for _, identifier := range identifiers {
-		if isFQDN(identifier) {
-			iPs, ttl := r.queryForFQIdentifierIPs(ctx, identifier)
-			r.fqdnIPCache.Put(identifier, iPs, ttl)
-		}
+	for _, f := range r.clientGroups.fqdns {
+		iPs, ttl := r.queryForFQIdentifierIPs(ctx, f.identifier)
+		r.fqdnIPCache.Put(f.identifier, iPs, ttl)
 	}
 }
 

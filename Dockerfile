@@ -9,7 +9,11 @@ COPY web/ui/ .
 RUN npx vite build
 
 # ----------- stage: build
-FROM golang:alpine AS build
+# Pin the build stage to the native build platform and cross-compile to the
+# target platform. The build is CGO-free and the final stage is `scratch`, so
+# nothing ever runs in the target arch at build time - this avoids compiling the
+# Go toolchain under slow QEMU emulation for the arm targets.
+FROM --platform=$BUILDPLATFORM golang:alpine AS build
 RUN apk add --no-cache make coreutils libcap
 
 # Arguments needed for dependency download
@@ -19,6 +23,7 @@ ARG OPTS=""
 # setup go environment
 ENV GO_SKIP_GENERATE=1\
   GO_BUILD_FLAGS="-tags static -v ${OPTS}" \
+  CGO_ENABLED=0 \
   BIN_USER=100\
   BIN_AUTOCAB=1 \
   BIN_OUT_DIR="/bin" \
@@ -40,7 +45,18 @@ COPY --from=ui /ui/dist web/ui/dist
 ARG VERSION
 ARG BUILD_TIME
 
-RUN make build
+# Target platform args populated automatically by BuildKit; cross-compile to them
+ARG TARGETOS
+ARG TARGETARCH
+ARG TARGETVARIANT
+
+RUN GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOARM=${TARGETVARIANT#v} make build
+
+# Empty dir, copied into the final stage to seed writable mount points. Docker
+# propagates the ownership of an existing image directory to a fresh named
+# volume mounted over it, so pre-creating these makes `-v blocky_cache:/app/cache`
+# writable by the unprivileged container user without any host-side setup.
+RUN mkdir -p /seed-dir
 
 # ----------- stage: final
 FROM scratch
@@ -62,6 +78,10 @@ USER 100
 WORKDIR /app
 
 COPY --from=build /bin/blockasaurus /app/blockasaurus
+
+# Writable mount points owned by the container user (see comment in build stage).
+COPY --from=build --chown=100:100 /seed-dir /app/cache
+COPY --from=build --chown=100:100 /seed-dir /logs
 
 ENV BLOCKY_CONFIG_FILE=/app/config.yml
 

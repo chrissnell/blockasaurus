@@ -2,78 +2,12 @@ openapi: 3.1.1
 info:
   title: Blockasaurus API
   description: >-
-    # Blockasaurus
+    REST API for Blockasaurus, a DNS proxy and ad-blocker for the local network.
 
-    Blockasaurus is a DNS proxy and ad-blocker for the local network written in Go with following features:
 
-    ## Features
-
-    - **Blocking** - Blocking of DNS queries with external lists (Ad-block, malware) and allowlisting
-
-      - Definition of allow/denylists per client group (Kids, Smart home devices, etc.)
-      - Periodical reload of external allow/denylists
-      - Regex support
-      - Blocking of request domain, response CNAME (deep CNAME inspection) and response IP addresses (against IP lists)
-
-    - **Advanced DNS configuration** - not just an ad-blocker
-
-      - Custom DNS resolution for certain domain names
-      - Conditional forwarding to external DNS server
-      - Upstream resolvers can be defined per client group
-
-    - **Performance** - Improves speed and performance in your network
-
-      - Customizable caching of DNS answers for queries -> improves DNS resolution speed and reduces amount of external DNS
-        queries
-      - Prefetching and caching of often used queries
-      - Using multiple external resolver simultaneously
-      - Low memory footprint
-
-    - **Various Protocols** - Supports modern DNS protocols
-
-      - DNS over UDP and TCP
-      - DNS over HTTPS (aka DoH)
-      - DNS over TLS (aka DoT)
-
-    - **Security and Privacy** - Secure communication
-
-      - Supports modern DNS extensions: DNSSEC, eDNS, ...
-      - Free configurable blocking lists - no hidden filtering etc.
-      - Provides DoH Endpoint
-      - Uses random upstream resolvers from the configuration - increases your privacy through the distribution of your DNS
-        traffic over multiple provider
-      - Blockasaurus does **NOT** collect any user data, telemetry, statistics etc.
-
-    - **Integration** - various integration
-
-      - [Prometheus](https://prometheus.io/) metrics
-      - Prepared [Grafana](https://grafana.com/) dashboards (Prometheus and database)
-      - Logging of DNS queries per day / per client in CSV format or MySQL/MariaDB/PostgreSQL/Timescale database - easy to
-        analyze
-      - Various REST API endpoints
-      - CLI tool
-
-    - **Simple configuration** - single or multiple configuration files in YAML format
-
-      - Simple to maintain
-      - Simple to backup
-
-    - **Simple installation/configuration** - Blockasaurus was designed for simple installation
-
-      - Stateless (no database, no temporary files)
-      - Docker image with Multi-arch support
-      - Single binary
-      - Supports x86-64 and ARM architectures -> runs fine on Raspberry PI
-      - Community supported Helm chart for k8s deployment
-
-    ## Quick start
-
-    You can jump to [Installation](https://0xerr0r.github.io/blocky/installation/) chapter in the documentation.
-
-    ## Full documentation
-
-    You can find full documentation and configuration examples
-    at: [https://0xERR0R.github.io/blocky/](https://0xERR0R.github.io/blocky/)
+    For features, configuration, and installation see the
+    [Blockasaurus Handbook](https://chrissnell.com/software/blockasaurus/) and the
+    [README](https://github.com/chrissnell/blockasaurus/blob/main/README.md).
   contact:
     name: blocky@github
     url: https://github.com/0xERR0R/blocky
@@ -191,6 +125,31 @@ paths:
       responses:
         '200':
           description: All caches cleared
+  /stats:
+    get:
+      operationId: getStats
+      tags:
+        - stats
+      summary: DNS statistics
+      description: >-
+        In-memory statistics over a rolling 24h window. Requires statistics to be
+        enabled in the configuration; returns 503 otherwise. Independent of Prometheus.
+        All timestamps (start, end, perHour[].hour) are returned in UTC (RFC 3339,
+        `Z` suffix).
+      responses:
+        '200':
+          description: Current statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/api.Stats'
+        '503':
+          description: Statistics are disabled
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: statistics are disabled
 components:
   schemas:
     api.BlockingStatus:
@@ -244,3 +203,166 @@ components:
         - response
         - responseType
         - returnCode
+    api.Stats:
+      type: object
+      description: In-memory DNS statistics snapshot.
+      properties:
+        start:
+          type: string
+          format: date-time
+          description: Start of the covered window for the windowed fields (not the gauges). UTC (RFC 3339).
+        end:
+          type: string
+          format: date-time
+          description: Snapshot time. UTC (RFC 3339).
+        summary:
+          $ref: '#/components/schemas/api.StatsSummary'
+        byResponseType:
+          type: object
+          additionalProperties:
+            type: integer
+          description: Raw per-RType counts over the window (CACHED, BLOCKED, ...).
+        byQueryType:
+          type: object
+          additionalProperties:
+            type: integer
+          description: Counts per DNS query type over the window (A, AAAA, ...).
+        byResponseCode:
+          type: object
+          additionalProperties:
+            type: integer
+          description: Counts per DNS response code over the window (NOERROR, NXDOMAIN, ...).
+        perHour:
+          type: array
+          description: Per-hour time series over the window.
+          items:
+            $ref: '#/components/schemas/api.HourPoint'
+        topDomains:
+          type: array
+          items:
+            $ref: '#/components/schemas/api.NameCount'
+        topBlockedDomains:
+          type: array
+          items:
+            $ref: '#/components/schemas/api.NameCount'
+        topClients:
+          type: array
+          items:
+            $ref: '#/components/schemas/api.NameCount'
+        lists:
+          $ref: '#/components/schemas/api.ListCounts'
+        cache:
+          $ref: '#/components/schemas/api.CacheStats'
+      required:
+        - start
+        - end
+        - summary
+        - byResponseType
+        - byQueryType
+        - byResponseCode
+        - perHour
+        - topDomains
+        - topBlockedDomains
+        - topClients
+        - lists
+        - cache
+    api.StatsSummary:
+      type: object
+      description: Curated outcome categories over the window (server computes the mapping).
+      properties:
+        queries:
+          type: integer
+          description: Total queries received in the window.
+        cached:
+          type: integer
+        forwarded:
+          type: integer
+        blocked:
+          type: integer
+          description: >-
+            Real blocks: denylist hits (BLOCKED) and DNS rebinding-protection hits (REBIND).
+            Excludes query-type filtered and NOTFQDN responses.
+        filtered:
+          type: integer
+          description: >-
+            Query-type filtered (e.g. AAAA via filtering.queryTypes) and NOTFQDN responses.
+            These are not blocks.
+        local:
+          type: integer
+        dropped:
+          type: integer
+        errors:
+          type: integer
+          description: >-
+            Queries that did not resolve: a resolver returned an error, or the answer
+            failed DNSSEC validation (BOGUS). Not blocks.
+        avgResponseMs:
+          type: integer
+        cacheHitRate:
+          type: number
+          format: double
+      required:
+        - queries
+        - cached
+        - forwarded
+        - blocked
+        - filtered
+        - local
+        - dropped
+        - errors
+        - avgResponseMs
+        - cacheHitRate
+    api.NameCount:
+      type: object
+      properties:
+        name:
+          type: string
+        count:
+          type: integer
+      required:
+        - name
+        - count
+    api.HourPoint:
+      type: object
+      properties:
+        hour:
+          type: string
+          format: date-time
+          description: Start of the hour bucket. UTC (RFC 3339).
+        queries:
+          type: integer
+        blocked:
+          type: integer
+          description: Real blocks in this hour, same definition as summary.blocked.
+        filtered:
+          type: integer
+          description: Query-type filtered / NOTFQDN responses in this hour, same definition as summary.filtered.
+      required:
+        - hour
+        - queries
+        - blocked
+        - filtered
+    api.ListCounts:
+      type: object
+      description: Current per-group list entry counts (point-in-time, not windowed).
+      properties:
+        denylist:
+          type: object
+          additionalProperties:
+            type: integer
+        allowlist:
+          type: object
+          additionalProperties:
+            type: integer
+      required:
+        - denylist
+        - allowlist
+    api.CacheStats:
+      type: object
+      description: Current cache state (point-in-time, not windowed).
+      properties:
+        entries:
+          type: integer
+          description: Current number of entries in the result cache.
+      required:
+        - entries

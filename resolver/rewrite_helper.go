@@ -1,8 +1,12 @@
 package resolver
 
 import (
+	"context"
+	"errors"
 	"strings"
 
+	"github.com/0xERR0R/blocky/config"
+	"github.com/0xERR0R/blocky/model"
 	"github.com/0xERR0R/blocky/util"
 
 	"github.com/miekg/dns"
@@ -56,14 +60,31 @@ func rewriteDomain(domain string, rewriteMap map[string]string) (string, string)
 	domain = strings.ToLower(domain)
 
 	for k, v := range rewriteMap {
-		if strings.HasSuffix(domain, "."+k) {
-			newDomain := strings.TrimSuffix(domain, "."+k) + "." + v
-
-			return newDomain, k
+		if prefix, ok := strings.CutSuffix(domain, "."+k); ok {
+			return prefix + "." + v, k
 		}
 	}
 
 	return domain, ""
+}
+
+// shouldFallbackUpstream reports whether a query the resolver answered itself,
+// with an error or without an answer, should be retried with its original name
+// on the rest of the chain. See `fallbackUpstream` in the documentation.
+//
+// Callers must delegate queries they did not answer themselves before reaching
+// this: a response passed through from the next resolver must not go there again.
+func shouldFallbackUpstream(cfg *config.RewriterConfig, response *model.Response, err error) bool {
+	if !cfg.FallbackUpstream || len(cfg.Rewrite) == 0 {
+		return false
+	}
+
+	if err != nil {
+		// a dead context fails on the next resolver too, and its error is the useful one
+		return !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)
+	}
+
+	return response != nil && response != NoResponse && response.Res != nil && len(response.Res.Answer) == 0
 }
 
 // revertRewritesInResponse reverts domain rewrites in the DNS response

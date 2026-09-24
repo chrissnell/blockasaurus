@@ -12,9 +12,7 @@ import (
 	. "github.com/0xERR0R/blocky/helpertest"
 	"github.com/0xERR0R/blocky/log"
 	. "github.com/0xERR0R/blocky/model"
-	"github.com/0xERR0R/blocky/redis"
 	"github.com/0xERR0R/blocky/util"
-	"github.com/alicebob/miniredis/v2"
 	"github.com/creasty/defaults"
 
 	"github.com/miekg/dns"
@@ -27,6 +25,7 @@ var _ = Describe("CachingResolver", func() {
 	var (
 		sut        *CachingResolver
 		sutConfig  config.Caching
+		sutDNSSEC  config.DNSSEC
 		m          *mockResolver
 		mockAnswer *dns.Msg
 		ctx        context.Context
@@ -42,6 +41,7 @@ var _ = Describe("CachingResolver", func() {
 
 	BeforeEach(func() {
 		sutConfig = config.Caching{}
+		sutDNSSEC = config.DNSSEC{}
 		if err := defaults.Set(&sutConfig); err != nil {
 			panic(err)
 		}
@@ -52,7 +52,7 @@ var _ = Describe("CachingResolver", func() {
 		ctx, cancelFn = context.WithCancel(context.Background())
 		DeferCleanup(cancelFn)
 
-		sut, _ = NewCachingResolver(ctx, sutConfig, nil)
+		sut, _ = NewCachingResolver(ctx, sutConfig, sutDNSSEC, nil)
 		m = &mockResolver{}
 		cacheMock = cache.NewMockExpiringCache[[]byte](GinkgoT())
 		m.On("Resolve", mock.Anything).Return(&Response{Res: mockAnswer}, nil)
@@ -141,8 +141,47 @@ var _ = Describe("CachingResolver", func() {
 							HaveResponseType(ResponseTypeCACHED),
 							HaveReturnCode(dns.RcodeSuccess),
 							BeDNSRecord("example.com.", A, "123.122.121.120"),
-							HaveTTL(BeNumerically("<=", 2))))
+							HaveTTL(BeNumerically("<=", 2)),
+						),
+					)
 				Eventually(prefetchHitDomain, "6s").Should(Receive(Equal(true)))
+			})
+
+			When("dnssec validation is enabled", func() {
+				BeforeEach(func() {
+					sutDNSSEC = config.DNSSEC{Validate: true}
+				})
+
+				It("sets the DO bit on prefetch reloads so a signed entry isn't replaced by an unsigned one", func() {
+					var reloadReqHadDO bool
+					m.ResolveFn = func(_ context.Context, req *Request) (*Response, error) {
+						opt := req.Req.IsEdns0()
+						reloadReqHadDO = opt != nil && opt.Do()
+
+						return &Response{Res: mockAnswer, RType: ResponseTypeRESOLVED}, nil
+					}
+
+					// reloadCacheEntry is the ReloadFn the prefetching cache invokes on expiry.
+					_, ttl := sut.reloadCacheEntry(ctx, util.GenerateCacheKey(A, "example.com."))
+
+					Expect(reloadReqHadDO).Should(BeTrue(), "prefetch reload must set the DO bit")
+					Expect(ttl).Should(BeNumerically(">", 0))
+				})
+			})
+
+			It("does not request DNSSEC records on prefetch reloads by default, keeping unsigned caches small", func() {
+				var reloadReqHadEdns bool
+				m.ResolveFn = func(_ context.Context, req *Request) (*Response, error) {
+					reloadReqHadEdns = req.Req.IsEdns0() != nil
+
+					return &Response{Res: mockAnswer, RType: ResponseTypeRESOLVED}, nil
+				}
+
+				_, ttl := sut.reloadCacheEntry(ctx, util.GenerateCacheKey(A, "example.com."))
+
+				Expect(reloadReqHadEdns).Should(BeFalse(),
+					"without dnssec.validate, prefetch reloads must stay EDNS-free as before")
+				Expect(ttl).Should(BeNumerically(">", 0))
 			})
 		})
 		When("caching with default values is enabled", func() {
@@ -448,6 +487,67 @@ var _ = Describe("CachingResolver", func() {
 		})
 	})
 
+	Describe("Responses from trusted local sources", func() {
+		BeforeEach(func() {
+			mockAnswer, _ = util.NewMsgWithAnswer("router.home.lab.", 600, A, "192.168.2.1")
+		})
+
+		// the rebinding protection resolver sits above the cache and inspects
+		// CACHED responses; storing answers from trusted local sources would
+		// re-serve them re-labeled as CACHED and subject them to inspection
+		DescribeTable("does not cache them, keeping their response type on repeat queries",
+			func(rType ResponseType) {
+				m = &mockResolver{}
+				m.On("Resolve", mock.Anything).Return(&Response{Res: mockAnswer, RType: rType}, nil)
+				sut.Next(m)
+
+				By("first request", func() {
+					Expect(sut.Resolve(ctx, newRequest("router.home.lab.", A))).
+						Should(SatisfyAll(
+							HaveResponseType(rType),
+							BeDNSRecord("router.home.lab.", A, "192.168.2.1"),
+						))
+
+					Expect(m.Calls).Should(HaveLen(1))
+				})
+
+				By("second request", func() {
+					Expect(sut.Resolve(ctx, newRequest("router.home.lab.", A))).
+						Should(SatisfyAll(
+							HaveResponseType(rType),
+							BeDNSRecord("router.home.lab.", A, "192.168.2.1"),
+						))
+
+					// served fresh, not from the cache
+					Expect(m.Calls).Should(HaveLen(2))
+				})
+			},
+			Entry("conditional upstream", ResponseTypeCONDITIONAL),
+			Entry("special-use domain", ResponseTypeSPECIAL),
+		)
+
+		It("still caches DNS64-synthesized answers (upstream-derived)", func() {
+			m = &mockResolver{}
+			m.On("Resolve", mock.Anything).Return(&Response{Res: mockAnswer, RType: ResponseTypeSYNTHESIZED}, nil)
+			sut.Next(m)
+
+			By("first request", func() {
+				Expect(sut.Resolve(ctx, newRequest("router.home.lab.", A))).
+					Should(HaveResponseType(ResponseTypeSYNTHESIZED))
+
+				Expect(m.Calls).Should(HaveLen(1))
+			})
+
+			By("second request", func() {
+				Expect(sut.Resolve(ctx, newRequest("router.home.lab.", A))).
+					Should(HaveResponseType(ResponseTypeCACHED))
+
+				// still one call to the next resolver
+				Expect(m.Calls).Should(HaveLen(1))
+			})
+		})
+	})
+
 	Describe("Negative cache (caching if upstream resolver returns NXDOMAIN)", func() {
 		Context("Caching if upstream resolver returns NXDOMAIN", func() {
 			When("Upstream resolver returns NXDOMAIN with caching", func() {
@@ -719,80 +819,98 @@ var _ = Describe("CachingResolver", func() {
 		})
 	})
 
-	Describe("Redis is configured", func() {
-		var (
-			redisServer *miniredis.Miniredis
-			redisClient *redis.Client
-			redisConfig *config.Redis
-			err         error
-		)
+	Describe("reloadCacheEntry (prefetch reload)", func() {
+		var cacheKey string
+
 		BeforeEach(func() {
-			redisServer, err = miniredis.Run()
-
-			Expect(err).Should(Succeed())
-
-			var rcfg config.Redis
-			err = defaults.Set(&rcfg)
-
-			Expect(err).Should(Succeed())
-
-			rcfg.Address = redisServer.Addr()
-			redisConfig = &rcfg
-			redisClient, err = redis.New(context.TODO(), redisConfig)
-
-			Expect(err).Should(Succeed())
-			Expect(redisClient).ShouldNot(BeNil())
+			cacheKey = util.GenerateCacheKey(dns.Type(dns.TypeA), "example.com")
 		})
-		AfterEach(func() {
-			redisServer.Close()
-		})
-		When("cache", func() {
-			JustBeforeEach(func() {
-				sutConfig = config.Caching{
-					MaxCachingTime: config.Duration(time.Second * 10),
-				}
-				mockAnswer, _ = util.NewMsgWithAnswer("example.com.", 1000, A, "1.1.1.1")
 
-				sut, _ = NewCachingResolver(ctx, sutConfig, redisClient)
-				m = &mockResolver{}
-				m.On("Resolve", mock.Anything).Return(&Response{Res: mockAnswer}, nil)
-				sut.Next(m)
+		When("the reloaded response contains EDNS0 OPT records", func() {
+			BeforeEach(func() {
+				mockAnswer, _ = util.NewMsgWithAnswer("example.com.", 123, A, "1.2.3.4")
+				opt := new(dns.OPT)
+				opt.Hdr.Name = "."
+				opt.Hdr.Rrtype = dns.TypeOPT
+				opt.Option = append(opt.Option, &dns.EDNS0_COOKIE{Code: dns.EDNS0COOKIE, Cookie: "0102030405060708"})
+				mockAnswer.Extra = append(mockAnswer.Extra, opt)
 			})
 
-			It("put in redis", func() {
-				Expect(sut.Resolve(ctx, newRequest("example.com.", A))).
-					Should(HaveResponseType(ResponseTypeRESOLVED))
+			It("strips the OPT records from the stored value", func() {
+				packed, ttl := sut.reloadCacheEntry(ctx, cacheKey)
+				Expect(packed).ShouldNot(BeNil())
+				Expect(ttl).Should(BeNumerically(">", 0))
 
-				Eventually(func() []string {
-					return redisServer.DB(redisConfig.Database).Keys()
-				}).Should(HaveLen(1))
+				msg := new(dns.Msg)
+				Expect(msg.Unpack(*packed)).Should(Succeed())
+				Expect(msg.Answer).Should(HaveLen(1))
+				Expect(msg.Extra).Should(BeEmpty())
+			})
+		})
+
+		When("the response is successful", func() {
+			BeforeEach(func() {
+				mockAnswer, _ = util.NewMsgWithAnswer("example.com.", 123, A, "1.2.3.4")
 			})
 
-			It("load", func() {
-				request := newRequest("example2.com.", A)
-				domain := util.ExtractDomain(request.Req.Question[0])
-				cacheKey := util.GenerateCacheKey(A, domain)
-				redisMockMsg := &redis.CacheMessage{
-					Key: cacheKey,
-					Response: &Response{
-						RType:  ResponseTypeCACHED,
-						Reason: "MOCK_REDIS",
-						Res:    mockAnswer,
-					},
-				}
-				redisClient.CacheChannel <- redisMockMsg
+			It("returns the packed value and TTL", func() {
+				packed, ttl := sut.reloadCacheEntry(ctx, cacheKey)
+				Expect(packed).ShouldNot(BeNil())
+				Expect(ttl).Should(BeNumerically(">", 0))
 
-				Eventually(sut.Resolve).
-					WithContext(ctx).
-					WithArguments(request).
-					Should(
-						SatisfyAll(
-							HaveResponseType(ResponseTypeCACHED),
-							HaveTTL(BeNumerically("<=", 10)),
-						))
+				msg := new(dns.Msg)
+				Expect(msg.Unpack(*packed)).Should(Succeed())
+				Expect(msg.Answer).Should(HaveLen(1))
+			})
+		})
+
+		When("the reloaded response is truncated", func() {
+			BeforeEach(func() {
+				mockAnswer, _ = util.NewMsgWithAnswer("example.com.", 123, A, "1.2.3.4")
+				mockAnswer.Truncated = true
+			})
+
+			It("is not cached or published (matches putInCache's isResponseCacheable gate)", func() {
+				packed, ttl := sut.reloadCacheEntry(ctx, cacheKey)
+				Expect(packed).Should(BeNil())
+				Expect(ttl).Should(BeZero())
+			})
+		})
+
+		When("the reloaded response has the CD flag set", func() {
+			BeforeEach(func() {
+				mockAnswer, _ = util.NewMsgWithAnswer("example.com.", 123, A, "1.2.3.4")
+				mockAnswer.CheckingDisabled = true
+			})
+
+			It("is not cached or published (matches putInCache's isResponseCacheable gate)", func() {
+				packed, ttl := sut.reloadCacheEntry(ctx, cacheKey)
+				Expect(packed).Should(BeNil())
+				Expect(ttl).Should(BeZero())
+			})
+		})
+
+		When("a maximum caching time is configured", func() {
+			BeforeEach(func() {
+				sutConfig.MaxCachingTime = config.Duration(time.Minute)
+				mockAnswer, _ = util.NewMsgWithAnswer("example.com.", 3600, A, "1.2.3.4")
+			})
+
+			It("clamps the TTL baked into the packed value, not just the returned TTL", func() {
+				packed, ttl := sut.reloadCacheEntry(ctx, cacheKey)
+				Expect(packed).ShouldNot(BeNil())
+				Expect(ttl).Should(Equal(time.Minute))
+
+				msg := new(dns.Msg)
+				Expect(msg.Unpack(*packed)).Should(Succeed())
+				Expect(msg.Answer).Should(HaveLen(1))
+				// the clamped TTL must be packed, otherwise the stored/Redis-synced
+				// bytes would carry the raw upstream TTL (3600).
+				Expect(msg.Answer[0].Header().Ttl).Should(Equal(uint32(60)))
 			})
 		})
 	})
+
 	Context("isRequestCacheable", func() {
 		var request *Request
 		When("request is not cacheable", func() {
@@ -838,7 +956,7 @@ var _ = Describe("CachingResolver", func() {
 			sutConfig = config.Caching{Exclude: exclude}
 			mockAnswer, _ = util.NewMsgWithAnswer(domain, 1000, A, "10.0.0.1")
 			request = newRequest(domain, A)
-			sut, _ = NewCachingResolver(ctx, sutConfig, nil)
+			sut, _ = NewCachingResolver(ctx, sutConfig, config.DNSSEC{}, nil)
 			m.On("Resolve", mock.Anything, mock.Anything).Return(&Response{Res: mockAnswer}, nil)
 			cacheMock.On("Get", mock.Anything).Maybe().Return((*[]byte)(nil), 10*time.Second)
 			cacheMock.On("Put", mock.Anything, mock.Anything, mock.Anything).Maybe().Return()
@@ -848,7 +966,7 @@ var _ = Describe("CachingResolver", func() {
 
 		When("Exclude settings are wrong", func() {
 			It("should fail", func() {
-				_, err := NewCachingResolver(ctx, config.Caching{Exclude: []string{"/[]/"}}, nil)
+				_, err := NewCachingResolver(ctx, config.Caching{Exclude: []string{"/[]/"}}, config.DNSSEC{}, nil)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("cache exclusion configuration '/[]/' fail because"))
 			})
@@ -856,7 +974,7 @@ var _ = Describe("CachingResolver", func() {
 
 		When("Exclude settings are wrong because of missing slashes", func() {
 			It("should fail", func() {
-				_, err := NewCachingResolver(ctx, config.Caching{Exclude: []string{"lan"}}, nil)
+				_, err := NewCachingResolver(ctx, config.Caching{Exclude: []string{"lan"}}, config.DNSSEC{}, nil)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("cache exclusion configuration 'lan' fail because of missing slashes"))
 			})
@@ -907,6 +1025,150 @@ var _ = Describe("CachingResolver", func() {
 				Expect(sut.Resolve(ctx, request)).Should(HaveResponseType(ResponseTypeRESOLVED))
 				Expect(m.Calls).Should(HaveLen(1))
 				Expect(cacheMock.Calls).Should(HaveLen(2))
+			})
+		})
+	})
+
+	Describe("TTLs of the authority and additional section", func() {
+		authorityTTL := func(res *Response) uint32 { return res.Res.Ns[0].Header().Ttl }
+		additionalTTL := func(res *Response) uint32 { return res.Res.Extra[0].Header().Ttl }
+
+		When("a cached NXDOMAIN response is returned", func() {
+			BeforeEach(func() {
+				soa, err := dns.NewRR("example.com. 3600 IN SOA ns.example.com. mail.example.com. 1 2 3 4 5")
+				Expect(err).Should(Succeed())
+
+				mockAnswer = new(dns.Msg)
+				mockAnswer.Rcode = dns.RcodeNameError
+				mockAnswer.Ns = []dns.RR{soa}
+			})
+
+			It("should count the SOA TTL down", func() {
+				By("first request", func() {
+					Expect(sut.Resolve(ctx, newRequest("example.com.", A))).
+						Should(SatisfyAll(
+							HaveResponseType(ResponseTypeRESOLVED),
+							HaveReturnCode(dns.RcodeNameError),
+							WithTransform(authorityTTL, BeNumerically("==", 3600))))
+				})
+
+				By("second request", func() {
+					// A stub resolver derives its negative caching time from the SOA TTL
+					// (RFC 2308), so repeating the upstream value keeps the answer alive
+					// downstream long after this cache entry has expired.
+					Eventually(sut.Resolve, "2s").
+						WithContext(ctx).
+						WithArguments(newRequest("example.com.", A)).
+						Should(SatisfyAll(
+							HaveResponseType(ResponseTypeCACHED),
+							HaveReturnCode(dns.RcodeNameError),
+							WithTransform(authorityTTL, BeNumerically("<", 3600))))
+
+					Expect(m.Calls).Should(HaveLen(1))
+				})
+			})
+		})
+
+		When("a cached NXDOMAIN response carries a CNAME chain", func() {
+			BeforeEach(func() {
+				cname, err := dns.NewRR("example.com. 60 IN CNAME gone.example.net.")
+				Expect(err).Should(Succeed())
+				soa, err := dns.NewRR("example.net. 3600 IN SOA ns.example.net. mail.example.net. 1 2 3 4 5")
+				Expect(err).Should(Succeed())
+
+				mockAnswer = new(dns.Msg)
+				mockAnswer.Rcode = dns.RcodeNameError
+				mockAnswer.Answer = []dns.RR{cname}
+				mockAnswer.Ns = []dns.RR{soa}
+			})
+
+			It("should count the SOA TTL down", func() {
+				By("first request", func() {
+					Expect(sut.Resolve(ctx, newRequest("example.com.", A))).
+						Should(SatisfyAll(
+							HaveResponseType(ResponseTypeRESOLVED),
+							HaveReturnCode(dns.RcodeNameError),
+							WithTransform(authorityTTL, BeNumerically("==", 3600))))
+				})
+
+				By("second request", func() {
+					// A non-empty answer section does not make this a positive entry:
+					// putInCache stores every NXDOMAIN with the negative cache time, so
+					// that -- not the CNAME's TTL -- is the baseline to age from.
+					Eventually(sut.Resolve, "2s").
+						WithContext(ctx).
+						WithArguments(newRequest("example.com.", A)).
+						Should(SatisfyAll(
+							HaveResponseType(ResponseTypeCACHED),
+							HaveReturnCode(dns.RcodeNameError),
+							HaveTTL(BeNumerically("<", 60)),
+							WithTransform(authorityTTL, BeNumerically("<", 3600))))
+
+					Expect(m.Calls).Should(HaveLen(1))
+				})
+			})
+		})
+
+		When("a cached response carries authority and additional records", func() {
+			BeforeEach(func() {
+				mockAnswer, _ = util.NewMsgWithAnswer("example.com.", 3600, A, "123.122.121.120")
+
+				ns, err := dns.NewRR("example.com. 3600 IN NS ns.example.com.")
+				Expect(err).Should(Succeed())
+				glue, err := dns.NewRR("ns.example.com. 3600 IN A 123.122.121.1")
+				Expect(err).Should(Succeed())
+
+				mockAnswer.Ns = []dns.RR{ns}
+				mockAnswer.Extra = []dns.RR{glue}
+			})
+
+			It("should count their TTLs down together with the answer", func() {
+				By("first request", func() {
+					Expect(sut.Resolve(ctx, newRequest("example.com.", A))).
+						Should(SatisfyAll(
+							HaveResponseType(ResponseTypeRESOLVED),
+							HaveTTL(BeNumerically("==", 3600)),
+							WithTransform(authorityTTL, BeNumerically("==", 3600)),
+							WithTransform(additionalTTL, BeNumerically("==", 3600))))
+				})
+
+				By("second request", func() {
+					Eventually(sut.Resolve, "2s").
+						WithContext(ctx).
+						WithArguments(newRequest("example.com.", A)).
+						Should(SatisfyAll(
+							HaveResponseType(ResponseTypeCACHED),
+							HaveTTL(BeNumerically("<", 3600)),
+							WithTransform(authorityTTL, BeNumerically("<", 3600)),
+							WithTransform(additionalTTL, BeNumerically("<", 3600))))
+
+					Expect(m.Calls).Should(HaveLen(1))
+				})
+			})
+		})
+
+		When("a message carries an OPT record", func() {
+			It("should not touch its TTL field", func() {
+				a, err := dns.NewRR("example.com. 3600 IN A 123.122.121.120")
+				Expect(err).Should(Succeed())
+
+				// An OPT record stores the extended rcode and flags in the TTL field,
+				// so ageing it like a lifetime would corrupt them.
+				opt := new(dns.OPT)
+				opt.Hdr.Name = "."
+				opt.Hdr.Rrtype = dns.TypeOPT
+				opt.SetDo()
+				optHeaderBefore := opt.Hdr.Ttl
+
+				msg := new(dns.Msg)
+				msg.Answer = []dns.RR{a}
+				msg.Extra = []dns.RR{opt}
+
+				sut.setTTLInCachedResponse(msg, 3000*time.Second)
+
+				Expect(msg.Answer[0].Header().Ttl).Should(BeNumerically("==", 3000))
+				Expect(opt.Hdr.Ttl).Should(Equal(optHeaderBefore))
+				Expect(opt.Do()).Should(BeTrue())
 			})
 		})
 	})

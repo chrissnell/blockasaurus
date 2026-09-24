@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"reflect"
 	"sync/atomic"
 
@@ -177,6 +178,125 @@ var _ = Describe("Bootstrap", Label("bootstrap"), func() {
 					for _, ips := range sut.bootstraped {
 						Expect(ips).Should(ContainElements(net.IPv4zero, net.IPv4allrouter))
 					}
+				})
+			})
+		})
+
+		Context("using a resolvFile", func() {
+			When("the file lists nameservers", func() {
+				var resolvFile *os.File
+
+				BeforeEach(func() {
+					resolvFile = TempFile("nameserver 9.9.9.9\nnameserver 1.0.0.1\n")
+					DeferCleanup(func() {
+						_ = resolvFile.Close()
+						_ = os.Remove(resolvFile.Name())
+					})
+
+					sutConfig = config.Config{
+						BootstrapDNS: []config.BootstrappedUpstream{
+							{ResolvFile: resolvFile.Name()},
+						},
+					}
+				})
+
+				It("uses the file's nameservers as bootstrap upstreams", func() {
+					Expect(sut).ShouldNot(BeNil())
+					Expect(sut.bootstraped).Should(HaveLen(2))
+
+					var ips []net.IP
+					for _, serverIPs := range sut.bootstraped {
+						ips = append(ips, serverIPs...)
+					}
+
+					Expect(ips).Should(ConsistOf(net.ParseIP("9.9.9.9"), net.ParseIP("1.0.0.1")))
+				})
+			})
+
+			When("the file lists an IPv6 nameserver", func() {
+				var resolvFile *os.File
+
+				BeforeEach(func() {
+					resolvFile = TempFile("nameserver 2606:4700:4700::1111\n")
+					DeferCleanup(func() {
+						_ = resolvFile.Close()
+						_ = os.Remove(resolvFile.Name())
+					})
+
+					sutConfig = config.Config{
+						BootstrapDNS: []config.BootstrappedUpstream{
+							{ResolvFile: resolvFile.Name()},
+						},
+					}
+				})
+
+				It("uses the IPv6 nameserver as a bootstrap upstream", func() {
+					Expect(sut).ShouldNot(BeNil())
+					Expect(sut.bootstraped).Should(HaveLen(1))
+
+					var ips []net.IP
+					for _, serverIPs := range sut.bootstraped {
+						ips = append(ips, serverIPs...)
+					}
+
+					Expect(ips).Should(ConsistOf(Equal(net.ParseIP("2606:4700:4700::1111"))))
+				})
+			})
+
+			When("the file does not exist", func() {
+				It("errors", func() {
+					cfg := config.Config{
+						BootstrapDNS: []config.BootstrappedUpstream{
+							{ResolvFile: "/does/not/exist/resolv.conf"},
+						},
+					}
+
+					_, err := NewBootstrap(ctx, &cfg)
+					Expect(err).Should(HaveOccurred())
+					Expect(err.Error()).Should(ContainSubstring("resolvFile"))
+				})
+			})
+
+			When("the file has no usable nameservers", func() {
+				It("errors", func() {
+					resolvFile := TempFile("# only comments and a search domain\nsearch example.com\n")
+					DeferCleanup(func() {
+						_ = resolvFile.Close()
+						_ = os.Remove(resolvFile.Name())
+					})
+
+					cfg := config.Config{
+						BootstrapDNS: []config.BootstrappedUpstream{
+							{ResolvFile: resolvFile.Name()},
+						},
+					}
+
+					_, err := NewBootstrap(ctx, &cfg)
+					Expect(err).Should(HaveOccurred())
+					Expect(err.Error()).Should(ContainSubstring("no usable nameservers"))
+				})
+			})
+
+			When("combined with an inline upstream or ips in the same entry", func() {
+				It("errors instead of silently ignoring them", func() {
+					resolvFile := TempFile("nameserver 9.9.9.9\n")
+					DeferCleanup(func() {
+						_ = resolvFile.Close()
+						_ = os.Remove(resolvFile.Name())
+					})
+
+					cfg := config.Config{
+						BootstrapDNS: []config.BootstrappedUpstream{
+							{
+								ResolvFile: resolvFile.Name(),
+								Upstream:   config.Upstream{Net: config.NetProtocolTcpUdp, Host: "1.1.1.1", Port: 53},
+							},
+						},
+					}
+
+					_, err := NewBootstrap(ctx, &cfg)
+					Expect(err).Should(HaveOccurred())
+					Expect(err.Error()).Should(ContainSubstring("cannot be combined"))
 				})
 			})
 		})
@@ -589,6 +709,48 @@ var _ = Describe("Bootstrap", Label("bootstrap"), func() {
 		})
 	})
 
+	Describe("HTTP transport dial fallback", func() {
+		var m *mockResolver
+
+		BeforeEach(func() {
+			sutConfig.ConnectIPVersion = config.IPVersionDual
+		})
+
+		JustBeforeEach(func() {
+			m = &mockResolver{AnswerFn: autoAnswer}
+			sut.resolver = m
+
+			m.On("Resolve", mock.Anything).Times(len(config.IPVersionDual.QTypes()))
+		})
+
+		It("falls back to the next resolved address when a dial fails", func() {
+			var dialed []string
+
+			sut.dialer = funcDialer{fn: func(_ context.Context, _, addr string) (net.Conn, error) {
+				dialed = append(dialed, addr)
+
+				// Fail the first dial to mimic dialing an unreachable address
+				// family (e.g. an AAAA on an IPv4-only host); succeed on fallback.
+				if len(dialed) == 1 {
+					return nil, errors.New("network is unreachable")
+				}
+
+				return aMockConn, nil
+			}}
+
+			t := sut.NewHTTPTransport()
+
+			conn, err := t.DialContext(ctx, config.IPVersionDual.Net(), "example.com:0")
+
+			Expect(err).Should(Succeed())
+			Expect(conn).Should(Equal(aMockConn))
+			Expect(dialed).Should(HaveLen(2))             // first failed, fell back to the second
+			Expect(dialed[0]).ShouldNot(Equal(dialed[1])) // a different resolved address
+
+			m.AssertExpectations(GinkgoT())
+		})
+	})
+
 	Describe("multiple upstreams", func() {
 		var (
 			mockUpstream1 *MockUDPUpstreamServer
@@ -614,6 +776,106 @@ var _ = Describe("Bootstrap", Label("bootstrap"), func() {
 				g.Expect(mockUpstream1.GetCallCount()).To(Equal(1))
 				g.Expect(mockUpstream2.GetCallCount()).To(Equal(1))
 			}, "100ms").Should(Succeed())
+		})
+	})
+
+	Describe("UpstreamIPs with DNS stamp IPs", func() {
+		var (
+			mockBootstrap *MockUDPUpstreamServer
+			testUpstream  config.Upstream
+		)
+
+		BeforeEach(func() {
+			mockBootstrap = NewMockUDPUpstreamServer().WithAnswerRR("example.com 123 IN A 1.2.3.4")
+			sutConfig.BootstrapDNS = []config.BootstrappedUpstream{
+				{Upstream: mockBootstrap.Start()},
+			}
+		})
+
+		JustBeforeEach(func() {
+			sut, err = NewBootstrap(ctx, &sutConfig)
+			Expect(err).Should(Succeed())
+		})
+
+		When("upstream has IPs from DNS stamp", func() {
+			BeforeEach(func() {
+				// Simulate upstream parsed from DNS stamp with embedded IP
+				testUpstream = config.Upstream{
+					Net:  config.NetProtocolHttps,
+					Host: "dns.example.com", // Hostname, not IP
+					Port: 443,
+					Path: "/dns-query",
+					IPs:  []net.IP{net.ParseIP("194.242.2.2")}, // IP from DNS stamp
+				}
+			})
+
+			It("should use IPs from stamp without bootstrap resolution", func() {
+				r := newUpstreamResolverUnchecked(newUpstreamConfig(testUpstream, sutConfig.Upstreams), sut)
+				ips, err := sut.UpstreamIPs(ctx, r)
+
+				Expect(err).Should(Succeed())
+				Expect(ips).ShouldNot(BeNil())
+				Expect(ips.Current()).Should(Equal(net.ParseIP("194.242.2.2")))
+				// Verify bootstrap was NOT called (no resolution needed)
+				Expect(mockBootstrap.GetCallCount()).Should(Equal(0))
+			})
+
+			It("should use all IPs from stamp", func() {
+				testUpstream.IPs = []net.IP{
+					net.ParseIP("194.242.2.2"),
+					net.ParseIP("194.242.2.3"),
+				}
+
+				r := newUpstreamResolverUnchecked(newUpstreamConfig(testUpstream, sutConfig.Upstreams), sut)
+				ips, err := sut.UpstreamIPs(ctx, r)
+
+				Expect(err).Should(Succeed())
+				// Should have both IPs available
+				Expect(ips.Current()).Should(Or(
+					Equal(net.ParseIP("194.242.2.2")),
+					Equal(net.ParseIP("194.242.2.3")),
+				))
+			})
+		})
+
+		When("upstream has no IPs from stamp", func() {
+			BeforeEach(func() {
+				// Upstream without embedded IP - needs bootstrap resolution
+				testUpstream = config.Upstream{
+					Net:  config.NetProtocolHttps,
+					Host: "dns.example.com",
+					Port: 443,
+					IPs:  nil, // No IPs from stamp
+				}
+			})
+
+			It("should use bootstrap resolver", func() {
+				r := newUpstreamResolverUnchecked(newUpstreamConfig(testUpstream, sutConfig.Upstreams), sut)
+				ips, err := sut.UpstreamIPs(ctx, r)
+
+				Expect(err).Should(Succeed())
+				Expect(ips).ShouldNot(BeNil())
+				// Bootstrap should have been called to resolve the hostname
+				Expect(mockBootstrap.GetCallCount()).Should(BeNumerically(">", 0))
+			})
+		})
+
+		When("upstream Host is already an IP", func() {
+			BeforeEach(func() {
+				testUpstream = config.Upstream{
+					Net:  config.NetProtocolTcpUdp,
+					Host: "8.8.8.8", // Direct IP
+					Port: 53,
+				}
+			})
+
+			It("should use the IP directly", func() {
+				r := newUpstreamResolverUnchecked(newUpstreamConfig(testUpstream, sutConfig.Upstreams), sut)
+				ips, err := sut.UpstreamIPs(ctx, r)
+
+				Expect(err).Should(Succeed())
+				Expect(ips.Current()).Should(Equal(net.ParseIP("8.8.8.8")))
+			})
 		})
 	})
 })

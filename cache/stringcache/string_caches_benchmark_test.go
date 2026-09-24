@@ -81,23 +81,65 @@ func BenchmarkStringFactory(b *testing.B) {
 	benchmarkStringFactory(b, newStringCacheFactory)
 }
 
+// BenchmarkStringFactoryScaling builds caches of increasing size where every
+// entry has the same length, so they all land in a single length bucket. This
+// is the worst case for the factory and makes its build complexity visible:
+// a sorted insert that shifts the bucket on every entry is O(n^2), so ns/op
+// roughly quadruples when n doubles; a build that sorts once is O(n log n), so
+// ns/op roughly doubles when n doubles.
+func BenchmarkStringFactoryScaling(b *testing.B) {
+	for _, n := range []int{50_000, 100_000, 200_000} {
+		data := sameLengthData(n)
+
+		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
+			b.ReportAllocs()
+
+			for b.Loop() {
+				factory := newStringCacheFactory()
+
+				for _, s := range data {
+					factory.addEntry(s)
+				}
+
+				_ = factory.create()
+			}
+		})
+	}
+}
+
+// sameLengthData returns n distinct entries that all share the same length,
+// generated in reverse-sorted order to maximise the cost of an in-order insert.
+func sameLengthData(n int) []string {
+	data := make([]string, n)
+	for i := range data {
+		data[i] = fmt.Sprintf("%010d.example", n-i-1)
+	}
+
+	return data
+}
+
 func BenchmarkWildcardFactory(b *testing.B) {
 	benchmarkWildcardFactory(b, newWildcardCacheFactory)
 }
 
 func benchmarkRegexFactory(b *testing.B, newFactory func() cacheFactory) {
+	b.Helper()
 	benchmarkFactory(b, regexTestData, newFactory)
 }
 
 func benchmarkStringFactory(b *testing.B, newFactory func() cacheFactory) {
+	b.Helper()
 	benchmarkFactory(b, stringTestData, newFactory)
 }
 
 func benchmarkWildcardFactory(b *testing.B, newFactory func() cacheFactory) {
+	b.Helper()
 	benchmarkFactory(b, wildcardTestData, newFactory)
 }
 
 func benchmarkFactory(b *testing.B, data []string, newFactory func() cacheFactory) {
+	b.Helper()
+
 	baseMemStats = readMemStats()
 
 	b.ReportAllocs()
@@ -152,14 +194,18 @@ func BenchmarkWildcardCache(b *testing.B) {
 // }
 
 func benchmarkStringCache(b *testing.B, newFactory func() cacheFactory) {
+	b.Helper()
 	benchmarkCache(b, stringTestData, newFactory)
 }
 
 func benchmarkWildcardCache(b *testing.B, newFactory func() cacheFactory) {
+	b.Helper()
 	benchmarkCache(b, wildcardTestData, newFactory)
 }
 
 func benchmarkCache(b *testing.B, data []string, newFactory func() cacheFactory) {
+	b.Helper()
+
 	baseMemStats = readMemStats()
 
 	factory := newFactory()
@@ -178,7 +224,7 @@ func benchmarkCache(b *testing.B, data []string, newFactory func() cacheFactory)
 		// - wildcards and regexes need a plain string query
 		// - all benchmarks will do the same number of queries
 		for _, s := range stringTestData {
-			if !cache.contains(s) {
+			if _, ok := cache.findMatch(s); !ok {
 				b.Fatalf("cache is missing value from stringTestData: %s", s)
 			}
 		}
@@ -200,6 +246,8 @@ func readMemStats() (res runtime.MemStats) {
 }
 
 func reportMemUsage(b *testing.B, prefix string, toKeepAllocated ...any) {
+	b.Helper()
+
 	m := readMemStats()
 
 	b.ReportMetric(toMB(m.HeapAlloc-baseMemStats.HeapAlloc), prefix+"_heap_MB")

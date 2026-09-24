@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/cors"
+	"github.com/rs/cors"
 )
 
 type httpServer struct {
@@ -127,10 +127,28 @@ func newCORSMiddleware() httpMiddleware {
 		// SameSite=Lax + the X-Requested-With header check.
 		AllowOriginFunc:  sameOriginFunc,
 		AllowCredentials: true,
+<<<<<<< HEAD
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token", "X-Requested-With"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE"},
 		ExposedHeaders:   []string{"Link"},
 		MaxAge:           int(corsMaxAge.Seconds()),
+=======
+		// Allow all request headers: web UIs send tool-specific headers
+		// (e.g. Grafana action buttons always add 'X-Grafana-Action') and a
+		// disallowed header makes the preflight fail. The API attaches no
+		// security semantics to request headers, and rs/cors answers a
+		// wildcard by echoing the requested headers, which is spec-compliant
+		// also for 'Authorization'.
+		AllowedHeaders: []string{"*"},
+		AllowedMethods: []string{"GET", "POST"},
+		AllowedOrigins: []string{"*"},
+		// Allow Chromium's Private Network Access preflights, sent when a
+		// public site addresses a private IP (e.g. a hosted Grafana
+		// dashboard calling the blocky API on a LAN)
+		AllowPrivateNetwork: true,
+		ExposedHeaders:      []string{"Link"},
+		MaxAge:              int(corsMaxAge.Seconds()),
+>>>>>>> upstream/main
 	}
 
 	return cors.New(options).Handler

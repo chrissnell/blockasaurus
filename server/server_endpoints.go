@@ -44,6 +44,7 @@ const (
 	dnsContentType     = "application/dns-message"
 	htmlContentType    = "text/html; charset=UTF-8"
 	yamlContentType    = "text/yaml"
+	jsonContentType    = "application/json"
 )
 
 // ResolverAccessor implementation — resolves from the current (possibly hot-swapped) chain.
@@ -74,7 +75,21 @@ func (s *Server) createOpenAPIInterfaceImpl() (impl api.StrictServerInterface, e
 		return nil, fmt.Errorf("no cache API implementation found %w", err)
 	}
 
+<<<<<<< HEAD
 	return api.NewOpenAPIInterfaceImpl(s, s), nil
+=======
+	// Statistics are optional: if no provider is in the chain, degrade to a nil
+	// provider (the /api/stats endpoint returns 503) instead of failing
+	// construction of the entire API.
+	statsProvider, err := resolver.GetFromChainWithType[api.StatsProvider](s.queryResolver)
+	if err != nil {
+		log.Log().Warnf("no stats API implementation found, /api/stats will be unavailable: %v", err)
+
+		statsProvider = nil
+	}
+
+	return api.NewOpenAPIInterfaceImpl(bControl, s, refresher, cacheControl, statsProvider), nil
+>>>>>>> upstream/main
 }
 
 func (s *Server) registerDoHEndpoints(router *chi.Mux, cfg *config.Config) {
@@ -357,6 +372,12 @@ func configureDocsHandler(router chi.Router) {
 		_, err := writer.Write([]byte(docs.OpenAPI))
 		logAndResponseWithError(err, "can't write OpenAPI definition file: ", writer)
 	})
+
+	router.Get("/docs/config.schema.json", func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set(contentTypeHeader, jsonContentType)
+		_, err := writer.Write(docs.ConfigSchema)
+		logAndResponseWithError(err, "can't write config JSON schema file: ", writer)
+	})
 }
 
 func configureStaticAssetsHandler(router chi.Router) {
@@ -410,11 +431,32 @@ func configureRootHandler(cfg *config.Config, router chi.Router) {
 		pd := PageData{
 			Version:   util.Version,
 			BuildTime: util.BuildTime,
+<<<<<<< HEAD
 			Links: []HandlerLink{
 				{URL: "/ui/", Title: "Web UI", Icon: "◆", Primary: true},
 				{URL: "/docs/openapi.yaml", Title: "REST API docs (OpenAPI)", Icon: "○"},
 				{URL: "/static/rapidoc.html", Title: "Interactive API explorer", Icon: "⚙"},
 				{URL: "/debug/", Title: "Go profiler (pprof)", Icon: "⏲"},
+=======
+		}
+
+		pd.Links = []HandlerLink{
+			{
+				URL:   "/docs/openapi.yaml",
+				Title: "Rest API Documentation (OpenAPI)",
+			},
+			{
+				URL:   "/static/rapidoc.html",
+				Title: "Interactive Rest API Documentation (RapiDoc)",
+			},
+			{
+				URL:   "/docs/config.schema.json",
+				Title: "Configuration JSON Schema",
+			},
+			{
+				URL:   "/debug/",
+				Title: "Go Profiler",
+>>>>>>> upstream/main
 			},
 		}
 
