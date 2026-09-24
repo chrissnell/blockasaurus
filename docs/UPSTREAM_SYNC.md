@@ -144,18 +144,253 @@ field will flow into the generated schema unless it is handled deliberately.
   `docs/config.schema.json`, all `go-enum` outputs (`config/`, `log/`, `lists/`, `model/`,
   `resolver/dnssec/`).
 
-## 4. Decisions required before merging
+## 3a. Guardrails
 
-These are owner calls. Resolving them at conflict time produces arbitrary outcomes.
+Two checks exist so that "did we lose anything?" is a test result rather than a
+judgement call. **Run both before the merge and again after every resolution
+phase** — a guard that is only consulted at the end tells you something broke
+without telling you where.
 
-| # | Decision | Recommendation |
+```bash
+go test ./server -run 'TestAPIContract|TestAPISpecContract'
+make check-fork-additions
+make check-fork-additions-sync   # needs upstream fetched; see below
+```
+
+### `TestAPIContract` — routing and auth
+
+`server/api_contract_test.go` builds the real production router
+(`createHTTPRouter`, plus `registerDoHEndpoints` for combined-port mode),
+wraps it in `withCommonMiddleware` exactly as `newHTTPServer` does, walks it,
+and records for every route the method, path pattern and **middleware chain**,
+against `server/testdata/api_contract.golden`.
+
+The middleware chain is the part that matters most. Moving a route out of the
+authenticated group strips `RequireAuth` without changing its method or path —
+the likeliest and most damaging thing a badly resolved `Group` block can do —
+and the golden catches it as:
+
+```text
+- GET     /api/version    [RequireAuth RequireCSRFHeader RequireAdminForMutations]
++ GET     /api/version    [public]
+```
+
+The outermost layer — `secureHeadersMiddleware` and our same-origin CORS policy
+in `server/http.go`, which is an upstream file carrying fork edits — is on every
+route by construction, so it is recorded once as the `COMMON *` line at the top
+of the golden rather than repeated 85 times. Dropping it reads as:
+
+```text
+- COMMON  *    [secureHeadersMiddleware Cors.Handler]
++ COMMON  *    [public]
+```
+
+### `TestAPISpecContract` — payloads
+
+`server/api_spec_contract_test.go` locks the REST surface as declared in
+`docs/api/openapi.yaml` and `docs/api/openapi-config.yaml` against
+`server/testdata/api_spec_contract.golden`. `openapi.yaml` is an upstream file
+carrying our edits, so it is a prime candidate for being reverted wholesale.
+
+Per operation: its `operationId`, its parameters (name, location, type, enum,
+required), and the schema it exchanges in the request body and in each response
+by status code. That last part matters on its own — re-pointing
+`PUT /custom-dns/{id}` from `CustomDNSEntryInput` to `CustomDNSEntry` changes the
+contract without touching either schema.
+
+Per component schema: `type`, `required`, and for every property its type,
+format, array item type, enum members, `$ref` target, and composition
+(`allOf`/`oneOf`/`additionalProperties`). An array of strings quietly becoming an
+array of integers, or an enum losing a member, fails here.
+
+It deliberately ignores prose. Descriptions, summaries, tags and branding will
+legitimately change during this merge, and a guard that fires on a reworded
+sentence gets regenerated without being read.
+
+### `make check-fork-additions` — file survival
+
+Verifies every path in `.fork-additions` (the 149 files present here and absent
+upstream) still exists and is non-empty — `MISSING` for a deleted file, `EMPTY`
+for a truncated one. This is what catches a delete/modify conflict resolved
+toward upstream. The manifest lists itself, both contract tests and both
+goldens, so deleting the guard is itself a failure, and a missing or empty
+manifest is a hard error rather than a green "all files present".
+
+`make check-fork-additions-sync` reports when the manifest itself has gone stale
+and prints the diff to apply. It needs upstream fetched, and **skips cleanly
+when that has not been done** — if you see it compare the manifest against an
+empty upstream tree and recommend adding hundreds of files, do not follow that
+advice: it would pad the manifest with the whole upstream tree and turn
+`check-fork-additions` into a tautology.
+
+```bash
+git remote add upstream https://github.com/0xERR0R/blocky.git
+git fetch upstream main
+make check-fork-additions-sync
+```
+
+### Reading a golden diff
+
+A diff is never automatically a bug — but it is always a change to the contract
+`web/ui` and any API consumer depend on. Three legitimate reasons to regenerate:
+
+1. We deliberately added an endpoint.
+2. We deliberately removed one, and the UI no longer calls it.
+3. An upstream fix changed a schema we decided to adopt.
+
+Anything else is the merge eating our work. Regenerate only with:
+
+```bash
+go test ./server -run 'TestAPIContract|TestAPISpecContract' -update-api-contract
+```
+
+and call the change out explicitly in the pull request.
+
+### What the guardrails do not cover
+
+Say this out loud so nobody trusts them further than they reach:
+
+- **Fork edits to upstream files.** `.fork-additions` only catches deletions of
+  fork-*only* files. The likelier casualty in a 220-commit merge is one of the
+  ~18 upstream files carrying our patches (§7) being reverted by a sloppy hunk
+  resolution. Two of those files — `server/server_endpoints.go` and
+  `server/http.go` — are now covered for their routing and middleware content by
+  `TestAPIContract`. The rest are not: that is what the §7 register and a
+  `git diff` against the pre-merge tag are for.
+- **Handler behavior.** `TestAPISpecContract` reads the spec, not the code.
+  Nothing proves a handler honors the schema it advertises, or that the spec
+  describes what the handler really returns. Likewise `TestAPIContract` records
+  the identity and order of a middleware chain, never what it does.
+- **`components.parameters` and `components.responses`.** Recorded where an
+  operation references one by name, so a re-pointed reference fails — but the
+  contents behind that name are not locked.
+- **The split-router arrangement.** With `ports.httpAdmin`/`httpsAdmin` set,
+  `NewServer` builds two routers and serves the admin UI separately from DoH.
+  The test unions both registration functions onto one mux, so route coverage is
+  equivalent but the *split* is not pinned: a merge that mounted the UI routes on
+  the DoH listener would not fail here.
+- **The Svelte UI.** Only that its files still exist and that it builds.
+- **Anything undocumented.** A field the UI relies on that the spec never
+  mentions is invisible to the payload guard by construction.
+
+### Where these run
+
+`check-fork-additions` is a prerequisite of `make test`, and
+`.github/workflows/ci.yml` runs both it and the full non-e2e suite on every pull
+request and every push to `main`. Before that workflow existed, this repo had
+only the tag-triggered `release.yml`, which runs no tests — so "the merge fails
+the build" meant "the merge fails if someone remembers to run the suite
+locally". If you delete or disable that workflow, these guardrails go back to
+being a convention.
+
+## 4. Decisions — settled
+
+Owner decisions, made 2026-09-23. Recorded here because resolving these at
+conflict time produces arbitrary outcomes.
+
+| # | Decision | Outcome |
 | --- | --- | --- |
-| D1 | Stats: keep ours, adopt upstream's, or both? | Keep ours (it backs the dashboard's overtime/top-clients series, which upstream's does not provide). Do not mount upstream's `/stats` operation; keep `stats/` and `resolver/stats_resolver.go` out of the chain, or drop them. Revisit later as a single subsystem. |
-| D2 | `upstreams:` YAML sentinel — keep rejecting, or accept as read-only fallback? | Keep rejecting; exclude the sentinel field from schema generation. |
-| D3 | Re-delete `cmd/lists.go` and keep `cache`/`stats` subcommands out of `cmd/root.go`? | Yes — these are UI-driven in Blockasaurus. |
-| D4 | Re-delete the 9 upstream GitHub workflows? | Yes. |
-| D5 | Which new upstream features ship enabled in this sync? DoQ, DoH3, per-client rate limiting, DNS rebinding protection, PROXY protocol, SQLite/dnstap query log, schedule-based blocking, on-disk list cache. | Merge the code, leave each at upstream defaults, ship no UI/config-store plumbing in this sync. Each gets its own follow-up issue. |
-| D6 | Does `docs/` stay branded Blockasaurus, or track upstream? | Take upstream content, re-apply branding as a final pass. |
+| D1 | Stats subsystem ownership | **Keep ours.** `pkg/statscollector` + `configstore/stats.go` + `server/server_stats.go` back the dashboard's overtime, top-clients and latency series, which upstream's in-memory 24h collector does not provide. Upstream's `/stats` operation must not reach the router — drop `stats/`, `resolver/stats_resolver.go`, `cmd/stats.go` and the `/stats` path from the spec, or keep the package unwired. |
+| D2 | `upstreams:` YAML sentinel | **Keep rejecting.** Upstream configuration stays in the SQLite config store. Exclude the sentinel field from upstream's generated JSON schema. |
+| D3 | `cmd/lists.go`, `cache` / `stats` subcommands | **Re-delete.** These are UI-driven in Blockasaurus. |
+| D4 | The 9 upstream GitHub workflows | **Re-delete.** |
+| D5 | New upstream features | **Merge the code at upstream defaults; no config-store or UI plumbing during the sync.** DoQ and DoH3 get UI work as dedicated follow-ups immediately after the sync lands (GRA-638, GRA-639). The remainder stay YAML-only until someone asks for them; see §4a. |
+| D6 | `docs/` branding | Take upstream content, re-apply Blockasaurus branding as a final pass. |
+
+### 4a. Merged but not surfaced — and what happens to each
+
+These land in the tree as part of the sync and sit at upstream defaults — off,
+unless the operator sets them in YAML. None of them changes behavior by merging.
+The Disposition column records the owner's call (2026-09-23) so a future reader
+knows the capability exists, and whether it was wanted, without rediscovering it
+in a diff.
+
+| Feature | What it does | Default | Disposition |
+| --- | --- | --- | --- |
+| Per-client rate limiting (#2063) | Token bucket per client IP, with configurable rate, burst, IPv4/IPv6 aggregation prefix and an allowlist. | `enable: false` | No issue filed — available if something on the LAN misbehaves. |
+| DNS rebinding protection (#2111) | Rejects upstream answers that map a public name to a private address, with a per-domain allowlist for the NAS-on-a-real-hostname case. | `enable: false` | **Wanted.** GRA-641. |
+| PROXY protocol (#2094) | Accepts HAProxy PROXY headers on proxied DoT/DoH listeners so the real client IP survives a reverse proxy. Relevant behind k8s ingress, where client-group matching otherwise sees the proxy. | opt-in per listener | Declined for now — not needed. |
+| SQLite query log (#2080) | Query log to a local SQLite file — no external database. | existing `queryLog.type` | See §4b. |
+| dnstap query log (#2144) | Query log as a dnstap stream for external collectors. | existing `queryLog.type` | See §4b. |
+| Query-log domain ignore (#2084) | Exclude domains (exact, wildcard, regex) from the query log. | none configured | See §4b. |
+| Schedule-based blocking (#2037) | Time-of-day and weekday windows for deny/allowlist groups, including overnight ranges. Pairs naturally with the existing client-groups UI. | no schedules configured | **Wanted in the UI.** GRA-640. |
+| On-disk list download cache (#2087) | Caches downloaded blocklists on disk with conditional revalidation, so restarts do not re-download every list. | opt-in | **Wanted.** GRA-642. |
+| Config values from files (#2077) | Reads sensitive config values from files instead of inline YAML. | unused | No issue filed. |
+| Config folder structural merge (#2112) | Merges multiple config files in a folder structurally rather than by last-wins. | unchanged behavior | No issue filed — behavior unchanged. |
+
+### 4b. Query logging as it stands
+
+Recorded because the answer is not obvious from the code and the constraint
+below will bite whoever changes `queryLog.type` first.
+
+Today: `queryLog.type: console`. Query entries go to the pod's stdout **and**,
+separately, to the `logstream.Broadcaster` that feeds the UI's Logs page over
+`/api/ws/logs`. The broadcaster is a 1000-entry ring buffer — live tail only,
+no history, nothing survives a restart.
+
+**The constraint.** `NewQueryLoggingResolver` only attaches the broadcaster when
+the selected writer is a `*querylog.LoggerWriter`:
+
+```go
+if lw, ok := writer.(*querylog.LoggerWriter); ok && broadcaster != nil {
+    lw.SetBroadcaster(broadcaster)
+}
+```
+
+`queryLog.type` is single-valued, so selecting any non-console target — csv,
+mysql, sqlite, dnstap — silently turns the UI's live query log off. Anyone
+adopting a new target should first move the broadcaster publish out of the
+console writer and into the query-logging resolver, so the UI stream is
+independent of the storage target.
+
+Upstream's new targets in this sync: `sqlite` (local file, queryable history),
+`dnstap` (Frame Streams over `unix:/path` or `tcp://host:port`), and
+`queryLog.ignore` for excluding domains by exact match, wildcard or regex. Note
+that `log.privacy` obfuscation does **not** apply to dnstap payloads — it
+exports full wire-format DNS messages.
+
+**The dashboard does not depend on any of this.** Nothing the admin UI shows is
+derived from the query log, so changing `queryLog.type` — including setting it
+to `none` — leaves every stat intact. Two independent sources feed it, both off
+the resolver chain:
+
+- The three headline cards (`/api/stats`) gather from the in-process Prometheus
+  registry. `MetricsResolver.Resolve` only increments those counters inside
+  `if r.cfg.Enable`, so they need `prometheus.enable: true`, and they reset on
+  restart.
+- Everything else — over-time series, top domains, top clients, query types,
+  response types, latency (`/api/stats/*`) — comes from `pkg/statscollector`.
+  `MetricsResolver` calls `StatsCollector.Record` **outside** the Prometheus
+  guard, so this collects regardless of that flag, and `configstore/stats.go`
+  flushes it to SQLite every 30s and reloads at startup. These survive restarts.
+
+What the query log alone gives you is durable per-query history — which client
+asked for which name at which time. The dashboard's aggregates are not a
+substitute for that, and it is the only thing lost by leaving query logging on
+`console`.
+
+**Searching by client and domain.** The owner wants this in the **live log
+viewer**, not in an external log pipeline (2026-09-23). Blockasaurus is a
+self-contained home DNS server in the Pi-hole mould; shipping DNS logs to the
+cluster's OpenSearch was explicitly rejected, and an earlier issue proposing it
+is cancelled.
+
+That makes it a frontend change and nothing more (GRA-645).
+`Broadcaster.Subscribe` backfills from a 1000-entry ring before streaming live,
+so the viewer already holds recent history; the entries already carry
+`client_ip`, `client_group`, `question_name`, `question_type`, `response_code`
+and `response_reason`; and chonky-ui's `LogViewer` has no filtering of its own,
+so a derived filtered list in `Logs.svelte` is the whole feature. No API, no
+storage, no config change, no contract-golden regeneration.
+
+Persistent query history — the `sqlite` target, a query API, a history page — is
+**not** being built. The live buffer is the scope. If that ever changes, the
+broadcaster coupling above has to be fixed first (GRA-644).
+
+dnstap is not wanted either: it exports wire-format DNS messages for external
+collectors, which is forensics for a pipeline we are deliberately not building.
+It stays merged and unused, as does the `sqlite` target.
+
 
 ## 5. Plan
 
@@ -163,7 +398,7 @@ Each phase ends at a gate. Do not start a phase before its gate passes.
 
 | Phase | Work | Gate | Est. |
 | --- | --- | --- | --- |
-| 0. Baseline | Tag `pre-upstream-sync-v0.34.38`. Record current behavior: `go test ./...`, e2e suite, and a captured set of DNS answers (blocked/allowed/custom/conditional/DNSSEC/EDNS0) plus dashboard screenshots. This is what "did we regress?" is measured against later. | Baseline artifacts committed to `scratch/` and green. | 0.5d |
+| 0. Baseline | Tag `pre-upstream-sync-v0.34.38`. Add the §3a guardrails. Record current behavior: `go test ./...`, e2e suite, and a captured set of DNS answers (blocked/allowed/custom/conditional/DNSSEC/EDNS0) plus dashboard screenshots. This is what "did we regress?" is measured against later. | Guardrails green. Baseline recorded in `docs/upstream-sync/baseline-v0.34.38.md` — **not** `scratch/`, which is gitignored and would not survive to be compared against. | 0.5d |
 | 1. Decisions | Close D1–D6 in §4. | Written answers on the sync issue. | — |
 | 2. Merge + mechanical | Branch `sync/upstream-2026-09`. `git merge upstream/main`. Resolve in order: `go.mod`/`go.sum` (regenerate), workflows (re-delete), `cmd/lists.go` (re-delete), `.goreleaser.yml`/`Makefile`/`README`/`web/index.html` (keep ours + branding), `docs/*` (take upstream). | Only the Go integration conflicts remain unresolved. | 0.5d |
 | 3. Config + CLI | `config/config.go`, `config/upstreams.go`, `cmd/root.go`, `cmd/serve.go`. Regenerate enums and `docs/config.schema.json`. | `go build ./config/... ./cmd/...`, config tests green. | 1d |

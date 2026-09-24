@@ -1,4 +1,4 @@
-.PHONY: all clean generate build test e2e-test e2e-test-coverage lint run fmt docker-build docker-push bump-minor bump-point deploy helm-deploy version help check-tools sync-handbook
+.PHONY: all clean generate build test check-fork-additions check-fork-additions-sync e2e-test e2e-test-coverage lint run fmt docker-build docker-push bump-minor bump-point deploy helm-deploy version help check-tools sync-handbook
 .DEFAULT_GOAL:=help
 
 VERSION:=$(shell cat VERSION)
@@ -84,7 +84,7 @@ ifdef BIN_AUTOCAB
 	setcap 'cap_net_bind_service=+ep' $(GO_BUILD_OUTPUT)
 endif
 
-test: check-go ## run tests
+test: check-go check-fork-additions ## run tests
 	go tool ginkgo --label-filter="!e2e" --coverprofile=coverage.txt --covermode=atomic --cover -r ${GINKGO_PROCS}
 	go tool cover -html coverage.txt -o coverage.html
 
@@ -152,6 +152,58 @@ e2e-test-coverage: check-go check-docker ## run e2e tests with code coverage
 
 race: check-go ## run tests with race detector
 	go tool ginkgo --label-filter="!e2e" --race -r ${GINKGO_PROCS}
+
+check-fork-additions: ## verify no Blockasaurus-only file was dropped by an upstream merge
+	@test -s .fork-additions || { \
+		echo "FATAL: .fork-additions is missing or empty."; \
+		echo "That file IS the guard — losing it silently disables this check."; \
+		echo "Restore it from git, or regenerate per the instructions in its header."; \
+		exit 1; \
+	}
+	@lost=0; checked=0; \
+	while IFS= read -r path || [ -n "$$path" ]; do \
+		case "$$path" in ''|\#*) continue;; esac; \
+		checked=$$((checked + 1)); \
+		if [ ! -e "$$path" ]; then \
+			echo "MISSING: $$path"; lost=1; \
+		elif [ ! -s "$$path" ]; then \
+			echo "EMPTY:   $$path"; lost=1; \
+		fi; \
+	done < .fork-additions; \
+	if [ $$lost -ne 0 ]; then \
+		echo; \
+		echo "Blockasaurus-only files were lost from the working tree."; \
+		echo "An upstream merge most likely resolved a delete/modify conflict the wrong way."; \
+		echo "See docs/UPSTREAM_SYNC.md."; \
+		exit 1; \
+	fi; \
+	echo "fork additions: all $$checked files present"
+
+check-fork-additions-sync: ## verify .fork-additions still matches reality (needs: git fetch upstream)
+# One shell with `set -e` on purpose: split across recipe lines, the early
+# `exit 0` below would only end its own line and make would carry on to
+# compare the manifest against an empty upstream tree — reporting every
+# upstream file as a missing entry, and recommending a "fix" that would pad
+# the manifest with the whole upstream tree and neuter check-fork-additions.
+	@set -e; \
+	if ! git rev-parse --verify -q upstream/main >/dev/null 2>&1; then \
+		echo "skip: upstream/main not fetched (git remote add upstream https://github.com/0xERR0R/blocky.git && git fetch upstream main)"; \
+		exit 0; \
+	fi; \
+	tmp=$$(mktemp -d); \
+	trap 'rm -rf "$$tmp"' EXIT INT TERM; \
+	grep -v -e '^#' -e '^$$' .fork-additions | sort > "$$tmp/have"; \
+	git ls-tree -r --name-only HEAD > "$$tmp/ours.raw"; \
+	git ls-tree -r --name-only upstream/main > "$$tmp/theirs.raw"; \
+	sort "$$tmp/ours.raw" > "$$tmp/ours"; \
+	sort "$$tmp/theirs.raw" > "$$tmp/theirs"; \
+	comm -23 "$$tmp/ours" "$$tmp/theirs" > "$$tmp/want"; \
+	if ! diff -u --label .fork-additions --label .fork-additions.expected "$$tmp/have" "$$tmp/want"; then \
+		echo; \
+		echo ".fork-additions is stale. Regenerate it per the instructions in its header."; \
+		exit 1; \
+	fi; \
+	echo "fork additions: manifest is in sync with upstream/main"
 
 lint: check-go fmt ## run golangcli-lint checks
 	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANG_LINT_VERSION) run --timeout 5m

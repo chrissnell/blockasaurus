@@ -1,0 +1,52 @@
+name: CI
+
+# Until this existed, the only workflow in the repo was the tag-triggered
+# release, which runs no tests. That made "the upstream merge fails the build if
+# it drops a route" mean "it fails if somebody remembers to run the suite
+# locally". The guardrails in docs/UPSTREAM_SYNC.md §3a are only guardrails if
+# something runs them without being asked.
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Build and test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # server/ embeds web/ui/dist, so no Go package that imports web/ compiles
+      # until the SPA is built. Same steps as release.yml, which is also why
+      # there is no lockfile step here.
+      - name: Build frontend
+        run: cd web/ui && npm install && npx vite build
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: go build ./...
+
+      # Runs the non-e2e suite, including TestAPIContract and
+      # TestAPISpecContract, and depends on check-fork-additions. The e2e suite
+      # needs a built container image and is left to `make e2e-test`.
+      - name: Test
+        run: make test
