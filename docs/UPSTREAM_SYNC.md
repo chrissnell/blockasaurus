@@ -121,6 +121,25 @@ compiles, but both sides register `GET /api/stats`, and chi panics on a duplicat
 registered on the same router. **This needs an explicit owner decision before resolution starts**
 (§4, D1), not an improvised fix at conflict-resolution time.
 
+**Resolved in Phase 5 (GRA-633).** D1 settled it toward ours, so upstream's subsystem was removed
+in full rather than left compiling: `stats/`, `resolver/stats_resolver.go` and its spec,
+`api.StatsProvider` + `GetStats` + the `toAPI*` mappers, the `/stats` path and its six component
+schemas in `docs/api/openapi.yaml`, `config.Statistics` (a knob with no consumer once the
+subsystem is gone, so `docs/config.schema.json` loses the `statistics` property), and the three
+tests that drove it (`server/stats_client_names_test.go`, `e2e/stats_test.go`,
+`e2e/stats_client_names_test.go`). Upstream's `cmd/stats.go` had already gone with the CLI in
+Phase 3. `NewStatsResolver` is not chained. `server/chain_wiring_test.go` asserts both halves:
+that no resolver named `stats` is in the chain, and that `metricsResolver.StatsCollector` is
+actually set — the single assignment the whole dashboard depends on, which no other test noticed
+the absence of.
+
+The docs that described upstream's endpoint were rewritten to describe the eight `/api/stats*`
+routes this fork serves (`docs/interfaces.md`), and two `#statistics` anchors in
+`docs/configuration.md` that pointed at the deleted section were re-pointed. Note one behavioral
+difference the old prose hid: upstream's `summary.blocked` unioned `BLOCKED + REBIND`, while
+`pkg/statscollector` counts only `BLOCKED`, so rebinding hits show up in the response-type
+breakdown rather than as blocks.
+
 ### 3.2 Resolver construction was refactored underneath us
 
 Upstream's redis write-through cache refactor (#2025) changed `createQueryResolver` to take a
@@ -128,6 +147,26 @@ Upstream's redis write-through cache refactor (#2025) changed `createQueryResolv
 We pass `redisClient` into `NewBlockingResolver` and a `logstream.Broadcaster` into
 `NewQueryLoggingResolver`. Both of our injection points have to be re-established on top of the
 new signatures — this is a rewrite of our wiring, not a hunk pick.
+
+**Resolved in Phase 5 (GRA-633).** `createQueryResolver` takes upstream's `CacheDecorator`
+alongside our broadcaster and stats collector. `Server.redisClient` is gone — after upstream's
+refactor the `redis` package no longer exports a `Client` at all — and nothing was lost with it:
+the blocking resolver's `EnabledChannel` pub/sub became `redis.EventBusBridge` (wired into
+`server.closers`) and the caching resolver's `redisSubscriber` became
+`cache.NewRedisExpiringByteCache`.
+
+The subtlety worth recording, because it is invisible in a diff: the decorator owns goroutines. It
+must be built per chain, not once per server. `Server` therefore holds
+`newCacheDecorator func(chainCtx context.Context) resolver.CacheDecorator` rather than a bound
+decorator, and `Reconfigure` passes its own chain context. A decorator captured at startup would
+bind the Redis subscriber and batching writer to the server context, leaking one set — plus the
+cache they feed — on every config apply, where pre-merge they died with the chain.
+
+`NewServer`'s routing was also restructured, because upstream's HTTP/3 server and Alt-Svc
+middleware had to compose with our `adminPort` split. A single `mainRouter` now names whatever
+serves `ports.http`/`ports.https` — the DoH-only router when the admin UI has its own ports, the
+full router otherwise — and HTTP/3, which mirrors `ports.https`, serves that same router. The six
+`Describe("Admin port mode")` specs pin the split in both directions.
 
 ### 3.3 Client-group matching was rewritten in the function we patched
 
@@ -168,6 +207,26 @@ the sentinel's migration error. Two specs lock this: `config/schema` asserts the
 absent, and `config` asserts the loader still rejects the block with a pointer to
 `docs/migration-upstreams.md`. Upstream tests that used `upstreams:` merely as a valid-config
 vehicle were re-pointed at `customDNS.mapping` / `blocking.denylists`.
+
+### 3.4a The e2e config-store mount may never have been runnable
+
+Recorded in Phase 5, which resolved `e2e/containers.go` but could not run the suite (no Docker in
+the runtime). Not merge damage — it predates the sync — but it is the first thing to check when
+the e2e gate runs, because it would fail every spec rather than one.
+
+`createBlockyContainerInternal` seeds a SQLite config store on the host and copies it to
+`/app/config.db`, and `ensureDatabasePath` points the YAML at that path. `configstore.Open` then
+runs `PRAGMA journal_mode=WAL` and treats failure as fatal — and WAL has to *create*
+`config.db-wal` and `config.db-shm` siblings in the same directory. `/app` is created implicitly by
+`WORKDIR /app` in the `FROM scratch` stage and is root-owned `0755`; only `/app/cache` and `/logs`
+are `--chown=100:100`, and the container runs as `USER 100`.
+
+The file mode was the visible half and is fixed: upstream deleted the `modeOwner = 700` constant
+(decimal, i.e. `0o1274` — `other = r--`, read-only) in favour of `modeWorldReadable = 0o444`, and
+the seeded store now uses `modeWorldWritable = 0o666` since the server opens it read-write. The
+directory is the other half. If the suite fails at startup with a SQLite open or WAL error, move
+the seed to a writable directory — `/app/cache/config.db` is already `--chown=100:100` for exactly
+this kind of use — and pass that path to `ensureDatabasePath`.
 
 ### 3.5 Toolchain and generated-artifact churn
 
@@ -245,7 +304,7 @@ sentence gets regenerated without being read.
 
 ### `make check-fork-additions` — file survival
 
-Verifies every path in `.fork-additions` (the 149 files present here and absent
+Verifies every path in `.fork-additions` (the 153 files present here and absent
 upstream) still exists and is non-empty — `MISSING` for a deleted file, `EMPTY`
 for a truncated one. This is what catches a delete/modify conflict resolved
 toward upstream. The manifest lists itself, both contract tests and both
@@ -268,13 +327,25 @@ make check-fork-additions-sync
 ### Reading a golden diff
 
 A diff is never automatically a bug — but it is always a change to the contract
-`web/ui` and any API consumer depend on. Three legitimate reasons to regenerate:
+`web/ui` and any API consumer depend on. Four legitimate reasons to regenerate:
 
 1. We deliberately added an endpoint.
 2. We deliberately removed one, and the UI no longer calls it.
 3. An upstream fix changed a schema we decided to adopt.
+4. The *recording* changed without the surface changing — `TestAPIContract` reads
+   the router through `chi.Walk`, so a chi upgrade can alter what gets reported
+   for routes nobody touched. Phase 5 hit both halves of this: chi 5.3 began
+   reporting a mounted sub-router's parent middleware (the `/debug/*` rows gained
+   `RequireAuth RequireCSRFHeader` they always had at runtime), and it added
+   `QUERY` to its `mALL`, which broke the `ANY` collapse until `allMethods` in
+   `api_contract_test.go` followed. This is the reason most easily mistaken for
+   the merge eating our work, so **prove it**: a reporting change never removes a
+   route and never *drops* a guard, and the runtime behavior should be
+   demonstrable with a request rather than argued from the diff.
 
-Anything else is the merge eating our work. Regenerate only with:
+Anything else is the merge eating our work. An upstream route that merged cleanly
+is not on this list: drop it, or record an owner decision in §4 (see D7 for the
+one time that happened). Regenerate only with:
 
 ```bash
 go test ./server -run 'TestAPIContract|TestAPISpecContract' -update-api-contract
@@ -332,6 +403,36 @@ conflict time produces arbitrary outcomes.
 | D4 | The 9 upstream GitHub workflows | **Re-delete.** |
 | D5 | New upstream features | **Merge the code at upstream defaults; no config-store or UI plumbing during the sync.** DoQ and DoH3 get UI work as dedicated follow-ups immediately after the sync lands (GRA-638, GRA-639). The remainder stay YAML-only until someone asks for them; see §4a. |
 | D6 | `docs/` branding | Take upstream content, re-apply Blockasaurus branding as a final pass. |
+| D7 | `GET /docs/config.schema.json` | **Provisionally accepted in Phase 5, pending owner confirmation.** See below — this is the one upstream route the sync adds to our HTTP surface, and §3a's rule is that such a route is dropped, not accepted. |
+
+### D7 — the one upstream route this sync adds
+
+`configureDocsHandler` merged cleanly and brought a new route with it:
+
+```text
++ GET     /docs/config.schema.json                      [RequireAuth RequireCSRFHeader]
+```
+
+Accepted rather than dropped, on the following reasoning — but **it is the owner's call, not the
+resolver's**, which is why it is written down here instead of being absorbed:
+
+- The config JSON schema feature is already adopted elsewhere in this sync. `config/schema/embed.go`
+  embeds `docs.ConfigSchema` and validates every loaded config against it, and §3.4's D2 resolution
+  turns on `docs/config.schema.json` being generated and current. Serving the same artifact over
+  HTTP is the companion, not a new capability.
+- Two specs that arrived with the merge cover the route, so dropping it means deleting upstream
+  tests as well as upstream code.
+- It is read-only and inside the authenticated group, serves a checked-in generated artifact with
+  no secrets, and collides with nothing.
+- `TestAPIContract`'s golden had to be regenerated in this phase regardless, for an unrelated and
+  entirely non-behavioral reason (chi 5.3 reports a mounted sub-router's parent middleware, so the
+  `/debug/*` rows gained guards they always had at runtime). So keeping the route does not cost a
+  golden change that would otherwise have been avoided.
+
+**To reverse it** — drop `router.Get("/docs/config.schema.json", …)` from `configureDocsHandler`
+and its link from `configureRootHandler` in `server/server_endpoints.go`, re-point
+`server/server_test.go`'s "Docs endpoints" and PROXY-protocol specs at `/docs/openapi.yaml`, and
+rerun `go test ./server -run TestAPIContract -update-api-contract`.
 
 ### 4a. Merged but not surfaced — and what happens to each
 

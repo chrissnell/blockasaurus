@@ -75,8 +75,9 @@ Following metrics will be exported:
 
     `FILTERED` and `NOTFQDN` never appear: the `filtering` and `fqdnOnly` resolvers answer those
     queries above the metrics resolver in the chain, so they are missing from `blocky_query_total`,
-    `blocky_response_total` and `blocky_request_duration_seconds` as well. The query log sits below
-    them in the chain too, so those queries are only visible in the [query log](configuration.md#query-logging).
+    `blocky_response_total` and `blocky_request_duration_seconds` as well. The query log and the
+    dashboard's statistics sit below them too, so those queries are not visible anywhere but the
+    server log.
 
     Example — per-client rate of queries that were actually resolved rather than blocked:
 

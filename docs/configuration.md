@@ -400,9 +400,9 @@ general upstream resolvers that contains a non-public IP address — in `A`/`AAA
 `ipv4hint`/`ipv6hint` SvcParams of `HTTPS`/`SVCB` records, in any section of the response
 (answer, authority or additional) — and returns an empty `NOERROR` response instead (visible as
 response type `REBIND` with reason `REBIND (rebinding protection)` in query logs and metrics;
-the offending IP is logged at debug level). Rebinding hits count as blocked in the dashboard's
-[statistics](interfaces.md#rest-api), and are reported to clients as Extended DNS Error
-`15 (Blocked)`.
+the offending IP is logged at debug level). They appear as response type `REBIND` in the
+dashboard's response-type breakdown — the statistics count only `BLOCKED` as a block — and are
+reported to clients as Extended DNS Error `15 (Blocked)`.
 **Disabled by default.**
 
 !!! note "Upgrading"

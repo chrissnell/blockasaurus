@@ -24,9 +24,9 @@ You can also browse the interactive API documentation (RapiDoc) documentation [o
 | POST   | `/api/cache/flush`      | Clear the entire DNS response cache.               |
 | POST   | `/api/query`            | Run a DNS query through Blocky and return the result as JSON. |
 | GET    | `/api/stats`            | Query totals and block rate as JSON, read from the Prometheus registry. |
-| GET    | `/api/stats/overtime`   | Per-bucket query / blocked time series backing the dashboard chart. |
-| GET    | `/api/stats/overtime/clients` | Same buckets, broken down per client. |
-| GET    | `/api/stats/overtime/latency` | Same buckets, carrying response-time percentiles. |
+| GET    | `/api/stats/overtime`   | Per-bucket time series — totals, blocked, per-client counts and mean upstream latency. |
+| GET    | `/api/stats/overtime/clients` | Alias of `/api/stats/overtime`, kept for UI compatibility. |
+| GET    | `/api/stats/overtime/latency` | Alias of `/api/stats/overtime`, kept for UI compatibility. |
 | GET    | `/api/stats/query-types`| Counts per DNS query type (`A`, `AAAA`, ...). |
 | GET    | `/api/stats/response-types` | Counts per response type (`CACHED`, `BLOCKED`, ...). |
 | GET    | `/api/stats/top-domains`| Top permitted and top blocked domains. |

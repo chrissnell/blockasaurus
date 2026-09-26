@@ -126,16 +126,21 @@ func newCORSMiddleware() httpMiddleware {
 		// AllowOriginFunc defeats the CSRF defense provided by
 		// SameSite=Lax + the X-Requested-With header check.
 		//
-		// rs/cors (upstream replaced go-chi/cors) splits the callback in two:
-		// AllowOriginFunc sees only the origin string, AllowOriginRequestFunc
-		// also sees the request. Same-origin needs the request's Host, so it
-		// has to be the latter.
-		AllowOriginRequestFunc: sameOriginFunc,
-		AllowCredentials:       true,
-		AllowedHeaders:         []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token", "X-Requested-With"},
-		AllowedMethods:         []string{"GET", "POST", "PUT", "DELETE"},
-		ExposedHeaders:         []string{"Link"},
-		MaxAge:                 int(corsMaxAge.Seconds()),
+		// rs/cors (upstream replaced go-chi/cors) splits the callback: its
+		// AllowOriginFunc sees only the origin string, so same-origin — which
+		// needs the request's Host — has to use the request-aware variant.
+		// AllowOriginRequestFunc is the deprecated spelling of that. No extra
+		// Vary header is declared: the decision varies on Host, but a shared
+		// cache already keys on the effective request URI, so naming it would
+		// add a header to every response for nothing.
+		AllowOriginVaryRequestFunc: func(r *http.Request, origin string) (bool, []string) {
+			return sameOriginFunc(r, origin), nil
+		},
+		AllowCredentials: true,
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token", "X-Requested-With"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE"},
+		ExposedHeaders:   []string{"Link"},
+		MaxAge:           int(corsMaxAge.Seconds()),
 	}
 
 	return cors.New(options).Handler

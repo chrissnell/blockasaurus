@@ -69,14 +69,16 @@ type Server struct {
 
 	configStore *configstore.ConfigStore
 	bootstrap   *resolver.Bootstrap
-	// cacheDecorator is what Reconfigure hands the rebuilt caching resolver.
-	// It replaces the *redis.Client the chain used to take: upstream moved
-	// redis from a parameter of the blocking resolver to a write-through
-	// decorator around the result cache.
-	cacheDecorator resolver.CacheDecorator
-	broadcaster    *logstream.Broadcaster
-	statsCollector *statscollector.Collector
-	wsRevoker      *auth.WSRevoker
+	// newCacheDecorator builds the caching resolver's write-through decorator
+	// for a chain being constructed under a given context. It replaces the
+	// *redis.Client the chain used to take: upstream moved redis from a
+	// parameter of the blocking resolver to a decorator around the result
+	// cache. Reconfigure must pass its own chain context, not the server's, or
+	// the decorated cache outlives the chain that owns it.
+	newCacheDecorator func(chainCtx context.Context) resolver.CacheDecorator
+	broadcaster       *logstream.Broadcaster
+	statsCollector    *statscollector.Collector
+	wsRevoker         *auth.WSRevoker
 
 	servers          map[net.Listener]*httpServer
 	http3Server      *http3Server     // nil when disabled
@@ -203,7 +205,8 @@ func NewServer(ctx context.Context, cfg *config.Config, store *configstore.Confi
 
 	chainCtx, chainCancel := context.WithCancel(ctx)
 
-	queryResolver, queryError := createQueryResolver(chainCtx, cfg, bootstrap, redisResult.decorator, broadcaster, sc)
+	queryResolver, queryError := createQueryResolver(chainCtx, cfg, bootstrap,
+		redisResult.decoratorFor(chainCtx), broadcaster, sc)
 	if queryError != nil {
 		chainCancel()
 
@@ -218,14 +221,14 @@ func NewServer(ctx context.Context, cfg *config.Config, store *configstore.Confi
 	wsRevoker := auth.NewWSRevoker()
 
 	server = &Server{
-		dnsServers:     dnsServers,
-		cfg:            cfg,
-		configStore:    store,
-		bootstrap:      bootstrap,
-		cacheDecorator: redisResult.decorator,
-		broadcaster:    broadcaster,
-		statsCollector: sc,
-		wsRevoker:      wsRevoker,
+		dnsServers:        dnsServers,
+		cfg:               cfg,
+		configStore:       store,
+		bootstrap:         bootstrap,
+		newCacheDecorator: redisResult.decoratorFor,
+		broadcaster:       broadcaster,
+		statsCollector:    sc,
+		wsRevoker:         wsRevoker,
 
 		servers:          make(map[net.Listener]*httpServer),
 		http3PacketConns: http3PacketConns,
@@ -460,6 +463,8 @@ func createAdminListeners(
 
 	httpsListeners, err = newTLSListeners(ctx, "https-admin", cfg.Ports.AdminPortTLS, tlsCfg, false)
 	if err != nil {
+		closeAll(httpListeners)
+
 		return nil, nil, fmt.Errorf("failed to create admin HTTPS listeners: %w", err)
 	}
 
@@ -609,15 +614,24 @@ func createUDPServer(ctx context.Context, address string, opts listenerOptions) 
 }
 
 type redisBridgeResult struct {
-	decorator resolver.CacheDecorator
-	bridge    *redis.EventBusBridge
+	// decoratorFor builds the decorator for a chain being constructed under
+	// chainCtx, rather than a single decorator captured at startup. The
+	// Redis-backed cache launches a subscriber and a batching writer that run
+	// until their context is cancelled (see cache.NewRedisExpiringCache), so a
+	// decorator bound to the server context would leak one set of goroutines —
+	// plus the cache they feed — on every Reconfigure. It returns nil when
+	// Redis is not configured, which is what disables the decoration.
+	decoratorFor func(chainCtx context.Context) resolver.CacheDecorator
+	bridge       *redis.EventBusBridge
 }
 
 func createRedisCacheDecorator(
 	ctx context.Context, redisConn *goredis.Client, required bool,
 ) (*redisBridgeResult, error) {
 	if redisConn == nil {
-		return &redisBridgeResult{}, nil
+		return &redisBridgeResult{
+			decoratorFor: func(context.Context) resolver.CacheDecorator { return nil },
+		}, nil
 	}
 
 	bridge, err := redis.NewEventBusBridge(ctx, redisConn)
@@ -629,14 +643,16 @@ func createRedisCacheDecorator(
 		logger().Warn("failed to create Redis event bridge: ", err)
 	}
 
-	decorator := func(inner cache.ExpiringCache[[]byte]) (cache.ExpiringCache[[]byte], error) {
-		return cache.NewRedisExpiringByteCache(ctx, inner, redisConn, cache.RedisOptions[[]byte]{
-			Prefix:  "blocky:cache:",
-			Channel: "blocky_cache_sync",
-		})
+	decoratorFor := func(chainCtx context.Context) resolver.CacheDecorator {
+		return func(inner cache.ExpiringCache[[]byte]) (cache.ExpiringCache[[]byte], error) {
+			return cache.NewRedisExpiringByteCache(chainCtx, inner, redisConn, cache.RedisOptions[[]byte]{
+				Prefix:  "blocky:cache:",
+				Channel: "blocky_cache_sync",
+			})
+		}
 	}
 
-	return &redisBridgeResult{decorator: decorator, bridge: bridge}, nil
+	return &redisBridgeResult{decoratorFor: decoratorFor, bridge: bridge}, nil
 }
 
 func createQueryResolver(
@@ -953,7 +969,8 @@ func (s *Server) Reconfigure(ctx context.Context) error {
 	// like writeLog that need to run for the lifetime of the chain).
 	chainCtx, chainCancel := context.WithCancel(context.Background())
 
-	newChain, err := createQueryResolver(chainCtx, &newCfg, s.bootstrap, s.cacheDecorator, s.broadcaster, s.statsCollector)
+	newChain, err := createQueryResolver(chainCtx, &newCfg, s.bootstrap,
+		s.newCacheDecorator(chainCtx), s.broadcaster, s.statsCollector)
 	if err != nil {
 		chainCancel()
 
