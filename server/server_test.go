@@ -620,7 +620,7 @@ var _ = Describe("Running DNS server", func() {
 			mockResolver.EXPECT().Resolve(mock.Anything, mock.MatchedBy(func(req *model.Request) bool {
 				return expectedIP.Equal(req.ClientIP) && req.Protocol == model.RequestProtocolTCP
 			})).Return(&model.Response{Res: response}, nil).Once()
-			srv.queryResolver = mockResolver
+			srv.activeChain.Store(&chainSnapshot{chain: mockResolver})
 
 			rawConn, err := (&net.Dialer{}).DialContext(ctx, "tcp", addr)
 			Expect(err).Should(Succeed())
@@ -656,7 +656,7 @@ var _ = Describe("Running DNS server", func() {
 			mockResolver.EXPECT().Resolve(mock.Anything, mock.MatchedBy(func(req *model.Request) bool {
 				return expectedIP.Equal(req.ClientIP) && req.Protocol == model.RequestProtocolTCP
 			})).Return(&model.Response{Res: response}, nil).Once()
-			srv.queryResolver = mockResolver
+			srv.activeChain.Store(&chainSnapshot{chain: mockResolver})
 
 			rawConn, err := (&net.Dialer{}).DialContext(ctx, "tcp", addr)
 			Expect(err).Should(Succeed())
@@ -705,7 +705,7 @@ var _ = Describe("Running DNS server", func() {
 			mockResolver.EXPECT().Resolve(mock.Anything, mock.MatchedBy(func(req *model.Request) bool {
 				return expectedIP.Equal(req.ClientIP) && req.Protocol == model.RequestProtocolTCP
 			})).Return(&model.Response{Res: response}, nil).Once()
-			srv.queryResolver = mockResolver
+			srv.activeChain.Store(&chainSnapshot{chain: mockResolver})
 
 			rawConn, err := (&net.Dialer{}).DialContext(ctx, "tcp", addr)
 			Expect(err).Should(Succeed())
@@ -738,7 +738,7 @@ var _ = Describe("Running DNS server", func() {
 			mockResolver.EXPECT().Resolve(mock.Anything, mock.MatchedBy(func(req *model.Request) bool {
 				return expectedIP.Equal(req.ClientIP) && req.Protocol == model.RequestProtocolTCP
 			})).Return(&model.Response{Res: response}, nil).Once()
-			srv.queryResolver = mockResolver
+			srv.activeChain.Store(&chainSnapshot{chain: mockResolver})
 
 			rawConn, err := (&net.Dialer{}).DialContext(ctx, "tcp", addr)
 			Expect(err).Should(Succeed())
@@ -814,7 +814,7 @@ var _ = Describe("Running DNS server", func() {
 				cfg.Ports.HTTPS = config.ListenConfig{"127.0.0.1:0", "127.0.0.1:0"}
 				cfg.HTTP3.Enable = true
 
-				srv, err := NewServer(ctx, &cfg)
+				srv, err := NewServer(ctx, &cfg, nil)
 
 				Expect(err).Should(Succeed())
 				DeferCleanup(func() { _ = srv.Stop(ctx) })
@@ -828,7 +828,7 @@ var _ = Describe("Running DNS server", func() {
 				cfg.Ports.HTTPS = config.ListenConfig{"127.0.0.1:0"}
 				cfg.HTTP3.Enable = true
 
-				srv, err := NewServer(ctx, &cfg)
+				srv, err := NewServer(ctx, &cfg, nil)
 				Expect(err).Should(Succeed())
 
 				errCh := make(chan error, 10)
@@ -853,7 +853,7 @@ var _ = Describe("Running DNS server", func() {
 				logHook := installLogHook()
 				DeferCleanup(logHook.uninstall)
 
-				srv, err := NewServer(ctx, &cfg)
+				srv, err := NewServer(ctx, &cfg, nil)
 
 				Expect(err).Should(Succeed())
 				Expect(srv.http3Server).Should(BeNil())
@@ -876,7 +876,7 @@ var _ = Describe("Running DNS server", func() {
 				logHook := installLogHook()
 				DeferCleanup(logHook.uninstall)
 
-				srv, err := NewServer(ctx, &cfg)
+				srv, err := NewServer(ctx, &cfg, nil)
 
 				Expect(err).Should(Succeed())
 				DeferCleanup(func() { _ = srv.Stop(ctx) })
@@ -893,7 +893,7 @@ var _ = Describe("Running DNS server", func() {
 			It("opens no UDP listeners even with HTTPS configured", func() {
 				cfg.Ports.HTTPS = config.ListenConfig{"127.0.0.1:0"}
 
-				srv, err := NewServer(ctx, &cfg)
+				srv, err := NewServer(ctx, &cfg, nil)
 
 				Expect(err).Should(Succeed())
 				Expect(srv.http3Server).Should(BeNil())
@@ -1098,7 +1098,6 @@ var _ = Describe("Running DNS server", func() {
 		})
 	})
 
-<<<<<<< HEAD
 	Describe("Admin port mode", func() {
 		const adminBasePort = 9000
 
@@ -1191,23 +1190,41 @@ var _ = Describe("Running DNS server", func() {
 			Expect(err).Should(Succeed())
 			DeferCleanup(resp.Body.Close)
 			Expect(resp).Should(HaveHTTPStatus(http.StatusNotFound))
-=======
+		})
+	})
+
 	Describe("extractClientIDFromHost", func() {
-		It("should extract client ID from hostname with id- prefix", func() {
-			clientID := extractClientIDFromHost("id-client123.example.com")
-			Expect(clientID).Should(Equal("client123"))
+		// Upstream read a client ID from an "id-" prefix on any hostname; this
+		// fork reads it from the single label in front of a configured
+		// client-group base domain.
+		domains := []string{"dns.example.com"}
+
+		It("returns the label in front of a configured base domain", func() {
+			Expect(extractClientIDFromHost("kids.dns.example.com", domains)).Should(Equal("kids"))
 		})
-		It("should return empty string if hostname does not start with id-", func() {
-			clientID := extractClientIDFromHost("client123.example.com")
-			Expect(clientID).Should(Equal(""))
+
+		It("matches case-insensitively and ignores the root dot", func() {
+			Expect(extractClientIDFromHost("Kids.DNS.Example.COM.", domains)).Should(Equal("kids"))
 		})
-		It("should return empty string if hostname has id- prefix but no dot", func() {
-			clientID := extractClientIDFromHost("id-client123")
-			Expect(clientID).Should(Equal(""))
+
+		It("returns empty for the base domain itself", func() {
+			Expect(extractClientIDFromHost("dns.example.com", domains)).Should(BeEmpty())
 		})
-		It("should return empty string for empty hostname", func() {
-			clientID := extractClientIDFromHost("")
-			Expect(clientID).Should(Equal(""))
+
+		It("returns empty when more than one label precedes the base domain", func() {
+			Expect(extractClientIDFromHost("a.b.dns.example.com", domains)).Should(BeEmpty())
+		})
+
+		It("returns empty for a host under no configured base domain", func() {
+			Expect(extractClientIDFromHost("kids.other.example.com", domains)).Should(BeEmpty())
+		})
+
+		It("returns empty when no base domains are configured", func() {
+			Expect(extractClientIDFromHost("kids.dns.example.com", nil)).Should(BeEmpty())
+		})
+
+		It("returns empty for an empty hostname", func() {
+			Expect(extractClientIDFromHost("", domains)).Should(BeEmpty())
 		})
 	})
 
@@ -1219,8 +1236,8 @@ var _ = Describe("Running DNS server", func() {
 			Expect(resp.Res.Answer).Should(BeDNSRecord("google.de.", A, "123.124.122.122"))
 		})
 
-		It("should resolve a query with client ID in host", func() {
-			resp, err := sut.Query(ctx, "id-myclient.example.com", net.ParseIP("192.168.178.1"), "google.de.", dns.Type(dns.TypeA))
+		It("should resolve a query whose host carries a client group label", func() {
+			resp, err := sut.Query(ctx, "myclient.dns.example.com", net.ParseIP("192.168.178.1"), "google.de.", dns.Type(dns.TypeA))
 			Expect(err).Should(Succeed())
 			Expect(resp).ShouldNot(BeNil())
 		})
@@ -1253,12 +1270,7 @@ var _ = Describe("Running DNS server", func() {
 					return &model.Response{Res: chain(req), RType: model.ResponseTypeRESOLVED, Reason: "RESOLVED"}, nil
 				})
 
-			return &Server{
-				queryResolver: m,
-				cfg: &config.Config{Upstreams: config.Upstreams{
-					Timeout: config.Duration(time.Second),
-				}},
-			}
+			return newServerWithMockChain(m)
 		}
 
 		// chainAddingEdns0 simulates a chain member adding EDNS0 to the request (like DNSSEC/ECS)
@@ -1668,12 +1680,7 @@ var _ = Describe("Running DNS server", func() {
 					return &model.Response{Res: res, RType: model.ResponseTypeRESOLVED, Reason: "RESOLVED"}, nil
 				})
 
-			return &Server{
-				queryResolver: m,
-				cfg: &config.Config{Upstreams: config.Upstreams{
-					Timeout: config.Duration(time.Second),
-				}},
-			}
+			return newServerWithMockChain(m)
 		}
 
 		When("the response fits the client buffer uncompressed", func() {
@@ -1786,7 +1793,6 @@ var _ = Describe("Running DNS server", func() {
 			handler.ServeHTTP(rr, req)
 
 			Expect(rr.Header().Get("Strict-Transport-Security")).Should(BeEmpty())
->>>>>>> upstream/main
 		})
 	})
 
@@ -1825,12 +1831,7 @@ var _ = Describe("Running DNS server", func() {
 			m := resolver.NewMockChainedResolver(GinkgoT())
 			m.EXPECT().Resolve(mock.Anything, mock.Anything).Return(nil, resolver.ErrRateLimited)
 
-			s := &Server{
-				queryResolver: m,
-				cfg: &config.Config{Upstreams: config.Upstreams{
-					Timeout: config.Duration(time.Second),
-				}},
-			}
+			s := newServerWithMockChain(m)
 			req := &model.Request{
 				Req:      util.NewMsgWithQuestion("example.com.", A),
 				Protocol: model.RequestProtocolUDP,
@@ -1878,6 +1879,21 @@ func requestServer(ctx context.Context, request *dns.Msg) *dns.Msg {
 	return nil
 }
 
+// newServerWithMockChain builds the smallest Server that Server.resolve and
+// Server.handleReq need: a config with an upstream timeout and a chain behind
+// the atomic pointer NewServer installs. Specs that only exercise request and
+// response handling skip construction entirely.
+func newServerWithMockChain(chain resolver.ChainedResolver) *Server {
+	s := &Server{
+		cfg: &config.Config{Upstreams: config.Upstreams{
+			Timeout: config.Duration(time.Second),
+		}},
+	}
+	s.activeChain.Store(&chainSnapshot{chain: chain})
+
+	return s
+}
+
 func newProxyProtocolTestServer(ctx context.Context, configurePorts func(*config.Ports)) *Server {
 	cfg := config.Config{}
 	Expect(defaults.Set(&cfg)).Should(Succeed())
@@ -1891,7 +1907,7 @@ func newProxyProtocolTestServer(ctx context.Context, configurePorts func(*config
 	cfg.Ports.DOHPath = "/dns-query"
 	configurePorts(&cfg.Ports)
 
-	srv, err := NewServer(ctx, &cfg)
+	srv, err := NewServer(ctx, &cfg, nil)
 	Expect(err).Should(Succeed())
 
 	errChan := make(chan error, 10)

@@ -293,10 +293,6 @@ type Config struct {
 	QueryLog QueryLog `yaml:"queryLog"`
 	// Prometheus metrics configuration.
 	Prometheus Metrics `yaml:"prometheus"`
-	// Upstream's in-memory statistics collector (24h window). Merged at upstream
-	// defaults: Blockasaurus serves its own persisted statistics instead
-	// (docs/UPSTREAM_SYNC.md, D1).
-	Statistics Statistics `yaml:"statistics"`
 	// Redis configuration for cache and state synchronization between instances.
 	Redis Redis `yaml:"redis"`
 	// Logging configuration.

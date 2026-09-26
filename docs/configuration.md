@@ -400,8 +400,9 @@ general upstream resolvers that contains a non-public IP address — in `A`/`AAA
 `ipv4hint`/`ipv6hint` SvcParams of `HTTPS`/`SVCB` records, in any section of the response
 (answer, authority or additional) — and returns an empty `NOERROR` response instead (visible as
 response type `REBIND` with reason `REBIND (rebinding protection)` in query logs and metrics;
-the offending IP is logged at debug level). Rebinding hits count as **blocked** in the
-[statistics](#statistics), and are reported to clients as Extended DNS Error `15 (Blocked)`.
+the offending IP is logged at debug level). Rebinding hits count as blocked in the dashboard's
+[statistics](interfaces.md#rest-api), and are reported to clients as Extended DNS Error
+`15 (Blocked)`.
 **Disabled by default.**
 
 !!! note "Upgrading"
@@ -1082,35 +1083,6 @@ see [Basic Configuration](#basic-configuration)).
       path: /metrics
     ```
 
-## Statistics
-
-Blocky can collect in-memory statistics over a rolling 24h window and serve them as JSON at
-`GET /api/stats`, independent of Prometheus. To
-use this feature, the HTTP listener must be enabled (see [Basic Configuration](#basic-configuration)).
-
-The endpoint returns curated totals (`summary`), raw per-type breakdowns (response type, query type
-and response code), a per-hour time series, top-20 domains / blocked-domains / clients, and current
-list and cache gauges. Disabled by default; when disabled,
-`GET /api/stats` returns HTTP 503.
-
-| Parameter         | Mandatory | Default value | Description                                                       |
-| ----------------- | --------- | ------------- | ----------------------------------------------------------------- |
-| statistics.enable | no        | false         | If true, enables in-memory statistics and the /api/stats endpoint |
-
-!!! example
-
-    ```yaml
-    statistics:
-      enable: true
-    ```
-
-!!! note
-
-    Clients are identified by their resolved name (see [client name lookup](#client-name-lookup)) and fall
-    back to their IP when no name is available. Queries dropped by the
-    [rate limiter](#rate-limiting-per-client-ip) are always attributed to the client IP: the limiter
-    runs before the client name lookup, so that its bucket key stays the connection's source IP.
-
 ## HTTP/3 (DoH3) {#http3}
 
 Serve DNS-over-HTTPS over HTTP/3 (RFC 9114). When enabled, Blocky
@@ -1512,9 +1484,9 @@ Blockasaurus classifies DNSSEC validation results into four categories:
 | **Bogus**       | Invalid DNSSEC signatures or broken chain of trust                   | SERVFAIL returned with EDE code `6 (DNSSEC Bogus)`, response type `BOGUS` |
 | **Indeterminate** | Validation could not be completed (e.g., network errors, budget exceeded) | AD flag cleared, response returned |
 
-A `BOGUS` result means blocky could not obtain a trustworthy answer, so it counts as an **error**
-in the [statistics](#statistics) — not as a block. A domain whose operator has misconfigured DNSSEC
-is not something blocky blocked, and never appears in `topBlockedDomains`.
+A `BOGUS` result means blocky could not obtain a trustworthy answer, so it is its own response
+type rather than a block. A domain whose operator has misconfigured DNSSEC is not something blocky
+blocked, and never appears among the dashboard's top blocked domains.
 
 !!! note "Upgrading"
 

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/0xERR0R/blocky/model"
-	"github.com/0xERR0R/blocky/stats"
 	"github.com/0xERR0R/blocky/util"
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/mock"
@@ -28,8 +27,8 @@ type staticResolverAccessor struct {
 }
 
 func (a *staticResolverAccessor) BlockingControl() (BlockingControl, error) { return a.blocking, nil }
-func (a *staticResolverAccessor) ListRefresher() (ListRefresher, error)    { return a.refresh, nil }
-func (a *staticResolverAccessor) CacheControl() (CacheControl, error)      { return a.cache, nil }
+func (a *staticResolverAccessor) ListRefresher() (ListRefresher, error)     { return a.refresh, nil }
+func (a *staticResolverAccessor) CacheControl() (CacheControl, error)       { return a.cache, nil }
 
 var _ = Describe("API implementation tests", func() {
 	var (
@@ -37,7 +36,6 @@ var _ = Describe("API implementation tests", func() {
 		querierMock         *MockQuerier
 		listRefreshMock     *MockListRefresher
 		cacheControlMock    *MockCacheControl
-		statsMock           *MockStatsProvider
 		sut                 *OpenAPIInterfaceImpl
 
 		ctx      context.Context
@@ -52,7 +50,6 @@ var _ = Describe("API implementation tests", func() {
 		querierMock = NewMockQuerier(GinkgoT())
 		listRefreshMock = NewMockListRefresher(GinkgoT())
 		cacheControlMock = NewMockCacheControl(GinkgoT())
-<<<<<<< HEAD
 
 		accessor := &staticResolverAccessor{
 			blocking: blockingControlMock,
@@ -60,10 +57,6 @@ var _ = Describe("API implementation tests", func() {
 			cache:    cacheControlMock,
 		}
 		sut = NewOpenAPIInterfaceImpl(accessor, querierMock)
-=======
-		statsMock = NewMockStatsProvider(GinkgoT())
-		sut = NewOpenAPIInterfaceImpl(blockingControlMock, querierMock, listRefreshMock, cacheControlMock, statsMock)
->>>>>>> upstream/main
 	})
 
 	Describe("RegisterOpenAPIEndpoints", func() {
@@ -305,53 +298,6 @@ var _ = Describe("API implementation tests", func() {
 				var resp200 CacheFlush200Response
 				Expect(resp).Should(BeAssignableToTypeOf(resp200))
 			})
-		})
-	})
-
-	Describe("Stats API", func() {
-		It("returns 200 with the snapshot when enabled", func() {
-			hour := time.Date(2026, 6, 23, 10, 0, 0, 0, time.UTC)
-
-			statsMock.On("StatsEnabled").Return(true)
-			statsMock.On("Stats").Return(stats.Result{
-				// distinct values per field so a mis-wired mapping cannot pass
-				Summary: stats.Summary{
-					Queries: 21, Cached: 2, Forwarded: 3, Blocked: 4, Filtered: 5,
-					Local: 6, Dropped: 7, Errors: 8, AvgResponseMs: 9, CacheHitRate: 0.4,
-				},
-				ByResponseType: map[string]int{"RESOLVED": 1, "CACHED": 1, "BLOCKED": 1},
-				ByQueryType:    map[string]int{"A": 3},
-				ByResponseCode: map[string]int{"NOERROR": 3},
-				PerHour:        []stats.HourPoint{{Hour: hour, Queries: 10, Blocked: 4, Filtered: 5}},
-				TopDomains:     []stats.NameCount{{Name: "example.com", Count: 2}},
-				Lists:          stats.ListCounts{Denylist: map[string]int{}, Allowlist: map[string]int{}},
-			})
-
-			resp, err := sut.GetStats(ctx, GetStatsRequestObject{})
-			Expect(err).Should(Succeed())
-
-			resp200, ok := resp.(GetStats200JSONResponse)
-			Expect(ok).Should(BeTrue())
-
-			Expect(resp200.Summary).Should(Equal(ApiStatsSummary{
-				Queries: 21, Cached: 2, Forwarded: 3, Blocked: 4, Filtered: 5,
-				Local: 6, Dropped: 7, Errors: 8, AvgResponseMs: 9, CacheHitRate: 0.4,
-			}))
-			Expect(resp200.PerHour).Should(ConsistOf(ApiHourPoint{
-				Hour: hour, Queries: 10, Blocked: 4, Filtered: 5,
-			}))
-			Expect(resp200.ByResponseType).Should(HaveKeyWithValue("BLOCKED", 1))
-			Expect(resp200.TopDomains).Should(HaveLen(1))
-		})
-
-		It("returns 503 when disabled", func() {
-			statsMock.On("StatsEnabled").Return(false)
-
-			resp, err := sut.GetStats(ctx, GetStatsRequestObject{})
-			Expect(err).Should(Succeed())
-
-			_, ok := resp.(GetStats503TextResponse)
-			Expect(ok).Should(BeTrue())
 		})
 	})
 })

@@ -46,6 +46,9 @@ const (
 	// runs as a non-root user (see Dockerfile `USER 100`) that doesn't own the
 	// copied files, so it can only read them via the world-readable bit.
 	modeWorldReadable = 0o444
+	// modeWorldWritable is used for the pre-seeded SQLite config store, which
+	// the server opens read-write rather than just reading.
+	modeWorldWritable = 0o666
 	// modeWorldReadableDir is used for host directories bind-mounted into containers,
 	// so a container user with a different UID can traverse and read them.
 	modeWorldReadableDir = 0o755
@@ -319,25 +322,17 @@ func buildBlockyContainerRequest(confFile string) testcontainers.ContainerReques
 	return req
 }
 
-<<<<<<< HEAD
-// createBlockyContainer creates a blocky container with a config provided by the given lines.
-// It is attached to the test network under the alias 'blocky'.
-// It is automatically terminated when the test is finished.
+// createBlockyContainerInternal builds and starts a blocky container from the given config
+// lines, mounting any extraFiles in addition to the generated config.yml and adding any
+// Docker bind mounts (each in "hostPath:containerPath" form).
 //
 // Upstream configuration now lives in the SQLite config store, not YAML. To keep
 // existing e2e test fixtures working, any `upstreams:` block in the provided
 // lines is extracted here, stripped from the YAML, and used to pre-seed a
-// temporary SQLite DB that gets mounted into the container at the same path as
+// temporary SQLite DB that is mounted into the container at the same path as
 // `databasePath` in the YAML.
-func createBlockyContainer(ctx context.Context, e2eNet *testcontainers.DockerNetwork,
-	lines ...string,
-=======
-// createBlockyContainerInternal builds and starts a blocky container from the given config
-// lines, mounting any extraFiles in addition to the generated config.yml and adding any
-// Docker bind mounts (each in "hostPath:containerPath" form).
 func createBlockyContainerInternal(ctx context.Context, e2eNet *testcontainers.DockerNetwork,
 	extraFiles []testcontainers.ContainerFile, binds []string, lines ...string,
->>>>>>> upstream/main
 ) (testcontainers.Container, error) {
 	// Add timeout to context
 	ctx, cancel := context.WithTimeout(ctx, 2*startupTimeout)
@@ -358,14 +353,17 @@ func createBlockyContainerInternal(ctx context.Context, e2eNet *testcontainers.D
 		return nil, fmt.Errorf("can't create config struct %w", err)
 	}
 
-	req := buildBlockyContainerRequest(confFile)
-<<<<<<< HEAD
-	req.Files = append(req.Files, testcontainers.ContainerFile{
+	// The seeded config store travels on the same mechanism as a caller's own
+	// extraFiles rather than a second append to req.Files. Unlike config.yml it
+	// is mounted writable: the server opens it read-write (WAL journal,
+	// migrations) as a container user that does not own the copied file.
+	extraFiles = append([]testcontainers.ContainerFile{{
 		HostFilePath:      dbFile,
 		ContainerFilePath: "/app/config.db",
-		FileMode:          modeOwner,
-	})
-=======
+		FileMode:          modeWorldWritable,
+	}}, extraFiles...)
+
+	req := buildBlockyContainerRequest(confFile)
 	req.Files = append(req.Files, extraFiles...)
 
 	if len(binds) > 0 {
@@ -375,7 +373,6 @@ func createBlockyContainerInternal(ctx context.Context, e2eNet *testcontainers.D
 			hc.Binds = append(hc.Binds, binds...)
 		}
 	}
->>>>>>> upstream/main
 
 	container, err := startContainerWithNetwork(ctx, req, "blocky", e2eNet)
 	if err != nil {

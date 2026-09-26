@@ -445,4 +445,3 @@ func (s *ConfigStore) ResetPassword(userID uint, newHash string) error {
 
 	return nil
 }
-

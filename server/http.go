@@ -125,30 +125,17 @@ func newCORSMiddleware() httpMiddleware {
 		// spec-invalid (browsers reject it), and a permissive
 		// AllowOriginFunc defeats the CSRF defense provided by
 		// SameSite=Lax + the X-Requested-With header check.
-		AllowOriginFunc:  sameOriginFunc,
-		AllowCredentials: true,
-<<<<<<< HEAD
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token", "X-Requested-With"},
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE"},
-		ExposedHeaders:   []string{"Link"},
-		MaxAge:           int(corsMaxAge.Seconds()),
-=======
-		// Allow all request headers: web UIs send tool-specific headers
-		// (e.g. Grafana action buttons always add 'X-Grafana-Action') and a
-		// disallowed header makes the preflight fail. The API attaches no
-		// security semantics to request headers, and rs/cors answers a
-		// wildcard by echoing the requested headers, which is spec-compliant
-		// also for 'Authorization'.
-		AllowedHeaders: []string{"*"},
-		AllowedMethods: []string{"GET", "POST"},
-		AllowedOrigins: []string{"*"},
-		// Allow Chromium's Private Network Access preflights, sent when a
-		// public site addresses a private IP (e.g. a hosted Grafana
-		// dashboard calling the blocky API on a LAN)
-		AllowPrivateNetwork: true,
-		ExposedHeaders:      []string{"Link"},
-		MaxAge:              int(corsMaxAge.Seconds()),
->>>>>>> upstream/main
+		//
+		// rs/cors (upstream replaced go-chi/cors) splits the callback in two:
+		// AllowOriginFunc sees only the origin string, AllowOriginRequestFunc
+		// also sees the request. Same-origin needs the request's Host, so it
+		// has to be the latter.
+		AllowOriginRequestFunc: sameOriginFunc,
+		AllowCredentials:       true,
+		AllowedHeaders:         []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token", "X-Requested-With"},
+		AllowedMethods:         []string{"GET", "POST", "PUT", "DELETE"},
+		ExposedHeaders:         []string{"Link"},
+		MaxAge:                 int(corsMaxAge.Seconds()),
 	}
 
 	return cors.New(options).Handler

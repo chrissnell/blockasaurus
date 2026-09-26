@@ -166,14 +166,14 @@ func handleMobileconfig(cfg *config.Config, store *configstore.ConfigStore) http
 		payloadUUID := uuid.NewSHA1(mobileconfigNamespace, []byte(slug+".dnsSettings"))
 
 		data := mobileconfigData{
-			DisplayName:  "Blockasaurus DNS (" + slug + ")",
-			Identifier:   "com.blockasaurus.dns." + slug,
-			ProfileUUID:  profileUUID.String(),
-			PayloadUUID:  payloadUUID.String(),
-			Slug:         slug,
-			DNSProtocol:  dnsProtocol,
-			ServerURL:    serverURL,
-			ServerName:   serverName,
+			DisplayName:   "Blockasaurus DNS (" + slug + ")",
+			Identifier:    "com.blockasaurus.dns." + slug,
+			ProfileUUID:   profileUUID.String(),
+			PayloadUUID:   payloadUUID.String(),
+			Slug:          slug,
+			DNSProtocol:   dnsProtocol,
+			ServerURL:     serverURL,
+			ServerName:    serverName,
 			ServerAddress: serverAddress,
 			Encrypted:     dnsProtocol != "",
 		}

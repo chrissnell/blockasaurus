@@ -18,11 +18,8 @@ import (
 	"sync/atomic"
 	"time"
 
-<<<<<<< HEAD
 	"github.com/0xERR0R/blocky/auth"
-=======
 	"github.com/0xERR0R/blocky/cache"
->>>>>>> upstream/main
 	"github.com/0xERR0R/blocky/config"
 	"github.com/0xERR0R/blocky/configstore"
 	"github.com/0xERR0R/blocky/log"
@@ -70,9 +67,13 @@ type Server struct {
 	cfg         *config.Config
 	cfgMu       sync.RWMutex
 
-	configStore    *configstore.ConfigStore
-	bootstrap      *resolver.Bootstrap
-	redisClient    *redis.Client
+	configStore *configstore.ConfigStore
+	bootstrap   *resolver.Bootstrap
+	// cacheDecorator is what Reconfigure hands the rebuilt caching resolver.
+	// It replaces the *redis.Client the chain used to take: upstream moved
+	// redis from a parameter of the blocking resolver to a write-through
+	// decorator around the result cache.
+	cacheDecorator resolver.CacheDecorator
 	broadcaster    *logstream.Broadcaster
 	statsCollector *statscollector.Collector
 	wsRevoker      *auth.WSRevoker
@@ -185,7 +186,11 @@ func NewServer(ctx context.Context, cfg *config.Config, store *configstore.Confi
 		}
 	}
 
-<<<<<<< HEAD
+	redisResult, err := createRedisCacheDecorator(ctx, redisConn, cfg.Redis.Required)
+	if err != nil {
+		return nil, err
+	}
+
 	broadcaster := logstream.NewBroadcaster(ctx, 1000)
 	log.Log().AddHook(logstream.NewHook(broadcaster))
 
@@ -198,15 +203,7 @@ func NewServer(ctx context.Context, cfg *config.Config, store *configstore.Confi
 
 	chainCtx, chainCancel := context.WithCancel(ctx)
 
-	queryResolver, queryError := createQueryResolver(chainCtx, cfg, bootstrap, redisClient, broadcaster, sc)
-=======
-	redisResult, err := createRedisCacheDecorator(ctx, redisConn, cfg.Redis.Required)
-	if err != nil {
-		return nil, err
-	}
-
-	queryResolver, queryError := createQueryResolver(ctx, cfg, bootstrap, redisResult.decorator)
->>>>>>> upstream/main
+	queryResolver, queryError := createQueryResolver(chainCtx, cfg, bootstrap, redisResult.decorator, broadcaster, sc)
 	if queryError != nil {
 		chainCancel()
 
@@ -221,23 +218,18 @@ func NewServer(ctx context.Context, cfg *config.Config, store *configstore.Confi
 	wsRevoker := auth.NewWSRevoker()
 
 	server = &Server{
-<<<<<<< HEAD
 		dnsServers:     dnsServers,
 		cfg:            cfg,
 		configStore:    store,
 		bootstrap:      bootstrap,
-		redisClient:    redisClient,
+		cacheDecorator: redisResult.decorator,
 		broadcaster:    broadcaster,
 		statsCollector: sc,
 		wsRevoker:      wsRevoker,
-=======
-		dnsServers:       dnsServers,
-		queryResolver:    queryResolver,
-		cfg:              cfg,
+
 		servers:          make(map[net.Listener]*httpServer),
 		http3PacketConns: http3PacketConns,
 	}
->>>>>>> upstream/main
 
 	if redisResult.bridge != nil {
 		server.closers = append(server.closers, redisResult.bridge)
@@ -265,42 +257,32 @@ func NewServer(ctx context.Context, cfg *config.Config, store *configstore.Confi
 		return nil, fmt.Errorf("failed to create OpenAPI interface implementation: %w", err)
 	}
 
+	// mainRouter serves ports.http / ports.https — and, via HTTP/3, the UDP
+	// mirrors of ports.https. With the admin UI on its own ports it carries
+	// DoH only; otherwise it carries DoH plus the UI and the REST API.
+	var (
+		mainRouter *chi.Mux
+		httpName   = "http"
+		httpsName  = "https"
+	)
+
 	if cfg.Ports.AdminPortEnabled() {
+		httpName, httpsName = "http-doh", "https-doh"
+
 		// DoH-only router for main http/https ports
 		dohRouter := chi.NewRouter()
 		server.registerDoHEndpoints(dohRouter, cfg)
+		mainRouter = dohRouter
 
-<<<<<<< HEAD
 		// UI-only router for admin ports
 		uiRouter := chi.NewRouter()
-		registerUIRoutes(uiRouter, cfg, openAPIImpl, server.configStore, server, server.broadcaster, server.statsCollector, server.wsRevoker)
-=======
-	if len(http3PacketConns) > 0 {
-		server.http3Server = newHTTP3Server(httpRouter, newH3TLSConfig(tlsCfg))
-	}
-
-	if len(cfg.Ports.HTTP) != 0 {
-		srv := newHTTPServer("http", httpRouter, cfg)
->>>>>>> upstream/main
+		registerUIRoutes(uiRouter, cfg, openAPIImpl, server.configStore, server, server.broadcaster,
+			server.statsCollector, server.wsRevoker)
 
 		// Create admin listeners
 		adminHTTP, adminHTTPS, err := createAdminListeners(ctx, cfg, tlsCfg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create admin listeners: %w", err)
-		}
-
-		if len(cfg.Ports.HTTP) != 0 {
-			srv := newHTTPServer("http-doh", dohRouter)
-			for _, l := range httpListeners {
-				server.servers[l] = srv
-			}
-		}
-
-		if len(cfg.Ports.HTTPS) != 0 {
-			srv := newHTTPServer("https-doh", dohRouter)
-			for _, l := range httpsListeners {
-				server.servers[l] = srv
-			}
 		}
 
 		if len(cfg.Ports.AdminPort) != 0 {
@@ -317,25 +299,37 @@ func NewServer(ctx context.Context, cfg *config.Config, store *configstore.Confi
 			}
 		}
 	} else {
-		httpRouter := createHTTPRouter(cfg, openAPIImpl, server.configStore, server, server.broadcaster, server.statsCollector, server.wsRevoker)
+		httpRouter := createHTTPRouter(cfg, openAPIImpl, server.configStore, server, server.broadcaster,
+			server.statsCollector, server.wsRevoker)
 		server.registerDoHEndpoints(httpRouter, cfg)
+		mainRouter = httpRouter
+	}
 
-		if len(cfg.Ports.HTTP) != 0 {
-			srv := newHTTPServer("http", httpRouter)
-			for _, l := range httpListeners {
-				server.servers[l] = srv
-			}
-		}
+	// HTTP/3 listens on the UDP counterparts of ports.https, so it serves
+	// whatever that port serves — DoH only when the admin UI is split off.
+	if len(http3PacketConns) > 0 {
+		server.http3Server = newHTTP3Server(mainRouter, newH3TLSConfig(tlsCfg))
+	}
 
-		if len(cfg.Ports.HTTPS) != 0 {
-			srv := newHTTPServer("https", httpRouter)
-			for _, l := range httpsListeners {
-				server.servers[l] = srv
-			}
+	if len(cfg.Ports.HTTP) != 0 {
+		srv := newHTTPServer(httpName, mainRouter)
+		for _, l := range httpListeners {
+			server.servers[l] = srv
 		}
 	}
 
-<<<<<<< HEAD
+	if len(cfg.Ports.HTTPS) != 0 {
+		var httpsHandler http.Handler = mainRouter
+		if server.http3Server != nil {
+			httpsHandler = newAltSvcMiddleware(server.http3Server)(mainRouter)
+		}
+
+		srv := newHTTPServer(httpsName, httpsHandler)
+		for _, l := range httpsListeners {
+			server.servers[l] = srv
+		}
+	}
+
 	// Start hourly session cleanup. Prune once at startup so a short-lived
 	// process doesn't leave expired rows for an hour, then tick every hour
 	// until the server context is cancelled. Per-tick errors are warn-logged
@@ -345,15 +339,6 @@ func NewServer(ctx context.Context, cfg *config.Config, store *configstore.Confi
 			if err := store.PruneExpiredSessions(); err != nil {
 				logger().WithError(err).Warn("prune expired sessions at startup failed")
 			}
-=======
-	if len(cfg.Ports.HTTPS) != 0 {
-		var httpsHandler http.Handler = httpRouter
-		if server.http3Server != nil {
-			httpsHandler = newAltSvcMiddleware(server.http3Server)(httpRouter)
-		}
-
-		srv := newHTTPServer("https", httpsHandler, cfg)
->>>>>>> upstream/main
 
 			ticker := time.NewTicker(time.Hour)
 			defer ticker.Stop()
@@ -462,15 +447,18 @@ func closeAll[T io.Closer](closers []T) {
 	}
 }
 
+// createAdminListeners opens the admin UI ports. PROXY protocol is never
+// enabled on them: ports.proxyProtocol only names dns, tls, http and https,
+// and the admin UI is not one of them, so there is no way to ask for it here.
 func createAdminListeners(
 	ctx context.Context, cfg *config.Config, tlsCfg *tls.Config,
 ) (httpListeners, httpsListeners []net.Listener, err error) {
-	httpListeners, err = newTCPListeners(ctx, "http-admin", cfg.Ports.AdminPort)
+	httpListeners, err = newTCPListeners(ctx, "http-admin", cfg.Ports.AdminPort, false)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create admin HTTP listeners: %w", err)
 	}
 
-	httpsListeners, err = newTLSListeners(ctx, "https-admin", cfg.Ports.AdminPortTLS, tlsCfg)
+	httpsListeners, err = newTLSListeners(ctx, "https-admin", cfg.Ports.AdminPortTLS, tlsCfg, false)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create admin HTTPS listeners: %w", err)
 	}
@@ -655,22 +643,13 @@ func createQueryResolver(
 	ctx context.Context,
 	cfg *config.Config,
 	bootstrap *resolver.Bootstrap,
-<<<<<<< HEAD
-	redisClient *redis.Client,
+	cacheDecorator resolver.CacheDecorator,
 	broadcaster *logstream.Broadcaster,
 	statsCollector *statscollector.Collector,
 ) (resolver.ChainedResolver, error) {
 	upstreamTree, utErr := resolver.NewUpstreamTreeResolver(ctx, cfg.Upstreams, bootstrap)
-	blocking, blErr := resolver.NewBlockingResolver(ctx, cfg.Blocking, redisClient, bootstrap)
-	clientNames, cnErr := resolver.NewClientNamesResolver(ctx, cfg.ClientLookup, cfg.Upstreams, bootstrap)
-	queryLogging, qlErr := resolver.NewQueryLoggingResolver(ctx, cfg.QueryLog, broadcaster)
-=======
-	cacheDecorator resolver.CacheDecorator,
-) (resolver.ChainedResolver, error) {
-	upstreamTree, utErr := resolver.NewUpstreamTreeResolver(ctx, cfg.Upstreams, bootstrap)
 	blocking, blErr := resolver.NewBlockingResolver(ctx, cfg.Blocking, bootstrap)
-	queryLogging, qlErr := resolver.NewQueryLoggingResolver(ctx, cfg.QueryLog)
->>>>>>> upstream/main
+	queryLogging, qlErr := resolver.NewQueryLoggingResolver(ctx, cfg.QueryLog, broadcaster)
 	condUpstream, cuErr := resolver.NewConditionalUpstreamResolver(ctx, cfg.Conditional, cfg.Upstreams, bootstrap)
 	customDNS := resolver.NewCustomDNSResolver(cfg.CustomDNS)
 	hostsFile, hfErr := resolver.NewHostsFileResolver(ctx, cfg.HostsFile, bootstrap)
@@ -706,7 +685,6 @@ func createQueryResolver(
 	metricsResolver.StatsCollector = statsCollector
 
 	r := resolver.Chain(
-		resolver.NewStatsResolver(ctx, cfg.Statistics),
 		// stays above the ECS and client-name lookups: its bucket key must remain the
 		// connection's source IP. Keyed on the ECS address instead (ecs.useAsClient), the
 		// key would be attacker-controlled, letting a client both evade its own bucket and
@@ -727,13 +705,8 @@ func createQueryResolver(
 		resolver.NewFQDNOnlyResolver(cfg.FQDNOnly),
 		resolver.NewEDEResolver(cfg.EDE),
 		queryLogging,
-<<<<<<< HEAD
 		metricsResolver,
-		resolver.NewCustomDNSResolver(cfg.CustomDNS),
-=======
-		resolver.NewMetricsResolver(cfg.Prometheus),
 		customDNS,
->>>>>>> upstream/main
 		hostsFile,
 		// above blocking and the cache: it inspects only RESOLVED/CACHED answers
 		// (conditional/custom DNS/hosts file/SUDN/blocked answers are recognized
@@ -869,7 +842,6 @@ func (s *Server) Start(ctx context.Context, errCh chan<- error) {
 func (s *Server) Stop(ctx context.Context) error {
 	logger().Info("Stopping server")
 
-<<<<<<< HEAD
 	if s.statsCollector != nil {
 		s.statsCollector.Close()
 	}
@@ -878,11 +850,6 @@ func (s *Server) Stop(ctx context.Context) error {
 		s.broadcaster.Shutdown()
 	}
 
-	// Every listener gets a shutdown attempt even if an earlier one fails:
-	// returning on the first error used to leave the remaining DNS servers
-	// running and the HTTP ports bound.
-	var errs []error
-=======
 	// Shut down HTTP/3 in order: server first (drains in-flight
 	// requests and unblocks the Serve goroutines), then UDP packet
 	// conns. Closing the packet conns first would cause Serve to
@@ -905,7 +872,11 @@ func (s *Server) Stop(ctx context.Context) error {
 			logger().Warn("failed to close resource: ", err)
 		}
 	}
->>>>>>> upstream/main
+
+	// Every listener gets a shutdown attempt even if an earlier one fails:
+	// returning on the first error used to leave the remaining DNS servers
+	// running and the HTTP ports bound.
+	var errs []error
 
 	for _, server := range s.dnsServers {
 		if err := server.ShutdownContext(ctx); err != nil {
@@ -982,7 +953,7 @@ func (s *Server) Reconfigure(ctx context.Context) error {
 	// like writeLog that need to run for the lifetime of the chain).
 	chainCtx, chainCancel := context.WithCancel(context.Background())
 
-	newChain, err := createQueryResolver(chainCtx, &newCfg, s.bootstrap, s.redisClient, s.broadcaster, s.statsCollector)
+	newChain, err := createQueryResolver(chainCtx, &newCfg, s.bootstrap, s.cacheDecorator, s.broadcaster, s.statsCollector)
 	if err != nil {
 		chainCancel()
 
