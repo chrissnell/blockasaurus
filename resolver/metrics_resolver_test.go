@@ -6,6 +6,7 @@ import (
 
 	"github.com/0xERR0R/blocky/config"
 	"github.com/0xERR0R/blocky/log"
+	"github.com/0xERR0R/blocky/pkg/statscollector"
 
 	. "github.com/0xERR0R/blocky/helpertest"
 	. "github.com/0xERR0R/blocky/model"
@@ -74,7 +75,86 @@ var _ = Describe("MetricResolver", func() {
 					Expect(err).Should(Succeed())
 
 					Expect(testutil.ToFloat64(cnt)).Should(BeNumerically("==", 1))
+
+					clientCnt, err := sut.totalClientResponse.GetMetricWith(prometheus.Labels{
+						"client":        "client",
+						"response_type": "RESOLVED",
+					})
+					Expect(err).Should(Succeed())
+					Expect(testutil.ToFloat64(clientCnt)).Should(BeNumerically("==", 1))
+
 					m.AssertExpectations(GinkgoT())
+				})
+			})
+			When("Response has a low-cardinality ReasonLabel", func() {
+				BeforeEach(func() {
+					m = &mockResolver{}
+					m.On("Resolve", mock.Anything).Return(&Response{
+						Res:         new(dns.Msg),
+						RType:       ResponseTypeBLOCKED,
+						Reason:      "BLOCKED (ads: /snapchat/)",
+						ReasonLabel: "BLOCKED (ads)",
+					}, nil)
+					sut.Next(m)
+				})
+				It("uses ReasonLabel for the reason metric label, not the detailed Reason", func() {
+					_, err := sut.Resolve(ctx, newRequestWithClient("example.com.", A, "", "client"))
+					Expect(err).Should(Succeed())
+
+					cnt, err := sut.totalResponse.GetMetricWith(prometheus.Labels{
+						"reason":        "BLOCKED (ads)",
+						"response_code": "NOERROR",
+						"response_type": "BLOCKED",
+					})
+					Expect(err).Should(Succeed())
+					Expect(testutil.ToFloat64(cnt)).Should(BeNumerically("==", 1))
+				})
+				It("records the blocked response per client, without the unbounded reason", func() {
+					_, err := sut.Resolve(ctx, newRequestWithClient("example.com.", A, "", "client"))
+					Expect(err).Should(Succeed())
+
+					clientCnt, err := sut.totalClientResponse.GetMetricWith(prometheus.Labels{
+						labelClient:       "client",
+						labelResponseType: ResponseTypeBLOCKED.String(),
+					})
+					Expect(err).Should(Succeed())
+					Expect(testutil.ToFloat64(clientCnt)).Should(BeNumerically("==", 1))
+				})
+			})
+			When("Response has no ReasonLabel", func() {
+				BeforeEach(func() {
+					m = &mockResolver{}
+					m.On("Resolve", mock.Anything).Return(&Response{
+						Res:    new(dns.Msg),
+						RType:  ResponseTypeRESOLVED,
+						Reason: "CACHED",
+					}, nil)
+					sut.Next(m)
+				})
+				It("falls back to Reason for the reason metric label", func() {
+					_, err := sut.Resolve(ctx, newRequestWithClient("example.com.", A, "", "client"))
+					Expect(err).Should(Succeed())
+
+					cnt, err := sut.totalResponse.GetMetricWith(prometheus.Labels{
+						"reason":        "CACHED",
+						"response_code": "NOERROR",
+						"response_type": "RESOLVED",
+					})
+					Expect(err).Should(Succeed())
+					Expect(testutil.ToFloat64(cnt)).Should(BeNumerically("==", 1))
+				})
+			})
+			When("A client resolves to several names", func() {
+				It("joins them into a single client label, as blocky_query_total does", func() {
+					_, err := sut.Resolve(ctx, newRequestWithClient("example.com.", A, "", "name1", "name2"))
+					Expect(err).Should(Succeed())
+
+					clientCnt, err := sut.totalClientResponse.GetMetricWith(prometheus.Labels{
+						labelClient:       "name1,name2",
+						labelResponseType: ResponseTypeRESOLVED.String(),
+					})
+					Expect(err).Should(Succeed())
+					Expect(testutil.ToFloat64(clientCnt)).Should(BeNumerically("==", 1))
 				})
 			})
 			When("Error occurs while request processing", func() {
@@ -89,7 +169,74 @@ var _ = Describe("MetricResolver", func() {
 					Expect(err).Should(HaveOccurred())
 
 					Expect(testutil.ToFloat64(sut.totalErrors)).Should(BeNumerically("==", 1))
+
+					clientCnt, err := sut.totalClientResponse.GetMetricWith(prometheus.Labels{
+						"client":        "client",
+						"response_type": "err",
+					})
+					Expect(err).Should(Succeed())
+					Expect(testutil.ToFloat64(clientCnt)).Should(BeNumerically("==", 1))
 				})
+			})
+			When("Metrics are disabled", func() {
+				BeforeEach(func() {
+					sut = NewMetricsResolver(config.Metrics{Enable: false})
+					sut.Next(m)
+				})
+				It("records nothing", func() {
+					_, err := sut.Resolve(ctx, newRequestWithClient("example.com.", A, "", "client"))
+					Expect(err).Should(Succeed())
+
+					Expect(testutil.CollectAndCount(sut.totalClientResponse)).Should(BeZero())
+					Expect(testutil.CollectAndCount(sut.totalQueries)).Should(BeZero())
+					Expect(testutil.CollectAndCount(sut.totalResponse)).Should(BeZero())
+				})
+			})
+		})
+	})
+
+	// The dashboard's stats collector is independent of the Prometheus exporter, so
+	// it must keep receiving queries when metrics.enable is false. Upstream's
+	// allocation-free rewrite turned that guard into an early return, which left the
+	// collector unreachable and silently emptied every dashboard series.
+	Describe("Feeding the dashboard stats collector", func() {
+		var collector *statscollector.Collector
+
+		JustBeforeEach(func() {
+			collector = statscollector.New()
+			sut.StatsCollector = collector
+		})
+
+		expectRecorded := func() {
+			_, err := sut.Resolve(ctx, newRequestWithClient("example.com.", A, "1.2.3.4", "client"))
+			Expect(err).Should(Succeed())
+
+			total, _ := collector.TotalQueries()
+			Expect(total).Should(BeNumerically("==", 1))
+
+			permitted, _ := collector.TopDomains(statscollector.DefaultTopN)
+			Expect(permitted).Should(ConsistOf(statscollector.DomainCount{Domain: "example.com", Count: 1}))
+
+			clients, _ := collector.TopClients(statscollector.DefaultTopN)
+			Expect(clients).Should(ConsistOf(statscollector.ClientCount{Client: "1.2.3.4", Count: 1}))
+		}
+
+		When("prometheus metrics are enabled", func() {
+			It("records the query", func() {
+				expectRecorded()
+			})
+		})
+
+		When("prometheus metrics are disabled", func() {
+			BeforeEach(func() {
+				sut = NewMetricsResolver(config.Metrics{Enable: false})
+				sut.Next(m)
+			})
+
+			It("still records the query", func() {
+				expectRecorded()
+
+				Expect(testutil.CollectAndCount(sut.totalQueries)).Should(BeZero())
 			})
 		})
 	})

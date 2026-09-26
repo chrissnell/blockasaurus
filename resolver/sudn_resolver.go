@@ -11,11 +11,13 @@ import (
 	"github.com/miekg/dns"
 )
 
+const exampleDomain = "example.com."
+
 type sudnHandler = func(request *model.Request, cfg *config.SUDN) *model.Response
 
 //nolint:gochecknoglobals
 var (
-	loopbackV4 = net.ParseIP("127.0.0.1")
+	loopbackV4 = net.ParseIP(loopbackIPv4Str)
 	loopbackV6 = net.IPv6loopback
 
 	// See Wikipedia for an up-to-date reference:
@@ -51,7 +53,7 @@ var (
 		"invalid.": sudnNXDomain,
 		// Section 6.5
 		"example.":     nil,
-		"example.com.": nil,
+		exampleDomain:  nil,
 		"example.net.": nil,
 		"example.org.": nil,
 
@@ -85,6 +87,15 @@ var (
 		//
 		// Section 4
 		"home.arpa.": sudnHomeArpa,
+
+		// RFC 9462 (Discovery of Designated Resolvers)
+		// https://www.rfc-editor.org/rfc/rfc9462
+		//
+		// Sections 4, 6.1 and 6.4: blocky advertises no Designated Resolvers,
+		// so reply NODATA across the whole zone and never forward upstream
+		// (forwarded answers would fail the client's cert SAN check anyway
+		// and let stub resolvers bypass blocky).
+		"resolver.arpa.": sudnNoData,
 	}
 )
 
@@ -118,22 +129,10 @@ func (r *SpecialUseDomainNamesResolver) Resolve(ctx context.Context, request *mo
 }
 
 func (r *SpecialUseDomainNamesResolver) handler(request *model.Request) sudnHandler {
-	q := request.Req.Question[0]
-	domain := q.Name
+	// DNS names are case-insensitive (RFC 4343); the sudnHandlers keys are lowercase
+	_, handler, _ := searchDomainOrParent(sudnHandlers, strings.ToLower(request.Req.Question[0].Name))
 
-	for {
-		handler, ok := sudnHandlers[domain]
-		if ok {
-			return handler
-		}
-
-		_, after, ok := strings.Cut(domain, ".")
-		if !ok {
-			return nil
-		}
-
-		domain = after
-	}
+	return handler
 }
 
 func newSUDNResponse(response *model.Request, rcode int) *model.Response {
@@ -142,6 +141,10 @@ func newSUDNResponse(response *model.Request, rcode int) *model.Response {
 
 func sudnNXDomain(request *model.Request, _ *config.SUDN) *model.Response {
 	return newSUDNResponse(request, dns.RcodeNameError)
+}
+
+func sudnNoData(request *model.Request, _ *config.SUDN) *model.Response {
+	return newSUDNResponse(request, dns.RcodeSuccess)
 }
 
 func sudnLocalhost(request *model.Request, cfg *config.SUDN) *model.Response {

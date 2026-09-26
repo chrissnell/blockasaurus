@@ -1,12 +1,79 @@
 # Configuration
 
 This chapter describes all configuration options in `config.yaml`. You can download a reference file with all
-configuration properties as [JSON](config.yml).
+configuration properties as [YAML](config.yml). A matching [JSON schema](config.schema.json) is also available for
+editor autocomplete and validation (see [Editor support and validation](#editor-support-and-validation)).
 
 ??? example "reference configuration file"
 
     ```yaml
-    --8<-- "docs/config.yml"
+    --8<-- "config.yml"
+    ```
+
+## Editor support and validation
+
+Blocky ships a [JSON schema](https://raw.githubusercontent.com/0xERR0R/blocky/main/docs/config.schema.json)
+generated from its configuration types. Editors with the
+[YAML Language Server](https://github.com/redhat-developer/yaml-language-server)
+(for example VS Code with the *YAML* extension) use it for autocomplete,
+inline documentation and validation. Add this modeline to the top of your
+`config.yml`:
+
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/0xERR0R/blocky/main/docs/config.schema.json
+```
+
+The same schema is used by `blocky validate`, which reports unknown keys and
+invalid values with their field path. Schema validation is a structural
+first pass; blocky still performs its full semantic checks when loading the
+configuration.
+
+## Multiple configuration files
+
+Instead of a single file, `--config` can point to a **folder**. Blocky then loads every `*.yml` and `*.yaml`
+file in that folder (subfolders included) and merges them into one configuration:
+
+- Files are applied in **lexical (alphabetical) path order** — use number prefixes like `00_base.yml`,
+  `10_local.yml` to make the order explicit. Blocky logs the merge order at startup.
+- **Mappings merge recursively**: keys from later files are added; keys present on both sides merge field by
+  field.
+- **Everything else is replaced**: when several files set the same scalar or list, the last file wins,
+  wholesale. Lists are never concatenated.
+- Duplicate keys *within one file* are still an error, and each file must be valid YAML on its own
+  (YAML anchors and aliases work within a file, but not across files). A file may contain multiple
+  `---`-separated documents; they merge in document order, like separate files.
+
+!!! example
+
+    `config/00_base.yml` — checked into your repo:
+
+    ```yaml
+    upstreams:
+      groups:
+        default:
+          - 9.9.9.9
+      strategy: parallel_best
+    ```
+
+    `config/10_local.yml` — host-specific overlay:
+
+    ```yaml
+    upstreams:
+      groups:
+        192.168.0.0/16:
+          - 1.1.1.1
+    ```
+
+    Effective configuration:
+
+    ```yaml
+    upstreams:
+      groups:
+        default:
+          - 9.9.9.9
+        192.168.0.0/16:
+          - 1.1.1.1
+      strategy: parallel_best
     ```
 
 ## Basic configuration
@@ -36,6 +103,8 @@ All values in this section are optional.
 | ports.http    | One or more [IP]:Port |               | Listen address for HTTP used for prometheus metrics, pprof, REST API, DoH... Example: `4000`, `:4000`, `192.168.0.1:4000`, `[4000, "[::1]:4000"]` |
 | ports.https   | One or more [IP]:Port |               | Listen address for HTTPS used for prometheus metrics, pprof, REST API, DoH... Example: `443`, `:443`, `192.168.0.1:443`, `[443, "[::1]:443"]`     |
 | ports.dohPath | string                | /dns-query    | URL path for DoH queries.                                                                                                                         |
+| ports.freeBind | bool                 | false         | Allow binding the DNS/DoT listeners to addresses not yet assigned to an interface (Linux only, via `IP_FREEBIND`; e.g. Tailscale/WireGuard/VRRP). No effect on wildcard binds; ignored with a warning on non-Linux. |
+| ports.proxyProtocol | list | _empty_ | TCP listener families (any of `dns`, `http`, `https`, `tls`) that must require a HAProxy PROXY protocol header. Enable only when the listener is reachable only through a trusted proxy. |
 
 !!! example
 
@@ -47,6 +116,10 @@ All values in this section are optional.
         - 80
         - 4000
       https: 443
+      dohPath: /my-custom-dns-query
+      proxyProtocol:
+        - https
+        - tls
     ```
 
 ## Logging configuration
@@ -88,8 +161,10 @@ This applies to all of them. The default strategy is blocking.
 | upstreams.groups        | map of name to upstream              | yes       |               | Upstream DNS servers to use, in groups.        |
 | upstreams.init.strategy | enum (blocking, failOnError, fast)   | no        | blocking      | See [Init Strategy](#init-strategy) and below. |
 | upstreams.strategy      | enum (parallel_best, random, strict) | no        | parallel_best | Upstream server usage strategy.                |
-| upstreams.timeout       | duration                             | no        | 2s            | Upstream connection timeout.                   |
-| upstreams.userAgent     | string                               | no        |               | HTTP User Agent when connecting to upstreams.  |
+| upstreams.timeout              | duration                             | no        | 2s            | Upstream connection timeout.                          |
+| upstreams.userAgent            | string                               | no        |               | HTTP User Agent when connecting to upstreams.         |
+| upstreams.quic.maxIdleTimeout  | duration                             | no        | 30s           | QUIC maximum idle timeout before closing connection.  |
+| upstreams.quic.keepAlivePeriod | duration                             | no        | 15s           | QUIC keep-alive interval to maintain connection.      |
 
 For `init.strategy`, the "init" is testing the given resolvers for each group. The potentially fatal error, depending on the strategy, is if a group has no functional resolvers.
 
@@ -101,6 +176,7 @@ following network protocols (net part of the resolver URL):
 - tcp+udp (UDP and TCP, dependent on query type)
 - https (aka DoH)
 - tcp-tls (aka DoT)
+- quic (aka DoQ, DNS-over-QUIC per RFC 9250)
 
 !!! hint
 
@@ -108,16 +184,20 @@ following network protocols (net part of the resolver URL):
     Per default Blockasaurus uses the `parallel_best` upstream strategy where Blockasaurus picks 2 random resolvers from the list for each query and
     returns the answer from the fastest one.
 
-Each resolver must be defined as a string in following format: `[net:]host:[port][/path][#commonName]`.
+Each resolver must be defined as a string in following format: `[net:]host[:port][/path][#commonName]`.
 
 | Parameter  | Type                             | Mandatory | Default value                                     |
 | ---------- | -------------------------------- | --------- | ------------------------------------------------- |
-| net        | enum (tcp+udp, tcp-tls or https) | no        | tcp+udp                                           |
-| host       | IP or hostname                   | yes       |                                                   |
-| port       | int (1 - 65535)                  | no        | 53 for udp/tcp, 853 for tcp-tls and 443 for https |
+| net        | enum (tcp+udp, tcp-tls, https or quic) | no        | tcp+udp                                                          |
+| host       | IP or hostname                         | yes       |                                                                  |
+| port       | int (1 - 65535)                        | no        | 53 for udp/tcp, 853 for tcp-tls and quic, 443 for https         |
+| path       | string                                 | no        | only relevant for https (DoH); ignored for other protocols       |
 | commonName | string                           | no        | the host value                                    |
 
 The `commonName` parameter overrides the expected certificate common name value used for verification.
+
+The `path` parameter is only used by the `https` (DoH) protocol, where it is the URL path of the
+DNS endpoint (for example `/dns-query`). It is accepted but ignored for all other protocols.
 
 #### DNS Stamp Format
 
@@ -132,6 +212,7 @@ DNS Stamps are standardized URIs (following IETF draft-denis-dns-stamps) that in
 - Plain DNS (`sdns://AA...`)
 - DNS-over-HTTPS (`sdns://Ag...`)
 - DNS-over-TLS (`sdns://Aw...`)
+- DNS-over-QUIC (`sdns://BA...`)
 
 **Benefits:**
 
@@ -150,6 +231,8 @@ upstreams:
       - 8.8.8.8
       - https://dns.google/dns-query
       - tcp-tls:1.1.1.1:853
+      # DNS-over-QUIC (also accepts quic://dns.adguard.com for AdGuard compatibility)
+      - quic:dns.adguard.com
 
       # DNS Stamp format (equivalent servers)
       - sdns://AAcAAAAAAAAABzguOC44Ljg  # Google DNS
@@ -167,7 +250,7 @@ This is transparent to the user - if a DNS stamp includes certificate hashes, pi
 Use the [DNS Stamp Calculator](https://dnscrypt.info/stamps/) to create stamps for your DNS servers.
 
 !!! note
-    - DNSCrypt and DNS-over-QUIC protocols are not yet supported
+    - DNSCrypt protocol is not yet supported
     - Traditional and DNS stamp formats can be mixed in the same configuration
     - DNS stamps with certificate hashes provide additional security through automatic certificate pinning
 
@@ -258,12 +341,17 @@ Currently available strategies:
 These DNS servers are used to resolve upstream DoH and DoT servers that are specified as host names, and list domains.
 It is useful if no system DNS resolver is configured, and/or to encrypt the bootstrap queries.
 
-| Parameter | Type                 | Mandatory                   | Default value | Description                          |
-| --------- | -------------------- | --------------------------- | ------------- | ------------------------------------ |
-| upstream  | Upstream (see above) | no                          |               |                                      |
-| ips       | List of IPs          | yes, if upstream is DoT/DoH |               | Only valid if upstream is DoH or DoT |
+| Parameter  | Type                 | Mandatory                   | Default value | Description                                                                  |
+| ---------- | -------------------- | --------------------------- | ------------- | ---------------------------------------------------------------------------- |
+| upstream   | Upstream (see above) | no                          |               |                                                                              |
+| ips        | List of IPs          | yes, if upstream is DoT/DoH |               | Only valid if upstream is DoH or DoT                                         |
+| resolvFile | string (file path)   | no                          |               | Read nameservers from a `resolv.conf`(5) file and use them as bootstrap DNS. Cannot be combined with `upstream`/`ips` in the same entry |
 
 When using an upstream specified by IP, and not by hostname, you can write only the upstream and skip `ips`.
+
+If `bootstrapDns` is not set, blocky uses the operating system's resolver (`/etc/resolv.conf` on Linux). On systems where the
+DHCP-provided resolvers live elsewhere (for example OpenWrt writes them to `/tmp/resolv.conf.auto`), use a `resolvFile` entry to
+point blocky at the right file. The file is parsed once at startup; its `nameserver` entries are used as plain-DNS bootstrap servers.
 
 !!! note
 
@@ -277,6 +365,8 @@ When using an upstream specified by IP, and not by hostname, you can write only 
             ips:
             - 123.123.123.123
           - upstream: https://234.234.234.234/dns-query
+          # read the DHCP-provided resolvers from a file (e.g. OpenWrt)
+          - resolvFile: /tmp/resolv.conf.auto
     ```
 
 ## Filtering
@@ -293,6 +383,152 @@ types, all queries with these types will be dropped (empty answer will be return
     ```
 
 This configuration will drop all 'AAAA' (IPv6) queries.
+
+When `AAAA` is filtered, Blocky additionally strips the `ipv6hint` SvcParam from `HTTPS` and `SVCB`
+(RFC 9460) answers. Without this, clients could still discover and connect to IPv6 endpoints
+advertised in those records, bypassing the `AAAA` filter. Other SvcParams (e.g. `alpn`, `ipv4hint`)
+are left untouched. Because stripping a hint changes the record, any DNSSEC signature on the
+affected `HTTPS`/`SVCB` record is removed and the `AD` (authenticated data) flag is cleared for
+that response.
+
+## DNS rebinding protection
+
+In a DNS rebinding attack, an attacker-controlled domain first resolves to a public IP, then
+re-resolves to a private address, letting a victim's browser reach devices on the local network
+under the attacker's origin. When this protection is enabled, blocky drops any answer from the
+general upstream resolvers that contains a non-public IP address — in `A`/`AAAA` records or in
+`ipv4hint`/`ipv6hint` SvcParams of `HTTPS`/`SVCB` records, in any section of the response
+(answer, authority or additional) — and returns an empty `NOERROR` response instead (visible as
+response type `REBIND` with reason `REBIND (rebinding protection)` in query logs and metrics;
+the offending IP is logged at debug level). They appear as response type `REBIND` in the
+dashboard's response-type breakdown — the statistics count only `BLOCKED` as a block — and are
+reported to clients as Extended DNS Error `15 (Blocked)`.
+**Disabled by default.**
+
+!!! note "Upgrading"
+
+    Rebinding hits previously used the `FILTERED` response type. Query log rows written before
+    the upgrade keep the old value, so a dashboard grouping by response type shows `FILTERED` and
+    `REBIND` side by side for the retention period. The same applies to Prometheus counters,
+    which are labelled per response type.
+
+The following ranges are considered non-public:
+
+| Range                                           | Description             |
+| ----------------------------------------------- | ----------------------- |
+| `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` | IPv4 private (RFC 1918) |
+| `fc00::/7`                                      | IPv6 unique local       |
+| `127.0.0.0/8`, `::1`                            | loopback                |
+| `169.254.0.0/16`, `fe80::/10`                   | link-local              |
+| `0.0.0.0`, `::`                                 | unspecified             |
+
+Answers from [conditional upstreams](#conditional-dns-resolution), custom DNS and the hosts file
+are never inspected, so internal zones served by trusted internal resolvers keep working without
+any extra configuration. One exception: a `customDNS` entry of type `CNAME` resolves its target
+through the regular chain (see [CNAME resolution](#cname-resolution)), so if the target resolves
+to a private IP via the general upstreams (e.g. a DDNS name pointing into the LAN), that lookup
+is inspected and the entry silently loses its address records — add the CNAME **target** name to
+the allowlist to keep it working. Note that all `upstreams.groups` — **including client-specific
+groups** — count as general upstream resolvers and are inspected; to serve an internal zone from
+an internal resolver, use a conditional mapping instead of a client-keyed group. Lookups blocky
+performs for its own operation (e.g. resolving `blocking.clientGroupsBlock` FQDN client
+identifiers) are exempt from the protection.
+
+For split-horizon domains that legitimately resolve to private IPs via the public upstreams, add
+them to the allowlist. Entries match the domain itself and all of its subdomains; matching is
+done on the name of the inspected query, so a `CNAME` inside an upstream answer pointing at an
+allowlisted name does not bypass the protection (for `customDNS` `CNAME` entries the inspected
+query is the lookup of the CNAME target, so allowlist the **target** name, not the entry's
+name). Rewrite rules do not affect matching: a `customDNS.rewrite` or `conditional.rewrite`
+target is used only for that resolver's own lookup and is never handed down the chain, so
+allowlist the name the client asks for. Entries must be plain domain names: wildcards
+(`*.example.com`), regexes and whitespace are rejected at startup, and internationalized domains
+must be given in punycode (`xn--…`) form.
+
+!!! example
+
+    ```yaml
+    rebindingProtection:
+      enable: true
+      allowedDomains:
+        - intranet.example.com
+    ```
+
+!!! note
+
+    The protection runs above the cache: the upstream answer is cached unchanged for its
+    regular TTL, and every cache hit is re-inspected, so repeat queries for a blocked domain
+    keep showing `REBIND`. This also covers cache entries synchronized from other instances
+    through [redis](#redis). Answers from trusted local sources (conditional upstreams,
+    special-use domains) are never written to the cache, so they cannot resurface as cached
+    upstream answers and become subject to inspection.
+
+    The protection does not cover NAT64/DNS64 setups: an IPv6 answer embedding a private IPv4
+    address under a NAT64 prefix (e.g. `64:ff9b::192.168.1.1`) is not detected, and answers
+    synthesized by blocky's own [DNS64](#dns64) resolver are not inspected at all (the internal
+    `A` lookup they are derived from enters the resolver chain below the protection). On
+    networks with a NAT64 gateway, DNS rebinding via synthesized IPv6 answers is therefore not
+    prevented.
+
+## Rate limiting per client IP
+
+Blocky can enforce a per-client query rate limit at the head of the resolver chain. **Disabled by default.** This is _not_ a DDoS defense — for that, run [fail2ban](https://www.fail2ban.org/) or [crowdsec](https://www.crowdsec.net/) at the firewall, which can drop traffic before it reaches Blocky. The limiter is intended for misbehaving clients, runaway scripts, and the kind of low-volume amplification that can enroll a public Blocky instance in someone else's DNS reflection attack ([issue #1135](https://github.com/0xERR0R/blocky/issues/1135)).
+
+When a client exceeds its bucket, the query is **dropped silently** (no UDP response, no DNS error) so that amplification ratio against a spoofed-source attacker is zero. A WARN log line is emitted (throttled to ≤ 1 line per bucket per second) so fail2ban can match against it.
+
+### Configuration
+
+```yaml
+rateLimit:
+  enable: true
+  rate: 50           # avg queries per second per client
+  burst: 100         # optional, default rate × 2; must be >= rate
+  ipv4Prefix: 32     # default: aggregate by /32 (one IP = one client)
+  ipv6Prefix: 64     # default: aggregate by /64 (one subscriber prefix)
+  allowlist:
+    - 127.0.0.1/32   # localhost (recommended if /api/query is used)
+    - ::1/128
+    - 10.0.0.0/8
+    - 192.168.0.0/16
+```
+
+The limiter is a **token bucket** per client. Tokens refill at `rate` per second, capped at `burst`. Each query consumes one token. When the bucket is empty, the query is dropped.
+
+- `rate` is the long-run sustained limit in queries/second.
+- `burst` is the bucket capacity — how many queries an idle client may spend at once before being throttled to `rate`. Optional; defaults to `rate × 2` if omitted or set to 0.
+- `ipv6Prefix` defaults to `/64` because residential IPv6 typically allocates a `/64` per subscriber; aggregating by `/64` keeps an attacker from cheaply rotating source addresses within their own subnet.
+
+**Example — `rate: 100, burst: 200`:**
+
+| Time | Bucket | Client sends | Result |
+|------|--------|--------------|--------|
+| 0.00 s | 200 (full) | 200 queries instantly | all 200 allowed, bucket drained |
+| 0.00 s | 0 | 1 more query | **dropped** |
+| 0.50 s | 50 (refilled at 100/s) | 50 queries | all 50 allowed |
+| 0.50 s | 0 | 1 more query | **dropped** |
+| 2.50 s | 200 (capped) | 200 queries instantly | all 200 allowed (burst recovered after 2 s idle) |
+
+Pick `burst == rate` for a strict steady-state limiter with no spike tolerance. Pick `burst` 2–10× `rate` to let typical browser page loads through (a single page can trigger 30–80 DNS lookups in well under a second) while still capping long-running abusers at `rate` qps.
+
+### Sample fail2ban filter
+
+`/etc/fail2ban/filter.d/blocky-ratelimit.conf`:
+
+```ini
+[Definition]
+failregex = ^.*rate-limiting: dropped query.*client_ip=<HOST>.*$
+ignoreregex =
+```
+
+This filter assumes `logFormat: text` (the default); with `logFormat: json` the field becomes `"client_ip":"<HOST>"` and the regex must be adjusted accordingly.
+
+### Metrics
+
+- `blocky_rate_limit_drops_total{protocol="TCP|UDP"}` — counter, incremented on every drop (label cardinality is bounded).
+- `blocky_rate_limit_cap_exhausted_total` — counter, incremented when a new client is dropped because the in-memory bucket store has reached its hard cap. A non-zero value means the store is under sustained pressure from many distinct clients.
+- `blocky_rate_limit_active_buckets` — gauge, current number of in-memory token buckets.
+
+Per-client IP is intentionally not a Prometheus label; it lives in the log line. Per-IP analysis is better served by log aggregation (Loki, ELK) than by Prometheus.
 
 ## FQDN only
 
@@ -393,6 +629,10 @@ When a CNAME record is defined and a query matches that record, Blockasaurus wil
 2. Additionally resolve the target of the CNAME and include those records in the answer
 3. Protect against CNAME loops (where CNAMEs point to each other in a loop)
 
+The target resolution in step 2 goes through the regular resolver chain. If
+[rebinding protection](#dns-rebinding-protection) is enabled and the target resolves to a
+private IP via the general upstreams, add the target name to its allowlist.
+
 ### Reverse DNS
 
 Blockasaurus automatically creates reverse DNS (PTR) records for all defined A and AAAA records. This allows reverse lookups from IP addresses to domain names.
@@ -412,6 +652,7 @@ hostname belongs to which IP address, all DNS queries for the local network shou
 The optional parameter `rewrite` behaves the same as with custom DNS.
 
 The optional parameter `fallbackUpstream`, if false (default), return empty result if after rewrite, the mapped resolver returned an empty answer. If true, the original query will be sent to the upstream resolver.
+It only has an effect together with `rewrite`; without any rewrite rules it is ignored.
 
 **Usage:** One usecase when having split DNS for internal and external (internet facing) users, but not all subdomains are listed in the internal domain
 
@@ -466,8 +707,23 @@ DoH URL: `https://blocky.example.com/dns-query/alice` -> request's client name i
 
 ### Resolving client name from IP address
 
-Blockasaurus uses rDNS to retrieve client's name. To use this feature, you can configure a DNS server for client lookup (
-typically your router). You can also define client names manually per IP address.
+Blockasaurus resolves a client's name from its IP address using the first of the following sources that yields a match:
+
+1. **Custom client name mapping** – names defined manually via `clientLookup.clients` (see below).
+2. **Local in-memory sources** – reverse (IP → name) entries already known to Blockasaurus from your
+   [custom DNS](#custom-dns) records and [hosts files](#hosts-file). This works automatically, requires no
+   `clientLookup.upstream`, and performs no network lookup. For example, a hosts file entry `192.168.1.11 unifi`
+   makes the client name of `192.168.1.11` resolve to `unifi`.
+3. **rDNS upstream** – a reverse DNS lookup against the DNS server configured in `clientLookup.upstream`
+   (typically your router).
+
+If none of these returns a name, the IP address is used as the client name.
+
+!!! note
+
+    Because client names are also used for [blocking groups](#blocking-and-allowlisting) and
+    [client-specific upstream groups](#upstreams-configuration), enabling local sources (custom DNS / hosts files) can change which
+    group a client matches if a group is keyed on a name now resolved from those sources.
 
 #### Single name order
 
@@ -502,6 +758,8 @@ Blocking uses the [DNS sinkhole](https://en.wikipedia.org/wiki/DNS_sinkhole) app
 the request, IP address from the response, and any CNAME records will be checked to determine whether to block the query or not.
 
 To avoid over-blocking, you can use allowlists.
+
+You can also activate list groups only during configured time windows by using schedules.
 
 ### Definition allow/denylists
 
@@ -548,8 +806,10 @@ The supported list formats are:
 
 !!! warning
 
-    If the same group has **both** allow/denylists, allowlists take precedence. Meaning if a domain is both blocked and allowed, it will be allowed.
-    If a group has **only allowlist** entries, only domains from this list are allowed, and all others be blocked.
+    Allowlists take precedence over denylists: if a domain is both blocked and allowed, it will be allowed.
+    This holds across **all** groups assigned to a client, so an allowlist in one group also excepts a domain that another of the client's groups denies. That is how you add client-specific exceptions to a shared denylist without duplicating it.
+
+    If **every** group assigned to a client has only allowlist entries, that client switches to exclusive allow mode: only the domains on those allowlists are resolved, everything else is blocked. Giving the client at least one group with denylist entries keeps the normal behavior, where allowlists are exceptions.
 
 !!! warning
     You must also define a client group mapping, otherwise the allow/denylist definitions will have no effect.
@@ -609,15 +869,74 @@ If client's IP address matches with the result, the defined group will be used.
 
     You can use `*` as wildcard for the sequence of any character or `[0-9]` as number range
 
+### Schedule-based blocking
+
+You can define named schedules and assign them to list groups. A list group is active only when at least one assigned schedule is active.
+
+Rules:
+
+1. If a list group has no schedule mapping, it is always active.
+2. If a list group has multiple schedules, they are combined with OR logic (any active schedule enables the list).
+3. Schedules use local server time. During daylight-saving transitions, only the specific skipped minutes are unobservable (a window overlapping the gap fires for its non-skipped portion); windows in the repeated hour fire twice.
+4. Scheduling an allowlist-only group (a group that has allowlist entries but no denylist entries) time-gates that group's allowlist enforcement: outside the schedule, that allowlist is not consulted. Other active groups for the client (denylists or other allowlist-only groups) are still evaluated normally.
+5. Whether a client is in exclusive allow mode (see [Definition allow/denylists](#definition-allowdenylists)) follows from its configured groups, not from which of them are currently active. A schedule that deactivates the client's denylist group therefore never turns the client's remaining allowlists into a whitelist.
+
+Each schedule supports:
+
+- `weekdays`: required, list of `mon`, `tue`, `wed`, `thu`, `fri`, `sat`, `sun`
+- `start` and `end`: optional `HH:MM` times
+
+Time behavior:
+
+1. Omit both `start` and `end` for full-day schedule on selected weekdays.
+2. Set both `start` and `end` for a bounded window (`start <= now < end`).
+3. If `start > end`, the schedule is overnight (for example `22:00` to `06:00`).
+4. Do not set only one of `start` or `end`.
+
+!!! example
+
+    ```yaml
+    blocking:
+      denylists:
+        ads:
+          - https://example.org/ads.txt
+        social:
+          - https://example.org/social.txt
+
+      schedules:
+        workhours:
+          weekdays: [mon, tue, wed, thu, fri]
+          start: "08:00"
+          end: "18:00"
+        nights:
+          weekdays: [sun, mon, tue, wed, thu]
+          start: "22:00"
+          end: "06:00"
+        weekend-all-day:
+          weekdays: [sat, sun]
+
+      listSchedules:
+        social: [workhours, nights]
+
+      clientGroupsBlock:
+        default:
+          - ads
+          - social
+    ```
+
+    In this example, `ads` is always active (no schedule mapping), while `social` is active during work hours or night window.
+
 ### Block type
 
-You can configure, which response should be sent to the client, if a requested query is blocked (only for A and AAAA
-queries, NXDOMAIN for other types):
+You can configure, which response should be sent to the client, if a requested query is blocked. The `zeroIP` and
+custom IP modes answer only A and AAAA queries and return NXDOMAIN for other types, while `nxDomain` and `refused`
+apply to every query type:
 
 | blockType  | Example                                                 | Description                                                                                                                                                                            |
 | ---------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | zeroIP     | zeroIP                                                  | This is the default block type. Server returns 0.0.0.0 (or :: for IPv6) as result for A and AAAA queries                                                                               |
 | nxDomain   | nxDomain                                                | return NXDOMAIN as return code                                                                                                                                                         |
+| refused    | refused                                                 | return REFUSED as return code for every query type, with no answer or authority records. **Caveat:** stub resolvers and forwarders commonly treat REFUSED as a server failure and fall back to another configured DNS server, which bypasses blocking. |
 | custom IPs | 192.100.100.15, 2001:0db8:85a3:08d3:1319:8a2e:0370:7344 | comma separated list of destination IP addresses. Should contain ipv4 and ipv6 to cover all query types. Useful with running web server on this address to display the "blocked" page. |
 
 !!! example
@@ -630,8 +949,9 @@ queries, NXDOMAIN for other types):
 ### Block TTL
 
 TTL for answers to blocked domains can be set to customize the time (in **duration format**) clients ask for those
-domains again. Default Block TTL is **6 hours**. This setting applies to all blocking modes and will affect how much
-time it could take for a client to be able to see the real IP address for a domain after receiving the blocked response.
+domains again. Default Block TTL is **6 hours**. It applies to every blocking mode that returns records (`zeroIP`,
+`nxDomain` and custom IPs) and will affect how much time it could take for a client to be able to see the real IP
+address for a domain after receiving the blocked response.
 
 **For `zeroIP` and custom IP modes:** The TTL is applied to the returned A/AAAA records in the answer section.
 
@@ -639,6 +959,9 @@ time it could take for a client to be able to see the real IP address for a doma
 Blockasaurus includes an SOA record in NXDOMAIN responses to enable proper negative caching by stub resolvers.
 The blockTTL value is used for both the SOA's TTL and its MINIMUM field, ensuring clients cache the
 NXDOMAIN response for the configured duration.
+
+**For `refused` mode:** The response carries no answer or authority records, so blockTTL has no effect. An OPT
+record may still be present in the additional section for EDNS0 queries.
 
 !!! example
 
@@ -697,16 +1020,31 @@ Synchronization is disabled if no address is configured.
 
 | Parameter                | Type            | Mandatory | Default value | Description                                                         |
 | ------------------------ | --------------- | --------- | ------------- | ------------------------------------------------------------------- |
-| redis.address            | string          | no        |               | Server address and port or master name if sentinel is used          |
+| redis.address            | string          | no        |               | Server address and port, a unix socket path (starting with `/`), or master name if sentinel is used |
 | redis.username           | string          | no        |               | Username if necessary                                               |
-| redis.password           | string          | no        |               | Password if necessary                                               |
+| redis.password           | string          | no        |               | Password if necessary (supports `file:` — see tip below)            |
 | redis.database           | int             | no        | 0             | Database                                                            |
 | redis.required           | bool            | no        | false         | Connection is required for Blockasaurus to start                          |
 | redis.connectionAttempts | int             | no        | 3             | Max connection attempts                                             |
 | redis.connectionCooldown | duration format | no        | 1s            | Time between the connection attempts                                |
 | redis.sentinelUsername   | string          | no        |               | Sentinel username if necessary                                      |
-| redis.sentinelPassword   | string          | no        |               | Sentinel password if necessary                                      |
+| redis.sentinelPassword   | string          | no        |               | Sentinel password if necessary (supports `file:` — see tip below)   |
 | redis.sentinelAddresses  | string[]        | no        |               | Sentinel host list (Sentinel is activated if addresses are defined) |
+
+!!! tip "Loading secrets from files"
+
+    Any sensitive value — `redis.password`, `redis.sentinelPassword`, and
+    `queryLog.target` — can be loaded from a file instead of being written
+    inline. Set the value to `file:` followed by an absolute path:
+
+    ```yaml
+    redis:
+      password: file:/run/secrets/redis_password
+    ```
+
+    The file's contents become the value (a single trailing newline is
+    stripped). This suits Docker/Kubernetes secrets and lets you restrict
+    access to each secret with file permissions.
 
 !!! example
 
@@ -745,6 +1083,37 @@ see [Basic Configuration](#basic-configuration)).
       path: /metrics
     ```
 
+## HTTP/3 (DoH3) {#http3}
+
+Serve DNS-over-HTTPS over HTTP/3 (RFC 9114). When enabled, Blocky
+listens on UDP at the same addresses as `ports.https` and answers the
+same endpoints as the HTTPS listener (DoH `/dns-query`, REST API,
+Prometheus metrics, web UI).
+
+| Parameter    | Type    | Mandatory | Default value | Description                                                   |
+| ------------ | ------- | --------- | ------------- | ------------------------------------------------------------- |
+| http3.enable | boolean | no        | false         | Enable the HTTP/3 listener. Requires `ports.https` to be set. |
+
+**Notes:**
+
+- The HTTP/3 listener uses TLS 1.3 (mandated by RFC 9001). The
+  `minTlsServeVersion` config does not affect it.
+- If `http3.enable` is true but `ports.https` is empty, Blocky logs a
+  warning at startup and does not open any UDP listeners.
+- If `ports.proxyProtocol` includes `https`, HTTP/3 is disabled because
+  QUIC/UDP cannot carry a PROXY protocol header.
+- When HTTP/3 is enabled, HTTPS responses include an `Alt-Svc: h3=...`
+  header so capable clients can switch transports automatically.
+
+**Example:**
+
+```yaml
+ports:
+  https: 443
+http3:
+  enable: true
+```
+
 ## Query logging
 
 You can enable the logging of DNS queries (question, answer, client, duration etc.) to a daily CSV file (can be opened
@@ -761,10 +1130,60 @@ You can select one of following query log types:
 - `mysql`: log each query in the external MySQL/MariaDB database
 - `postgresql`: log each query in the external PostgreSQL database
 - `timescale`: log each query in the external Timescale database
+- `sqlite`: log each query in a local SQLite database file (no external DB needed)
 - `csv`: log into CSV file (one per day)
 - `csv-client`: log into CSV file (one per day and per client)
 - `console`: log into console output
+- `dnstap`: export client DNS query/response events via [dnstap](https://dnstap.info/) (Frame Streams over Unix socket or TCP)
 - `none`: do not log any queries
+
+#### SQLite query log
+
+The `sqlite` target stores the query log in a single local file (set via `queryLog.target`, e.g. `/var/lib/blocky/querylog.db`) — no external database is required. Blocky creates the file and its parent directory automatically.
+
+!!! note
+    The `sqlite` target is not available on every platform. It relies on a pure-Go SQLite driver that ships no code for some GOOS/GOARCH combinations, so it is **not** compiled in on:
+
+    - all MIPS architectures (`mips`, `mipsle`, `mips64`, `mips64le`) and `loong64`
+    - NetBSD other than `netbsd/amd64`, and OpenBSD other than `openbsd/amd64` and `openbsd/arm64`
+    - Solaris and illumos
+
+    Among the official release builds this affects **`linux/mips`, `linux/mipsle`, `linux/mips64`, `linux/mips64le`, `netbsd/arm`, `netbsd/arm64` and `openbsd/arm`**. On those builds, selecting `sqlite` fails at startup with a clear error message — use the `csv`, `mysql`, `postgresql` or `timescale` query log target instead. All other targets (including `linux/amd64`, `linux/arm`, `linux/arm64`, `windows/amd64` and `darwin`) support `sqlite`.
+
+Set `queryLog.target` to a **plain filesystem path**. Do **not** prefix it with `file:` — for query-log targets that prefix means "read the target value from this file" (see the [Redis tip](#redis)), so `file:/var/lib/blocky/querylog.db` would be treated as a file to read the path *from*, not as the database itself.
+
+Blocky opens the database in **WAL (Write-Ahead Logging) mode** automatically; you do not need to configure this. As a result the database is written as three files next to each other: `querylog.db`, `querylog.db-wal` and `querylog.db-shm`. When running in Docker, mount the **directory** (not just the `.db` file) as a volume so all three files persist, and include all three in any backup.
+
+WAL requires a normal local filesystem. It is **not** supported on network filesystems (NFS, SMB/CIFS); placing the database on a network share can cause lock errors or corruption, so use local/block storage.
+
+Retention (`logRetentionDays`) works the same as for the other database targets: entries older than the limit are deleted. Note that SQLite does not hand freed space back to the operating system on its own, so the `.db` file does not shrink after a deletion — the space is reused for new entries. Run `VACUUM` manually if you need to reclaim disk space.
+
+##### Reading the SQLite query log from external tools
+
+You can read the database with the `sqlite3` CLI, DB Browser for SQLite, a Grafana SQLite data source, or your own script:
+
+- Reading **while Blocky is running** is safe — WAL lets a reader run concurrently with Blocky's writes without blocking. Open the database **read-only** (ideally with a `busy_timeout`) so your tool never interferes with Blocky.
+- Open the **live database file in place**, with the `-wal`/`-shm` sidecar files present. The newest entries may still be in the `-wal` file before they are checkpointed into the main `.db`, so a WAL-aware open is required to see them.
+- **Do not copy only `querylog.db`** for offline reading — you would miss un-checkpointed rows. Instead copy all three files together, run `PRAGMA wal_checkpoint(TRUNCATE);` first, or use `sqlite3 querylog.db ".backup backup.db"` (or `VACUUM INTO`).
+- Use a tool with WAL support (a modern `sqlite3` CLI does).
+
+#### dnstap query log
+
+The `dnstap` target streams structured DNS events to an external collector (e.g. `dnstap-read`, SIEM pipelines). Each resolved client query is sent as a dnstap `CLIENT_RESPONSE` frame containing wire-format query and response messages.
+
+Set `queryLog.target` to:
+
+- `unix:/var/run/dnstap.sock` — Unix domain socket
+- `tcp://127.0.0.1:6000` — TCP listener
+- `/var/run/dnstap.sock` — bare path, treated as Unix socket
+
+`queryLog.fields` and `queryLog.logRetentionDays` do not apply (streaming export, not stored rows/files). `queryLog.flushInterval` controls socket write batching.
+
+!!! note
+    dnstap exports full DNS messages. `log.privacy` obfuscation does not apply to dnstap payloads.
+
+!!! note
+    sustained non-zero values mean export loss.
 
 ### Query log fields
 
@@ -772,25 +1191,29 @@ You can choose which information from processed DNS request and response should 
 
 - `clientIP`: origin IP address from the request
 - `clientName`: resolved client name(s) from the origins request
-- `responseReason`: reason for the response (e.g. from which upstream resolver), response type and code
+- `responseReason`: reason for the response (e.g. from which upstream resolver), response type and code. For blocked
+  queries the reason also names the matched rule per group, e.g. `BLOCKED (ads: *.docler.com)`, so you can tell which
+  denylist entry caused the block
 - `responseAnswer`: returned DNS answer
 - `question`: DNS question from the request
 - `duration`: request processing time in milliseconds
 
 !!! hint
-    If not defined, Blockasaurus will log all available information
+    If not defined, Blockasaurus will log all available information. The `fields` setting does not apply to the `dnstap` target.
 
 Configuration parameters:
 
 | Parameter                 | Type                                                                                 | Mandatory | Default value | Description                                                                                   |
 | ------------------------- | ------------------------------------------------------------------------------------ | --------- | ------------- | --------------------------------------------------------------------------------------------- |
-| queryLog.type             | enum (mysql, postgresql, timescale, csv, csv-client, console, none (see above))      | no        |               | Type of logging target. Console if empty                                                      |
-| queryLog.target           | string                                                                               | no        |               | directory for writing the logs (for csv) or database url (for mysql, postgresql or timescale) |
-| queryLog.logRetentionDays | int                                                                                  | no        | 0             | if > 0, deletes log files/database entries which are older than ... days                      |
+| queryLog.type             | enum (mysql, postgresql, timescale, sqlite, csv, csv-client, console, dnstap, none (see above)) | no        |               | Type of logging target. Console if empty                                                      |
+| queryLog.target           | string                                                                               | no        |               | directory for writing the logs (for csv), database file path (for sqlite), database url (for mysql, postgresql or timescale), or dnstap socket address (`unix:…`, `tcp://…`, or bare `/path`); supports `file:` for database URLs — see [Redis tip](#redis) |
+| queryLog.logRetentionDays | int                                                                                  | no        | 0             | if > 0, deletes log files/database entries which are older than ... days; not used for dnstap   |
 | queryLog.creationAttempts | int                                                                                  | no        | 3             | Max attempts to create specific query log writer                                              |
 | queryLog.creationCooldown | duration format                                                                      | no        | 2s            | Time between the creation attempts                                                            |
-| queryLog.fields           | list enum (clientIP, clientName, responseReason, responseAnswer, question, duration) | no        | all           | which information should be logged                                                            |
-| queryLog.flushInterval    | duration format                                                                      | no        | 30s           | Interval to write data in bulk to the external database                                       |
+| queryLog.fields           | list enum (clientIP, clientName, responseReason, responseAnswer, question, duration) | no        | all           | which information should be logged; ignored for dnstap                                        |
+| queryLog.flushInterval    | duration format                                                                      | no        | 30s           | Interval to write buffered entries in bulk to the database (mysql/postgresql/timescale/sqlite) or dnstap socket batching |
+| queryLog.ignore.sudn      | bool                                                                                 | no        | false         | if true, queries answered as Special Use Domain Names (SUDN) are not logged                   |
+| queryLog.ignore.domains   | list of string                                                                       | no        |               | domains excluded from the query log; each entry is matched against the query name as an exact domain, a `*.wildcard`, or a `/regex/` |
 
 !!! hint
 
@@ -838,6 +1261,34 @@ Parsing is handled not by Blockasaurus, but third-party libraries, therefore the
       logRetentionDays: 7
     ```
 
+!!! example
+    **dnstap export**
+
+    ```yaml
+    queryLog:
+      type: dnstap
+      target: unix:/var/run/dnstap.sock
+      flushInterval: 30s
+      ignore:
+        sudn: true
+    ```
+
+!!! example
+    **Ignore noisy domains**
+
+    ```yaml
+    queryLog:
+      type: postgresql
+      target: postgres://user:password@db:5432/blocky_query_log
+      ignore:
+        sudn: true
+        domains:
+          - "*._dns-sd._udp.home"
+          - "db._dns-sd._udp.home"
+          - "/\\.in-addr\\.arpa$/"
+          - "apple.com"
+    ```
+
 ## Hosts file
 
 You can enable resolving of entries, located in local hosts file.
@@ -866,6 +1317,10 @@ Configuration parameters:
 ## Deliver EDE codes as EDNS0 option
 
 DNS responses can be extended with EDE codes according to [RFC8914](https://datatracker.ietf.org/doc/rfc8914/).
+
+For blocked queries the EDE extra text carries the same reason as the query log, including the matched group and rule
+(e.g. `BLOCKED CNAME (ads: *.docler.com)`), so a client that requests EDE information learns which denylist entry caused
+the block.
 
 Configuration parameters:
 
@@ -906,6 +1361,11 @@ Some RFCs have optional recommendations, which are configurable as described bel
 However, you can completely deactivate the blocking of SUDN by setting enable to false.
 Warning! You should only disable this if your upstream DNS server is local, as it shouldn't be disabled for remote upstreams.
 
+This also covers [RFC 9462 (Discovery of Designated Resolvers)](https://www.rfc-editor.org/rfc/rfc9462): queries
+for any name in `resolver.arpa.` (e.g. `_dns.resolver.arpa.`) are answered locally with NODATA and never
+forwarded upstream. Without this, stub resolvers (notably recent iOS/Android) can pick up a DDR answer from the
+upstream and silently upgrade to that upstream, bypassing blocky.
+
 Configuration parameters:
 
 | Parameter                           | Type | Mandatory | Default value | Description                                                                                   |
@@ -943,6 +1403,12 @@ When DNSSEC validation is enabled, Blockasaurus will:
 - Return SERVFAIL for responses with invalid DNSSEC signatures (Bogus)
 - Set the Authenticated Data (AD) flag only after successful validation
 - Add Extended DNS Error (EDE) codes per RFC 8914 when validation fails
+
+Independently of this setting, Blocky normalizes every response against the DNSSEC-related bits of the query it answers, because the client's DO bit is not necessarily the one used towards the upstream:
+
+- The DNSSEC records (RRSIG, DNSKEY, DS, NSEC, NSEC3) are stripped from the response of a client that did not set the DO bit, unless that client explicitly queried for one of those types or sent an ANY query (RFC 4035 §3.2.1, RFC 3225 §3). Validation is unaffected: the DO bit is still set towards the upstream
+- The DO bit of the query is copied into the response (RFC 3225 §3)
+- The AD flag is only reported to clients that asked for the validation result by setting the DO or AD bit (RFC 6840 §5.8)
 
 ### RFC Compliance
 
@@ -1015,8 +1481,19 @@ Blockasaurus classifies DNSSEC validation results into four categories:
 | --------------- | -------------------------------------------------------------------- | ---------------------------------------- |
 | **Secure**      | Valid DNSSEC signatures and complete chain of trust                  | AD flag set, response returned           |
 | **Insecure**    | Domain is not signed with DNSSEC (no RRSIG records)                  | AD flag cleared, response returned       |
-| **Bogus**       | Invalid DNSSEC signatures or broken chain of trust                   | SERVFAIL returned with EDE code          |
+| **Bogus**       | Invalid DNSSEC signatures or broken chain of trust                   | SERVFAIL returned with EDE code `6 (DNSSEC Bogus)`, response type `BOGUS` |
 | **Indeterminate** | Validation could not be completed (e.g., network errors, budget exceeded) | AD flag cleared, response returned |
+
+A `BOGUS` result means blocky could not obtain a trustworthy answer, so it is its own response
+type rather than a block. A domain whose operator has misconfigured DNSSEC is not something blocky
+blocked, and never appears among the dashboard's top blocked domains.
+
+!!! note "Upgrading"
+
+    Validation failures previously used the `BLOCKED` response type, which counted them as blocks
+    and reported them to clients as Extended DNS Error `15 (Blocked)` instead of `6 (DNSSEC
+    Bogus)`. Query log rows written before the upgrade keep the old value, so a dashboard grouping
+    by response type shows `BLOCKED` and `BOGUS` side by side for the retention period.
 
 ### Trust Anchors
 
@@ -1306,14 +1783,43 @@ DNS64 adds overhead to DNS resolution:
 !!! warning "Enable Caching for DNS64"
     DNS64 without caching will **double** upstream query load (one AAAA + one A per query). Blockasaurus will log a warning if DNS64 is enabled without caching.
 
+## Healthcheck
+
+Blocky responds to a dedicated `healthcheck.blocky` DNS query that is
+designed for container liveness probes. The handler is registered on
+the DNS listeners created by Blocky (UDP, TCP, DoT) and responds to any
+query type with `NOERROR` and an empty answer section. It does **not**
+go through the resolver chain, so it stays cheap and is unaffected by
+upstream health.
+
+!!! example
+
+    ```sh
+    dig @<blocky-host> -p <dns-port> healthcheck.blocky A +short
+    ```
+
+    Returns no answer records but `status: NOERROR` — probes should
+    test for `status: NOERROR`, not for any record content.
+
+!!! tip "Docker / Kubernetes liveness probe"
+
+    A liveness probe should treat a `NOERROR` response as healthy.
+    Example for Docker Compose:
+
+    ```yaml
+    healthcheck:
+      test: ["CMD", "dig", "@127.0.0.1", "-p", "53", "healthcheck.blocky", "+short", "+tries=1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    ```
+
 ## SSL certificate configuration (DoH / TLS listener)
 
 See [Wiki - Configuration of HTTPS](https://github.com/0xERR0R/blocky/wiki/Configuration-of-HTTPS-for-DoH-and-Rest-API)
 for detailed information, how to create and configure SSL certificates.
 
 DoH url: `https://host:port/dns-query`
-
---8<-- "docs/includes/abbreviations.md"
 
 ## Sources
 
@@ -1382,6 +1888,26 @@ Configures how HTTP(S) sources are downloaded:
 | readHeaderTimeout | duration | no        | 20s           | Download request header read timeout           |
 | attempts     | int      | no        | 3             | How many download attempts should be performed |
 | cooldown     | duration | no        | 500ms         | Time between the download attempts             |
+| cachePath    | path     | no        | (empty)       | Directory for an on-disk cache of downloaded sources (see below) |
+
+`cachePath` (default: empty): directory for an on-disk cache of downloaded sources. When set, blocky sends HTTP
+conditional requests (`If-None-Match` / `If-Modified-Since`) and skips re-downloading unchanged lists, serves a source
+from disk when its host is temporarily unreachable, and — with `loading.strategy: fast` — seeds lists from disk on
+startup so it can answer queries immediately. Validators are kept in memory and reset on restart, so the first refresh
+after a restart re-downloads each source. When unset, downloads are fully stateless (nothing is written to disk).
+Mount this directory on a persistent volume in containerized setups.
+Note: when you remove or change a source URL, its previous cache file is left on disk — blocky does not delete orphaned cache files automatically. They are harmless and bounded; clear the cache directory manually if you want to reclaim the space.
+
+!!! warning "The directory must be writable by blocky"
+
+    If blocky cannot write to `cachePath`, it logs
+    `cannot create temp cache file in <path>, serving without caching` and keeps
+    resolving normally — only the on-disk cache is disabled, so this degrades
+    performance rather than breaking DNS.
+
+    In Docker, blocky runs as **UID 100**. Use the pre-created `/app/cache` directory
+    with a named volume, or make your own path writable by UID 100. See
+    [writable mounts and file permissions](installation.md#run-blocky).
 
 !!! example
 
@@ -1391,6 +1917,16 @@ Configures how HTTP(S) sources are downloaded:
         timeout: 4m
         attempts: 5
         cooldown: 10s
+        cachePath: /var/cache/blocky/lists
+    ```
+
+    In a container, prefer the pre-created cache directory and mount a named volume
+    over it (`-v blocky_cache:/app/cache`):
+
+    ```yaml
+    loading:
+      downloads:
+        cachePath: /app/cache
     ```
 
 ### Strategy

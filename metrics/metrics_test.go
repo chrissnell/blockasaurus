@@ -27,6 +27,8 @@ func init() {
 }
 
 func AssertRegistryComplete(t *testing.T, reg *prometheus.Registry) {
+	t.Helper()
+
 	mfs, err := reg.Gather()
 	if err != nil {
 		t.Fatalf("failed to gather metrics: %v", err)
@@ -55,17 +57,20 @@ func AssertRegistryComplete(t *testing.T, reg *prometheus.Registry) {
 		"blockasaurus_query_total",
 		"blockasaurus_request_duration_seconds",
 		"blockasaurus_response_total",
+		"blockasaurus_client_response_total",
 		// these should be default
 		"blockasaurus_error_total",
 		"blockasaurus_blocking_enabled",
 		"blockasaurus_cache_entries",
 		"blockasaurus_cache_hits_total",
 		"blockasaurus_cache_misses_total",
+		"blockasaurus_redis_cache_buffer_drops_total",
 		"blockasaurus_last_list_group_refresh_timestamp_seconds",
 		"blockasaurus_prefetches_total",
 		"blockasaurus_prefetch_hits_total",
 		"blockasaurus_prefetch_domain_name_cache_entries",
 		"blockasaurus_failed_downloads_total",
+		"blockasaurus_dnstap_frames_dropped_total",
 	}
 
 	if len(found) != len(expected) {

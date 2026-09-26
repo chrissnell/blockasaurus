@@ -12,13 +12,13 @@ import (
 
 const (
 	// IPVersionDual is a IPVersion of type Dual.
-	// IPv4 and IPv6
+	// Use both IPv4 and IPv6.
 	IPVersionDual IPVersion = iota
 	// IPVersionV4 is a IPVersion of type V4.
-	// IPv4 only
+	// Use IPv4 only.
 	IPVersionV4
 	// IPVersionV6 is a IPVersion of type V6.
-	// IPv6 only
+	// Use IPv6 only.
 	IPVersionV6
 )
 
@@ -107,15 +107,31 @@ func (x *IPVersion) AppendText(b []byte) ([]byte, error) {
 	return append(b, x.String()...), nil
 }
 
+// EnumDescriptions returns each enum value's description, taken from the
+// `// comment` in the ENUM(...) declaration. Generated; do not edit.
+func (IPVersion) EnumDescriptions() map[string]string {
+	return map[string]string{
+		"dual": "Use both IPv4 and IPv6.",
+		"v4":   "Use IPv4 only.",
+		"v6":   "Use IPv6 only.",
+	}
+}
+
+// EnumValues returns the enum's accepted string values, used to build the JSON
+// schema enum constraint. Generated; do not edit.
+func (IPVersion) EnumValues() []string {
+	return IPVersionNames()
+}
+
 const (
 	// InitStrategyBlocking is a InitStrategy of type Blocking.
-	// synchronously download blocking lists on startup
+	// Initialization runs before DNS resolution starts; errors are logged but Blocky keeps running if possible.
 	InitStrategyBlocking InitStrategy = iota
 	// InitStrategyFailOnError is a InitStrategy of type FailOnError.
-	// synchronously download blocking lists on startup and shutdown on error
+	// Like blocking but Blocky exits with an error if initialization fails.
 	InitStrategyFailOnError
 	// InitStrategyFast is a InitStrategy of type Fast.
-	// asyncronously download blocking lists on startup
+	// Blocky serves DNS immediately and runs initialization in the background.
 	InitStrategyFast
 )
 
@@ -204,6 +220,22 @@ func (x *InitStrategy) AppendText(b []byte) ([]byte, error) {
 	return append(b, x.String()...), nil
 }
 
+// EnumDescriptions returns each enum value's description, taken from the
+// `// comment` in the ENUM(...) declaration. Generated; do not edit.
+func (InitStrategy) EnumDescriptions() map[string]string {
+	return map[string]string{
+		"blocking":    "Initialization runs before DNS resolution starts; errors are logged but Blocky keeps running if possible.",
+		"failOnError": "Like blocking but Blocky exits with an error if initialization fails.",
+		"fast":        "Blocky serves DNS immediately and runs initialization in the background.",
+	}
+}
+
+// EnumValues returns the enum's accepted string values, used to build the JSON
+// schema enum constraint. Generated; do not edit.
+func (InitStrategy) EnumValues() []string {
+	return InitStrategyNames()
+}
+
 const (
 	// NetProtocolTcpUdp is a NetProtocol of type Tcp+Udp.
 	// TCP and UDP protocols
@@ -214,16 +246,20 @@ const (
 	// NetProtocolHttps is a NetProtocol of type Https.
 	// HTTPS protocol
 	NetProtocolHttps
+	// NetProtocolQuic is a NetProtocol of type Quic.
+	// DNS-over-QUIC protocol
+	NetProtocolQuic
 )
 
 var ErrInvalidNetProtocol = fmt.Errorf("not a valid NetProtocol, try [%s]", strings.Join(_NetProtocolNames, ", "))
 
-const _NetProtocolName = "tcp+udptcp-tlshttps"
+const _NetProtocolName = "tcp+udptcp-tlshttpsquic"
 
 var _NetProtocolNames = []string{
 	_NetProtocolName[0:7],
 	_NetProtocolName[7:14],
 	_NetProtocolName[14:19],
+	_NetProtocolName[19:23],
 }
 
 // NetProtocolNames returns a list of possible string values of NetProtocol.
@@ -239,6 +275,7 @@ func NetProtocolValues() []NetProtocol {
 		NetProtocolTcpUdp,
 		NetProtocolTcpTls,
 		NetProtocolHttps,
+		NetProtocolQuic,
 	}
 }
 
@@ -246,6 +283,7 @@ var _NetProtocolMap = map[NetProtocol]string{
 	NetProtocolTcpUdp: _NetProtocolName[0:7],
 	NetProtocolTcpTls: _NetProtocolName[7:14],
 	NetProtocolHttps:  _NetProtocolName[14:19],
+	NetProtocolQuic:   _NetProtocolName[19:23],
 }
 
 // String implements the Stringer interface.
@@ -267,6 +305,7 @@ var _NetProtocolValue = map[string]NetProtocol{
 	_NetProtocolName[0:7]:   NetProtocolTcpUdp,
 	_NetProtocolName[7:14]:  NetProtocolTcpTls,
 	_NetProtocolName[14:19]: NetProtocolHttps,
+	_NetProtocolName[19:23]: NetProtocolQuic,
 }
 
 // ParseNetProtocol attempts to convert a string to a NetProtocol.
@@ -299,6 +338,122 @@ func (x *NetProtocol) UnmarshalText(text []byte) error {
 // Implementations must not retain b, nor mutate any bytes within b[:len(b)].
 func (x *NetProtocol) AppendText(b []byte) ([]byte, error) {
 	return append(b, x.String()...), nil
+}
+
+// EnumDescriptions returns each enum value's description, taken from the
+// `// comment` in the ENUM(...) declaration. Generated; do not edit.
+func (NetProtocol) EnumDescriptions() map[string]string {
+	return map[string]string{
+		"tcp+udp": "TCP and UDP protocols",
+		"tcp-tls": "TCP-TLS protocol",
+		"https":   "HTTPS protocol",
+		"quic":    "DNS-over-QUIC protocol",
+	}
+}
+
+// EnumValues returns the enum's accepted string values, used to build the JSON
+// schema enum constraint. Generated; do not edit.
+func (NetProtocol) EnumValues() []string {
+	return NetProtocolNames()
+}
+
+const (
+	// ProxyProtocolTypeDns is a ProxyProtocolType of type dns.
+	ProxyProtocolTypeDns ProxyProtocolType = "dns"
+	// ProxyProtocolTypeHttp is a ProxyProtocolType of type http.
+	ProxyProtocolTypeHttp ProxyProtocolType = "http"
+	// ProxyProtocolTypeHttps is a ProxyProtocolType of type https.
+	ProxyProtocolTypeHttps ProxyProtocolType = "https"
+	// ProxyProtocolTypeTls is a ProxyProtocolType of type tls.
+	ProxyProtocolTypeTls ProxyProtocolType = "tls"
+)
+
+var ErrInvalidProxyProtocolType = fmt.Errorf("not a valid ProxyProtocolType, try [%s]", strings.Join(_ProxyProtocolTypeNames, ", "))
+
+var _ProxyProtocolTypeNames = []string{
+	string(ProxyProtocolTypeDns),
+	string(ProxyProtocolTypeHttp),
+	string(ProxyProtocolTypeHttps),
+	string(ProxyProtocolTypeTls),
+}
+
+// ProxyProtocolTypeNames returns a list of possible string values of ProxyProtocolType.
+func ProxyProtocolTypeNames() []string {
+	tmp := make([]string, len(_ProxyProtocolTypeNames))
+	copy(tmp, _ProxyProtocolTypeNames)
+	return tmp
+}
+
+// ProxyProtocolTypeValues returns a list of the values for ProxyProtocolType
+func ProxyProtocolTypeValues() []ProxyProtocolType {
+	return []ProxyProtocolType{
+		ProxyProtocolTypeDns,
+		ProxyProtocolTypeHttp,
+		ProxyProtocolTypeHttps,
+		ProxyProtocolTypeTls,
+	}
+}
+
+// String implements the Stringer interface.
+func (x ProxyProtocolType) String() string {
+	return string(x)
+}
+
+// IsValid provides a quick way to determine if the typed value is
+// part of the allowed enumerated values
+func (x ProxyProtocolType) IsValid() bool {
+	_, err := ParseProxyProtocolType(string(x))
+	return err == nil
+}
+
+var _ProxyProtocolTypeValue = map[string]ProxyProtocolType{
+	"dns":   ProxyProtocolTypeDns,
+	"http":  ProxyProtocolTypeHttp,
+	"https": ProxyProtocolTypeHttps,
+	"tls":   ProxyProtocolTypeTls,
+}
+
+// ParseProxyProtocolType attempts to convert a string to a ProxyProtocolType.
+func ParseProxyProtocolType(name string) (ProxyProtocolType, error) {
+	if x, ok := _ProxyProtocolTypeValue[name]; ok {
+		return x, nil
+	}
+	return ProxyProtocolType(""), fmt.Errorf("%s is %w", name, ErrInvalidProxyProtocolType)
+}
+
+// MarshalText implements the text marshaller method.
+func (x ProxyProtocolType) MarshalText() ([]byte, error) {
+	return []byte(string(x)), nil
+}
+
+// UnmarshalText implements the text unmarshaller method.
+func (x *ProxyProtocolType) UnmarshalText(text []byte) error {
+	tmp, err := ParseProxyProtocolType(string(text))
+	if err != nil {
+		return err
+	}
+	*x = tmp
+	return nil
+}
+
+// AppendText appends the textual representation of itself to the end of b
+// (allocating a larger slice if necessary) and returns the updated slice.
+//
+// Implementations must not retain b, nor mutate any bytes within b[:len(b)].
+func (x *ProxyProtocolType) AppendText(b []byte) ([]byte, error) {
+	return append(b, x.String()...), nil
+}
+
+// EnumDescriptions returns each enum value's description, taken from the
+// `// comment` in the ENUM(...) declaration. Generated; do not edit.
+func (ProxyProtocolType) EnumDescriptions() map[string]string {
+	return map[string]string{}
+}
+
+// EnumValues returns the enum's accepted string values, used to build the JSON
+// schema enum constraint. Generated; do not edit.
+func (ProxyProtocolType) EnumValues() []string {
+	return ProxyProtocolTypeNames()
 }
 
 const (
@@ -398,33 +553,51 @@ func (x *QueryLogField) AppendText(b []byte) ([]byte, error) {
 	return append(b, x.String()...), nil
 }
 
+// EnumDescriptions returns each enum value's description, taken from the
+// `// comment` in the ENUM(...) declaration. Generated; do not edit.
+func (QueryLogField) EnumDescriptions() map[string]string {
+	return map[string]string{}
+}
+
+// EnumValues returns the enum's accepted string values, used to build the JSON
+// schema enum constraint. Generated; do not edit.
+func (QueryLogField) EnumValues() []string {
+	return QueryLogFieldNames()
+}
+
 const (
 	// QueryLogTypeConsole is a QueryLogType of type Console.
-	// use logger as fallback
+	// Log to console output (used when no type is set).
 	QueryLogTypeConsole QueryLogType = iota
 	// QueryLogTypeNone is a QueryLogType of type None.
-	// no logging
+	// Do not log any queries.
 	QueryLogTypeNone
 	// QueryLogTypeMysql is a QueryLogType of type Mysql.
-	// MySQL or MariaDB database
+	// Log each query to an external MySQL or MariaDB database.
 	QueryLogTypeMysql
 	// QueryLogTypePostgresql is a QueryLogType of type Postgresql.
-	// PostgreSQL database
+	// Log each query to an external PostgreSQL database.
 	QueryLogTypePostgresql
 	// QueryLogTypeCsv is a QueryLogType of type Csv.
-	// CSV file per day
+	// Log to a CSV file (one per day).
 	QueryLogTypeCsv
 	// QueryLogTypeCsvClient is a QueryLogType of type Csv-Client.
-	// CSV file per day and client
+	// Log to a CSV file (one per day and per client).
 	QueryLogTypeCsvClient
 	// QueryLogTypeTimescale is a QueryLogType of type Timescale.
-	// Timescale database
+	// Log each query to an external Timescale database.
 	QueryLogTypeTimescale
+	// QueryLogTypeSqlite is a QueryLogType of type Sqlite.
+	// Log each query to a local SQLite database file.
+	QueryLogTypeSqlite
+	// QueryLogTypeDnstap is a QueryLogType of type Dnstap.
+	// Export query/response events via dnstap (Frame Streams).
+	QueryLogTypeDnstap
 )
 
 var ErrInvalidQueryLogType = fmt.Errorf("not a valid QueryLogType, try [%s]", strings.Join(_QueryLogTypeNames, ", "))
 
-const _QueryLogTypeName = "consolenonemysqlpostgresqlcsvcsv-clienttimescale"
+const _QueryLogTypeName = "consolenonemysqlpostgresqlcsvcsv-clienttimescalesqlitednstap"
 
 var _QueryLogTypeNames = []string{
 	_QueryLogTypeName[0:7],
@@ -434,6 +607,8 @@ var _QueryLogTypeNames = []string{
 	_QueryLogTypeName[26:29],
 	_QueryLogTypeName[29:39],
 	_QueryLogTypeName[39:48],
+	_QueryLogTypeName[48:54],
+	_QueryLogTypeName[54:60],
 }
 
 // QueryLogTypeNames returns a list of possible string values of QueryLogType.
@@ -453,6 +628,8 @@ func QueryLogTypeValues() []QueryLogType {
 		QueryLogTypeCsv,
 		QueryLogTypeCsvClient,
 		QueryLogTypeTimescale,
+		QueryLogTypeSqlite,
+		QueryLogTypeDnstap,
 	}
 }
 
@@ -464,6 +641,8 @@ var _QueryLogTypeMap = map[QueryLogType]string{
 	QueryLogTypeCsv:        _QueryLogTypeName[26:29],
 	QueryLogTypeCsvClient:  _QueryLogTypeName[29:39],
 	QueryLogTypeTimescale:  _QueryLogTypeName[39:48],
+	QueryLogTypeSqlite:     _QueryLogTypeName[48:54],
+	QueryLogTypeDnstap:     _QueryLogTypeName[54:60],
 }
 
 // String implements the Stringer interface.
@@ -489,6 +668,8 @@ var _QueryLogTypeValue = map[string]QueryLogType{
 	_QueryLogTypeName[26:29]: QueryLogTypeCsv,
 	_QueryLogTypeName[29:39]: QueryLogTypeCsvClient,
 	_QueryLogTypeName[39:48]: QueryLogTypeTimescale,
+	_QueryLogTypeName[48:54]: QueryLogTypeSqlite,
+	_QueryLogTypeName[54:60]: QueryLogTypeDnstap,
 }
 
 // ParseQueryLogType attempts to convert a string to a QueryLogType.
@@ -521,6 +702,28 @@ func (x *QueryLogType) UnmarshalText(text []byte) error {
 // Implementations must not retain b, nor mutate any bytes within b[:len(b)].
 func (x *QueryLogType) AppendText(b []byte) ([]byte, error) {
 	return append(b, x.String()...), nil
+}
+
+// EnumDescriptions returns each enum value's description, taken from the
+// `// comment` in the ENUM(...) declaration. Generated; do not edit.
+func (QueryLogType) EnumDescriptions() map[string]string {
+	return map[string]string{
+		"console":    "Log to console output (used when no type is set).",
+		"none":       "Do not log any queries.",
+		"mysql":      "Log each query to an external MySQL or MariaDB database.",
+		"postgresql": "Log each query to an external PostgreSQL database.",
+		"csv":        "Log to a CSV file (one per day).",
+		"csv-client": "Log to a CSV file (one per day and per client).",
+		"timescale":  "Log each query to an external Timescale database.",
+		"sqlite":     "Log each query to a local SQLite database file.",
+		"dnstap":     "Export query/response events via dnstap (Frame Streams).",
+	}
+}
+
+// EnumValues returns the enum's accepted string values, used to build the JSON
+// schema enum constraint. Generated; do not edit.
+func (QueryLogType) EnumValues() []string {
+	return QueryLogTypeNames()
 }
 
 const (
@@ -623,12 +826,27 @@ func (x *TLSVersion) AppendText(b []byte) ([]byte, error) {
 	return append(b, x.String()...), nil
 }
 
+// EnumDescriptions returns each enum value's description, taken from the
+// `// comment` in the ENUM(...) declaration. Generated; do not edit.
+func (TLSVersion) EnumDescriptions() map[string]string {
+	return map[string]string{}
+}
+
+// EnumValues returns the enum's accepted string values, used to build the JSON
+// schema enum constraint. Generated; do not edit.
+func (TLSVersion) EnumValues() []string {
+	return TLSVersionNames()
+}
+
 const (
 	// UpstreamStrategyParallelBest is a UpstreamStrategy of type Parallel_best.
+	// Picks 2 random weighted resolvers per query and returns the fastest answer (default).
 	UpstreamStrategyParallelBest UpstreamStrategy = iota
 	// UpstreamStrategyStrict is a UpstreamStrategy of type Strict.
+	// Queries upstreams in strict order; the next is tried only if the previous fails.
 	UpstreamStrategyStrict
 	// UpstreamStrategyRandom is a UpstreamStrategy of type Random.
+	// Picks one random weighted resolver per query; another is tried on failure.
 	UpstreamStrategyRandom
 )
 
@@ -715,4 +933,20 @@ func (x *UpstreamStrategy) UnmarshalText(text []byte) error {
 // Implementations must not retain b, nor mutate any bytes within b[:len(b)].
 func (x *UpstreamStrategy) AppendText(b []byte) ([]byte, error) {
 	return append(b, x.String()...), nil
+}
+
+// EnumDescriptions returns each enum value's description, taken from the
+// `// comment` in the ENUM(...) declaration. Generated; do not edit.
+func (UpstreamStrategy) EnumDescriptions() map[string]string {
+	return map[string]string{
+		"parallel_best": "Picks 2 random weighted resolvers per query and returns the fastest answer (default).",
+		"strict":        "Queries upstreams in strict order; the next is tried only if the previous fails.",
+		"random":        "Picks one random weighted resolver per query; another is tried on failure.",
+	}
+}
+
+// EnumValues returns the enum's accepted string values, used to build the JSON
+// schema enum constraint. Generated; do not edit.
+func (UpstreamStrategy) EnumValues() []string {
+	return UpstreamStrategyNames()
 }

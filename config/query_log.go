@@ -10,18 +10,32 @@ import (
 
 // QueryLog configuration for the query logging
 type QueryLog struct {
-	Target           string          `yaml:"target"`
-	Type             QueryLogType    `yaml:"type"`
-	LogRetentionDays uint64          `yaml:"logRetentionDays"`
-	CreationAttempts int             `default:"3"             yaml:"creationAttempts"`
-	CreationCooldown Duration        `default:"2s"            yaml:"creationCooldown"`
-	Fields           []QueryLogField `yaml:"fields"`
-	FlushInterval    Duration        `default:"30s"           yaml:"flushInterval"`
-	Ignore           QueryLogIgnore  `yaml:"ignore"`
+	// Directory for CSV log files, file path for sqlite, or database URL for mysql/postgresql/timescale,
+	// or dnstap socket address (unix:/path, tcp://host:port, or bare /path for unix).
+	Target Secret `yaml:"target"`
+	// Log target type: mysql, postgresql, timescale, sqlite, csv, csv-client, console, dnstap, or none.
+	Type QueryLogType `yaml:"type"`
+	// Delete log entries older than this many days. 0 disables retention cleanup.
+	LogRetentionDays uint64 `yaml:"logRetentionDays"`
+	// Maximum number of attempts to create the query log writer on startup.
+	CreationAttempts int `default:"3" yaml:"creationAttempts"`
+	// Delay between query log writer creation attempts.
+	CreationCooldown Duration `default:"2s" yaml:"creationCooldown"`
+	// Which fields to include in log entries; defaults to all available fields.
+	Fields []QueryLogField `yaml:"fields"`
+	// Interval at which buffered log entries are flushed in bulk to the database or dnstap socket
+	// (used by the mysql, postgresql, timescale, sqlite and dnstap targets).
+	FlushInterval Duration `default:"30s" yaml:"flushInterval"`
+	// Rules to suppress certain queries from being logged.
+	Ignore QueryLogIgnore `yaml:"ignore"`
 }
 
 type QueryLogIgnore struct {
+	// If true, queries resolved as Special Use Domain Names (SUDN) are not logged.
 	SUDN bool `default:"false" yaml:"sudn"`
+	// Domains whose queries are not logged. Each entry is matched against the
+	// query name as an exact domain, a *.wildcard, or a /regex/.
+	Domains []string `yaml:"domains"`
 }
 
 // SetDefaults implements `defaults.Setter`.
@@ -52,26 +66,39 @@ func (c *QueryLog) LogConfig(logger *logrus.Entry) {
 
 	logger.Infof("ignore:")
 	log.WithIndent(logger, "  ", func(e *logrus.Entry) {
-		logger.Infof("sudn: %t", c.Ignore.SUDN)
+		e.Infof("sudn: %t", c.Ignore.SUDN)
+
+		if len(c.Ignore.Domains) > 0 {
+			e.Infof("domains (%d):", len(c.Ignore.Domains))
+			log.WithIndent(e, "  ", func(e *logrus.Entry) {
+				for _, d := range c.Ignore.Domains {
+					e.Debugf("- %s", d)
+				}
+			})
+		}
 	})
 }
 
 func (c *QueryLog) censoredTarget() string {
+	target := c.Target.Reveal()
+
 	// Make sure there's a scheme, otherwise the user is parsed as the scheme
-	targetStr := c.Target
+	targetStr := target
 	if !strings.Contains(targetStr, "://") {
 		targetStr = c.Type.String() + "://" + targetStr
 	}
 
-	target, err := url.Parse(targetStr)
+	parsed, err := url.Parse(targetStr)
 	if err != nil {
-		return c.Target
+		// The target couldn't be parsed, so we can't locate and redact an embedded
+		// password. Redact the whole value rather than risk leaking a secret.
+		return secretObfuscator
 	}
 
-	pass, ok := target.User.Password()
+	pass, ok := parsed.User.Password()
 	if !ok {
-		return c.Target
+		return target
 	}
 
-	return strings.ReplaceAll(c.Target, pass, secretObfuscator)
+	return strings.ReplaceAll(target, pass, secretObfuscator)
 }

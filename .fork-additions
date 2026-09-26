@@ -119,6 +119,7 @@ pkg/winservice/service_other.go
 pkg/winservice/service_windows.go
 server/api_contract_test.go
 server/api_spec_contract_test.go
+server/chain_wiring_test.go
 server/server_auth.go
 server/server_auth_test.go
 server/server_endpoint_info.go

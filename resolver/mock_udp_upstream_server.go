@@ -13,7 +13,7 @@ import (
 )
 
 type MockUDPUpstreamServer struct {
-	callCount int32
+	callCount atomic.Int32
 	ln        *net.UDPConn
 	answerFn  func(request *dns.Msg) (response *dns.Msg)
 }
@@ -27,18 +27,7 @@ func NewMockUDPUpstreamServer() *MockUDPUpstreamServer {
 }
 
 func (t *MockUDPUpstreamServer) WithAnswerRR(answers ...string) *MockUDPUpstreamServer {
-	t.answerFn = func(request *dns.Msg) (response *dns.Msg) {
-		msg := new(dns.Msg)
-
-		for _, a := range answers {
-			rr, err := dns.NewRR(a)
-			util.FatalOnError("can't create RR", err)
-
-			msg.Answer = append(msg.Answer, rr)
-		}
-
-		return msg
-	}
+	t.answerFn = rrAnswerFn(answers...)
 
 	return t
 }
@@ -52,12 +41,7 @@ func (t *MockUDPUpstreamServer) WithAnswerMsg(answer *dns.Msg) *MockUDPUpstreamS
 }
 
 func (t *MockUDPUpstreamServer) WithAnswerError(errorCode int) *MockUDPUpstreamServer {
-	t.answerFn = func(request *dns.Msg) (response *dns.Msg) {
-		msg := new(dns.Msg)
-		msg.Rcode = errorCode
-
-		return msg
-	}
+	t.answerFn = errorAnswerFn(errorCode)
 
 	return t
 }
@@ -84,11 +68,11 @@ func (t *MockUDPUpstreamServer) WithDelay(delay time.Duration) *MockUDPUpstreamS
 }
 
 func (t *MockUDPUpstreamServer) GetCallCount() int {
-	return int(atomic.LoadInt32(&t.callCount))
+	return int(t.callCount.Load())
 }
 
 func (t *MockUDPUpstreamServer) ResetCallCount() {
-	atomic.StoreInt32(&t.callCount, 0)
+	t.callCount.Store(0)
 }
 
 func (t *MockUDPUpstreamServer) Close() {
@@ -140,7 +124,7 @@ func (t *MockUDPUpstreamServer) Start() config.Upstream {
 
 				response := t.answerFn(msg)
 
-				atomic.AddInt32(&t.callCount, 1)
+				t.callCount.Add(1)
 				// nil should indicate an error
 				if response == nil {
 					_, _ = ln.WriteToUDP([]byte("dummy"), addr)
@@ -148,14 +132,7 @@ func (t *MockUDPUpstreamServer) Start() config.Upstream {
 					return
 				}
 
-				rCode := response.Rcode
-				response.SetReply(msg)
-
-				if rCode != 0 {
-					response.Rcode = rCode
-				}
-
-				b, err := response.Pack()
+				b, err := mockReply(msg, response).Pack()
 				util.FatalOnError("can't serialize message: ", err)
 
 				_, _ = ln.WriteToUDP(b, addr)

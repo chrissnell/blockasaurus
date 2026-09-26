@@ -84,12 +84,34 @@ func isSupportedType(ip net.IP, question dns.Question) bool {
 		(strings.Contains(ip.String(), ":") && question.Qtype == dns.TypeAAAA)
 }
 
+// LookupReverse returns the domain names mapped to the given IP by the custom DNS
+// configuration, consulting only in-memory data (no network I/O). Returns nil if there is no match.
+func (r *CustomDNSResolver) LookupReverse(ip net.IP) []string {
+	arpa, err := dns.ReverseAddr(ip.String())
+	if err != nil {
+		return nil
+	}
+
+	urls := r.reverseAddresses[arpa]
+	if len(urls) == 0 {
+		return nil
+	}
+
+	// return a copy so callers can't mutate the internal mapping
+	names := make([]string, len(urls))
+	copy(names, urls)
+
+	return names
+}
+
 func (r *CustomDNSResolver) handleReverseDNS(request *model.Request) *model.Response {
 	question := request.Req.Question[0]
 	if question.Qtype == dns.TypePTR {
-		urls, found := r.reverseAddresses[question.Name]
+		// reverseAddresses is keyed by dns.ReverseAddr output, which is lower case:
+		// DNS names are case insensitive, so normalize before looking up.
+		urls, found := r.reverseAddresses[strings.ToLower(question.Name)]
 		if found {
-			var answers []dns.RR
+			answers := make([]dns.RR, 0, len(urls))
 			for _, url := range urls {
 				h := util.CreateHeader(question, r.cfg.CustomTTL.SecondsU32())
 				ptr := new(dns.PTR)
@@ -105,19 +127,23 @@ func (r *CustomDNSResolver) handleReverseDNS(request *model.Request) *model.Resp
 	return nil
 }
 
+// processRequest resolves a query from the configured mapping. It reports
+// whether the mapping handled the query at all; when it did not, the caller
+// continues down the chain itself, so that it can restore a rewritten request
+// first.
 func (r *CustomDNSResolver) processRequest(
 	ctx context.Context,
 	logger *logrus.Entry,
 	request *model.Request,
 	resolvedCnames []string,
-) (*model.Response, error) {
+) (handled bool, response *model.Response, err error) {
 	question := request.Req.Question[0]
 	domain := util.ExtractDomain(question)
 	var answers []dns.RR
 
 	for len(domain) > 0 {
 		if err := ctx.Err(); err != nil {
-			return nil, fmt.Errorf("context cancelled during custom DNS resolution: %w", err)
+			return true, nil, fmt.Errorf("context cancelled during custom DNS resolution: %w", err)
 		}
 
 		entries, found := r.mapping[domain]
@@ -126,7 +152,7 @@ func (r *CustomDNSResolver) processRequest(
 			for _, entry := range entries {
 				result, err := r.processDNSEntry(ctx, logger, request, resolvedCnames, question, entry)
 				if err != nil {
-					return nil, err
+					return true, nil, err
 				}
 
 				answers = append(answers, result...)
@@ -134,11 +160,11 @@ func (r *CustomDNSResolver) processRequest(
 
 			if len(answers) > 0 {
 				logger.WithFields(logrus.Fields{
-					"answer": util.AnswerToString(answers),
-					"domain": domain,
+					logFieldAnswer: util.Obfuscate(util.AnswerToString(answers)),
+					logFieldDomain: util.Obfuscate(domain),
 				}).Debugf("returning custom dns entry")
 
-				return model.NewResponseWithAnswers(request, answers, model.ResponseTypeCUSTOMDNS, "CUSTOM DNS"), nil
+				return true, model.NewResponseWithAnswers(request, answers, model.ResponseTypeCUSTOMDNS, "CUSTOM DNS"), nil
 			}
 
 			// Mapping exists for this domain, but for another type
@@ -147,8 +173,13 @@ func (r *CustomDNSResolver) processRequest(
 				break
 			}
 
-			// return NOERROR with empty result
-			return model.NewResponseWithReason(request, model.ResponseTypeCUSTOMDNS, "CUSTOM DNS"), nil
+			// return NOERROR/NODATA with an SOA record in the authority section (RFC 2308),
+			// so caching resolvers know how long to cache the negative result
+			nodata := model.NewResponseWithReason(request, model.ResponseTypeCUSTOMDNS, "CUSTOM DNS")
+			soa := util.CreateSOAForNegativeResponse(question, r.cfg.CustomTTL.SecondsU32())
+			nodata.Res.Ns = []dns.RR{soa}
+
+			return true, nodata, nil
 		}
 
 		if i := strings.IndexRune(domain, '.'); i >= 0 {
@@ -158,9 +189,7 @@ func (r *CustomDNSResolver) processRequest(
 		}
 	}
 
-	logger.WithField("next_resolver", Name(r.next)).Trace("go to next resolver")
-
-	return r.next.Resolve(ctx, request)
+	return false, nil, nil
 }
 
 func (r *CustomDNSResolver) processDNSEntry(
@@ -203,10 +232,25 @@ func (r *CustomDNSResolver) Resolve(ctx context.Context, request *model.Request)
 		request.Req = rewritten
 	}
 
-	response, err := r.processRequest(ctx, logger, request, make([]string, 0, len(r.cfg.Mapping)))
+	handled, response, err := r.processRequest(ctx, logger, request, make([]string, 0, len(r.cfg.Mapping)))
 
-	// Revert the request
+	// Revert the request before it leaves this resolver: the rewritten name is
+	// meant for the mapping, not for the rest of the chain.
 	request.Req = original
+
+	if !handled {
+		logger.WithField("next_resolver", Name(r.next)).Trace("go to next resolver")
+
+		return r.next.Resolve(ctx, request)
+	}
+
+	// The mapping failed or had nothing for this query: ask the rest of the
+	// chain, using the original name (`fallbackUpstream`).
+	if shouldFallbackUpstream(&r.cfg.RewriterConfig, response, err) {
+		logger.WithField("next_resolver", Name(r.next)).Trace("fallback to next resolver")
+
+		return r.next.Resolve(ctx, request)
+	}
 
 	if err != nil {
 		return response, err
@@ -296,9 +340,18 @@ func (r *CustomDNSResolver) processCNAME(
 	targetRequest := newRequestWithClientID(targetWithoutDot, dns.Type(question.Qtype), clientIP, clientID)
 
 	// resolve the target recursively
-	targetResp, err := r.processRequest(ctx, logger, targetRequest, cnames)
+	handled, targetResp, err := r.processRequest(ctx, logger, targetRequest, cnames)
 	if err != nil {
 		return nil, err
+	}
+
+	if !handled {
+		// the target is outside the mapping: resolve it via the rest of the chain
+		logger.WithField("next_resolver", Name(r.next)).Trace("go to next resolver")
+
+		if targetResp, err = r.next.Resolve(ctx, targetRequest); err != nil {
+			return nil, err
+		}
 	}
 
 	// If target resolution returns NoResponse, just return the CNAME record itself

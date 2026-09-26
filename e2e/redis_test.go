@@ -2,6 +2,9 @@ package e2e
 
 import (
 	"context"
+	"net"
+	"net/http"
+	"os"
 	"strings"
 
 	. "github.com/0xERR0R/blocky/helpertest"
@@ -44,28 +47,28 @@ var _ = Describe("Redis configuration tests", func() {
 	Describe("Cache sharing between blocky instances", func() {
 		When("Redis and 2 blocky instances are configured", func() {
 			BeforeEach(func(ctx context.Context) {
-				blocky1, err = createBlockyContainer(ctx, e2eNet,
-					"log:",
-					"  level: warn",
-					"upstreams:",
-					"  groups:",
-					"    default:",
-					"      - moka1",
-					"redis:",
-					"  address: redis:6379",
-				)
+				blocky1, err = createBlockyContainerFromString(ctx, e2eNet, dedent(`
+					log:
+					  level: warn
+					upstreams:
+					  groups:
+					    default:
+					      - moka1
+					redis:
+					  address: redis:6379
+					`))
 				Expect(err).Should(Succeed())
 
-				blocky2, err = createBlockyContainer(ctx, e2eNet,
-					"log:",
-					"  level: warn",
-					"upstreams:",
-					"  groups:",
-					"    default:",
-					"      - moka1",
-					"redis:",
-					"  address: redis:6379",
-				)
+				blocky2, err = createBlockyContainerFromString(ctx, e2eNet, dedent(`
+					log:
+					  level: warn
+					upstreams:
+					  groups:
+					    default:
+					      - moka1
+					redis:
+					  address: redis:6379
+					`))
 				Expect(err).Should(Succeed())
 			})
 			It("2nd instance of blocky should use cache from redis", func(ctx context.Context) {
@@ -107,16 +110,16 @@ var _ = Describe("Redis configuration tests", func() {
 	Describe("Cache loading on startup", func() {
 		When("Redis and 1 blocky instance are configured", func() {
 			BeforeEach(func(ctx context.Context) {
-				blocky1, err = createBlockyContainer(ctx, e2eNet,
-					"log:",
-					"  level: warn",
-					"upstreams:",
-					"  groups:",
-					"    default:",
-					"      - moka1",
-					"redis:",
-					"  address: redis:6379",
-				)
+				blocky1, err = createBlockyContainerFromString(ctx, e2eNet, dedent(`
+					log:
+					  level: warn
+					upstreams:
+					  groups:
+					    default:
+					      - moka1
+					redis:
+					  address: redis:6379
+					`))
 				Expect(err).Should(Succeed())
 			})
 			It("should load cache from redis after start", func(ctx context.Context) {
@@ -135,16 +138,16 @@ var _ = Describe("Redis configuration tests", func() {
 				})
 
 				By("start other instance of blocky now -> it should load the cache from redis", func() {
-					blocky2, err = createBlockyContainer(ctx, e2eNet,
-						"log:",
-						"  level: warn",
-						"upstreams:",
-						"  groups:",
-						"    default:",
-						"      - moka1",
-						"redis:",
-						"  address: redis:6379",
-					)
+					blocky2, err = createBlockyContainerFromString(ctx, e2eNet, dedent(`
+						log:
+						  level: warn
+						upstreams:
+						  groups:
+						    default:
+						      - moka1
+						redis:
+						  address: redis:6379
+						`))
 					Expect(err).Should(Succeed())
 				})
 
@@ -168,8 +171,369 @@ var _ = Describe("Redis configuration tests", func() {
 			})
 		})
 	})
+
+	Describe("Blocking state sync via Redis", func() {
+		When("Redis, blocking, and 2 blocky instances are configured", func() {
+			BeforeEach(func(ctx context.Context) {
+				_, err = createDNSMokkaContainer(ctx, "moka2", e2eNet,
+					`A blocked.com/NOERROR("A 5.6.7.8 123")`,
+				)
+				Expect(err).Should(Succeed())
+
+				_, err = createHTTPServerContainer(ctx, "httpserver", e2eNet, "list.txt", "blocked.com")
+				Expect(err).Should(Succeed())
+
+				blocky1, err = createBlockyContainerFromString(ctx, e2eNet, dedent(`
+					log:
+					  level: warn
+					upstreams:
+					  groups:
+					    default:
+					      - moka2
+					ports:
+					  http: 4000
+					blocking:
+					  denylists:
+					    ads:
+					      - http://httpserver:8080/list.txt
+					  clientGroupsBlock:
+					    default:
+					      - ads
+					redis:
+					  address: redis:6379
+					`))
+				Expect(err).Should(Succeed())
+
+				blocky2, err = createBlockyContainerFromString(ctx, e2eNet, dedent(`
+					log:
+					  level: warn
+					upstreams:
+					  groups:
+					    default:
+					      - moka2
+					ports:
+					  http: 4000
+					blocking:
+					  denylists:
+					    ads:
+					      - http://httpserver:8080/list.txt
+					  clientGroupsBlock:
+					    default:
+					      - ads
+					redis:
+					  address: redis:6379
+					`))
+				Expect(err).Should(Succeed())
+			})
+
+			It("syncs blocking disable/enable between instances", func(ctx context.Context) {
+				msg := util.NewMsgWithQuestion("blocked.com.", A)
+
+				By("verifying blocking works on both instances", func() {
+					Eventually(doDNSRequest, "5s", "2ms").WithArguments(ctx, blocky1, msg).
+						Should(BeDNSRecord("blocked.com.", A, "0.0.0.0"))
+					Eventually(doDNSRequest, "5s", "2ms").WithArguments(ctx, blocky2, msg).
+						Should(BeDNSRecord("blocked.com.", A, "0.0.0.0"))
+				})
+
+				By("disabling blocking on instance1 via API", func() {
+					host, port, err := getContainerHostPort(ctx, blocky1, "4000/tcp")
+					Expect(err).Should(Succeed())
+
+					resp, err := http.Get("http://" + net.JoinHostPort(host, port) + "/api/blocking/disable")
+					Expect(err).Should(Succeed())
+					defer resp.Body.Close()
+					Expect(resp.StatusCode).Should(Equal(http.StatusOK))
+				})
+
+				By("verifying instance2 also has blocking disabled", func() {
+					Eventually(doDNSRequest, "5s", "100ms").WithArguments(ctx, blocky2, msg).
+						Should(BeDNSRecord("blocked.com.", A, "5.6.7.8"))
+				})
+
+				By("re-enabling blocking on instance1", func() {
+					host, port, err := getContainerHostPort(ctx, blocky1, "4000/tcp")
+					Expect(err).Should(Succeed())
+
+					resp, err := http.Get("http://" + net.JoinHostPort(host, port) + "/api/blocking/enable")
+					Expect(err).Should(Succeed())
+					defer resp.Body.Close()
+					Expect(resp.StatusCode).Should(Equal(http.StatusOK))
+				})
+
+				By("verifying instance2 re-enables blocking", func() {
+					Eventually(doDNSRequest, "5s", "100ms").WithArguments(ctx, blocky2, msg).
+						Should(BeDNSRecord("blocked.com.", A, "0.0.0.0"))
+				})
+			})
+		})
+	})
+
+	Describe("Cache clear propagation via Redis", func() {
+		When("Redis and 2 blocky instances share cached entries", func() {
+			BeforeEach(func(ctx context.Context) {
+				blocky1, err = createBlockyContainerFromString(ctx, e2eNet, dedent(`
+					log:
+					  level: warn
+					upstreams:
+					  groups:
+					    default:
+					      - moka1
+					ports:
+					  http: 4000
+					caching:
+					  minTime: 5m
+					redis:
+					  address: redis:6379
+					`))
+				Expect(err).Should(Succeed())
+			})
+
+			It("clears cache entries from Redis when flushed via API", func(ctx context.Context) {
+				msg := util.NewMsgWithQuestion("google.de.", A)
+
+				By("populating cache via instance1", func() {
+					Eventually(doDNSRequest, "5s", "2ms").WithArguments(ctx, blocky1, msg).
+						Should(BeDNSRecord("google.de.", A, "1.2.3.4"))
+				})
+
+				By("waiting for Redis to have the entry", func() {
+					Eventually(dbSize, "5s", "2ms").WithArguments(ctx, redisClient).
+						Should(BeNumerically(">=", 1))
+				})
+
+				By("flushing cache via instance1 API", func() {
+					host, port, err := getContainerHostPort(ctx, blocky1, "4000/tcp")
+					Expect(err).Should(Succeed())
+
+					resp, err := http.Post(
+						"http://"+net.JoinHostPort(host, port)+"/api/cache/flush",
+						"application/json", nil)
+					Expect(err).Should(Succeed())
+					defer resp.Body.Close()
+					Expect(resp.StatusCode).Should(Equal(http.StatusOK))
+				})
+
+				By("verifying Redis cache was cleared", func() {
+					Eventually(dbSize, "5s", "100ms").WithArguments(ctx, redisClient).
+						Should(BeNumerically("==", 0))
+				})
+			})
+		})
+	})
+
+	Describe("Prefetch sync via Redis", func() {
+		When("Redis and a prefetching blocky instance are configured", func() {
+			BeforeEach(func(ctx context.Context) {
+				// Short upstream TTL so prefetch reloads (driven by the ~5s cache cleanup)
+				// fire within the test window.
+				_, err = createDNSMokkaContainer(ctx, "moka2", e2eNet,
+					`A google/NOERROR("A 1.2.3.4 2")`,
+				)
+				Expect(err).Should(Succeed())
+
+				blocky1, err = createBlockyContainerFromString(ctx, e2eNet, dedent(`
+					log:
+					  level: warn
+					upstreams:
+					  groups:
+					    default:
+					      - moka2
+					caching:
+					  prefetching: true
+					  prefetchThreshold: 0
+					redis:
+					  address: redis:6379
+					`))
+				Expect(err).Should(Succeed())
+			})
+
+			It("re-publishes prefetched entries to Redis after the original TTL expires", func(ctx context.Context) {
+				msg := util.NewMsgWithQuestion("google.de.", A)
+
+				By("querying once to populate the local cache and Redis", func() {
+					Eventually(doDNSRequest, "5s", "2ms").WithArguments(ctx, blocky1, msg).
+						Should(BeDNSRecord("google.de.", A, "1.2.3.4"))
+
+					Eventually(dbSize, "5s", "100ms").WithArguments(ctx, redisClient).
+						Should(BeNumerically("==", 1))
+				})
+
+				By("flushing Redis to deterministically simulate the original SET expiring", func() {
+					// Flushing (instead of racing the natural 2s TTL) removes the flaky
+					// dependency on catching the brief empty window between expiry and the
+					// next ~5s cleanup republish. The local entry is untouched.
+					Expect(redisClient.FlushDB(ctx).Err()).Should(Succeed())
+					Expect(dbSize(ctx, redisClient)).Should(BeNumerically("==", 0))
+				})
+
+				By("verifying a prefetch reload re-publishes the entry to Redis", func() {
+					// Nothing re-queries the domain, so the entry can only reappear via a
+					// prefetch reload re-publish (#1422): the local entry's TTL expires and
+					// the ~5s cache cleanup reloads it and writes it through to Redis.
+					Eventually(dbSize, "15s", "100ms").WithArguments(ctx, redisClient).
+						Should(BeNumerically(">=", 1))
+				})
+
+				By("No warnings/errors in log", func() {
+					Expect(getContainerLogs(ctx, blocky1)).Should(BeEmpty())
+				})
+			})
+		})
+	})
+
+	Describe("Multiple query types via Redis cache", func() {
+		When("both A and AAAA queries are cached", func() {
+			BeforeEach(func(ctx context.Context) {
+				_, err = createDNSMokkaContainer(ctx, "moka2", e2eNet,
+					`A google/NOERROR("A 1.2.3.4 123")`,
+					`AAAA google/NOERROR("AAAA 2001:db8::1 123")`,
+				)
+				Expect(err).Should(Succeed())
+
+				blocky1, err = createBlockyContainerFromString(ctx, e2eNet, dedent(`
+					log:
+					  level: warn
+					upstreams:
+					  groups:
+					    default:
+					      - moka2
+					redis:
+					  address: redis:6379
+					`))
+				Expect(err).Should(Succeed())
+
+				blocky2, err = createBlockyContainerFromString(ctx, e2eNet, dedent(`
+					log:
+					  level: warn
+					upstreams:
+					  groups:
+					    default:
+					      - moka2
+					redis:
+					  address: redis:6379
+					`))
+				Expect(err).Should(Succeed())
+			})
+
+			It("shares both A and AAAA cached responses via Redis", func(ctx context.Context) {
+				By("querying A and AAAA on instance1", func() {
+					Eventually(doDNSRequest, "5s", "2ms").
+						WithArguments(ctx, blocky1, util.NewMsgWithQuestion("google.de.", A)).
+						Should(BeDNSRecord("google.de.", A, "1.2.3.4"))
+
+					Eventually(doDNSRequest, "5s", "2ms").
+						WithArguments(ctx, blocky1, util.NewMsgWithQuestion("google.de.", AAAA)).
+						Should(BeDNSRecord("google.de.", AAAA, "2001:db8::1"))
+				})
+
+				By("waiting for Redis entries", func() {
+					Eventually(dbSize, "5s", "2ms").WithArguments(ctx, redisClient).
+						Should(BeNumerically(">=", 2))
+				})
+
+				By("shutting down upstream", func() {
+					Expect(mokka.Terminate(ctx)).Should(Succeed())
+				})
+
+				By("querying instance2 for both types from cache", func() {
+					Eventually(doDNSRequest, "5s", "2ms").
+						WithArguments(ctx, blocky2, util.NewMsgWithQuestion("google.de.", A)).
+						Should(BeDNSRecord("google.de.", A, "1.2.3.4"))
+
+					Eventually(doDNSRequest, "5s", "2ms").
+						WithArguments(ctx, blocky2, util.NewMsgWithQuestion("google.de.", AAAA)).
+						Should(BeDNSRecord("google.de.", AAAA, "2001:db8::1"))
+				})
+
+				By("No warnings/errors in log", func() {
+					Expect(getContainerLogs(ctx, blocky1)).Should(BeEmpty())
+					Expect(getContainerLogs(ctx, blocky2)).Should(BeEmpty())
+				})
+			})
+		})
+	})
 })
 
 func dbSize(ctx context.Context, redisClient *redis.Client) (int64, error) {
 	return redisClient.DBSize(ctx).Result()
 }
+
+var _ = Describe("Redis unix socket configuration", func() {
+	const containerSocketDir = "/sockets"
+
+	var (
+		e2eNet        *testcontainers.DockerNetwork
+		redisClient   *redis.Client
+		hostSocketDir string
+		err           error
+	)
+
+	BeforeEach(func(ctx context.Context) {
+		e2eNet = getRandomNetwork(ctx)
+
+		// Shared directory bind-mounted into both the redis and blocky containers so they can
+		// communicate over the unix socket living inside it.
+		hostSocketDir, err = os.MkdirTemp("", "blocky_e2e_redis_socket-")
+		Expect(err).Should(Succeed())
+		Expect(os.Chmod(hostSocketDir, 0o777)).Should(Succeed())
+		DeferCleanup(func() error {
+			return os.RemoveAll(hostSocketDir)
+		})
+
+		_, err = createRedisContainerWithUnixSocket(ctx, e2eNet, hostSocketDir, containerSocketDir)
+		Expect(err).Should(Succeed())
+
+		// Redis has no TCP listener; the host test client verifies the database over the same unix
+		// socket via the bind-mounted directory. go-redis treats a `/`-prefixed address as a unix
+		// socket, so this also exercises the behaviour under test from the client side.
+		redisClient = redis.NewClient(&redis.Options{
+			Addr: hostSocketDir + "/redis.sock",
+		})
+		DeferCleanup(redisClient.Close)
+		Expect(dbSize(ctx, redisClient)).Should(BeNumerically("==", 0))
+
+		_, err = createDNSMokkaContainer(ctx, "moka1", e2eNet, `A google/NOERROR("A 1.2.3.4 123")`)
+		Expect(err).Should(Succeed())
+	})
+
+	When("blocky is configured with a redis unix socket address", func() {
+		var blocky testcontainers.Container
+
+		BeforeEach(func(ctx context.Context) {
+			blocky, err = createBlockyContainerWithBinds(ctx, e2eNet,
+				[]string{hostSocketDir + ":" + containerSocketDir},
+				"log:",
+				"  level: warn",
+				"upstreams:",
+				"  groups:",
+				"    default:",
+				"      - moka1",
+				"redis:",
+				"  address: "+containerSocketDir+"/redis.sock",
+			)
+			Expect(err).Should(Succeed())
+		})
+
+		It("stores cache entries in redis over the unix socket", func(ctx context.Context) {
+			msg := util.NewMsgWithQuestion("google.de.", A)
+
+			By("querying blocky, which should resolve and store the result in redis via the socket", func() {
+				Eventually(doDNSRequest, "5s", "2ms").WithArguments(ctx, blocky, msg).
+					Should(
+						SatisfyAll(
+							BeDNSRecord("google.de.", A, "1.2.3.4"),
+							HaveTTL(BeNumerically("==", 123)),
+						))
+			})
+
+			By("checking redis contains the cache entry written over the unix socket", func() {
+				Eventually(dbSize, "5s", "2ms").WithArguments(ctx, redisClient).Should(BeNumerically("==", 1))
+			})
+
+			By("No warnings/errors in log", func() {
+				Expect(getContainerLogs(ctx, blocky)).Should(BeEmpty())
+			})
+		})
+	})
+})

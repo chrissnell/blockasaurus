@@ -130,14 +130,20 @@ func buildContractRouter(t *testing.T) *chi.Mux {
 	return withCommonMiddleware(router)
 }
 
-// allMethods is chi's full method set. A route registered with Handle() (as
-// opposed to Get/Post/...) is expanded by chi into one entry per method; we
-// collapse those back into a single ANY line so the golden stays readable and
-// a real change is not buried under nine identical rows. The collapse is
-// conditional on all nine chains being identical, so it can never hide a
-// per-method difference in the guards.
+// allMethods is chi's full method set (its mALL). A route registered with
+// Handle() (as opposed to Get/Post/...) is expanded by chi into one entry per
+// method; we collapse those back into a single ANY line so the golden stays
+// readable and a real change is not buried under ten identical rows. The
+// collapse is conditional on all of those chains being identical, so it can
+// never hide a per-method difference in the guards.
+//
+// This list must track chi's: it gained QUERY (RFC 10008) in v5.3.0, and until
+// this list followed, every Handle() route lost its ANY collapse and expanded
+// into one golden line per method. Adding a method here does not hide the new
+// route — the ANY line covers it — so a chi bump that widens mALL is still
+// visible as a contract change wherever the guards differ.
 var allMethods = []string{
-	"CONNECT", "DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT", "TRACE",
+	"CONNECT", "DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT", "QUERY", "TRACE",
 }
 
 type routeKey struct {

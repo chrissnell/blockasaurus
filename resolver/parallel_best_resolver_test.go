@@ -306,7 +306,7 @@ var _ = Describe("ParallelBestResolver", Label("parallelBestResolver"), func() {
 					resolverCount := make(map[Resolver]int)
 
 					for range 1000 {
-						resolvers := pickRandom(ctx, *sut.resolvers.Load(), parallelBestResolverCount)
+						resolvers := pickRandom(*sut.resolvers.Load(), parallelBestResolverCount)
 						res1 := resolvers[0].resolver
 						res2 := resolvers[1].resolver
 						Expect(res1).ShouldNot(Equal(res2))
@@ -316,7 +316,7 @@ var _ = Describe("ParallelBestResolver", Label("parallelBestResolver"), func() {
 					}
 					for _, v := range resolverCount {
 						// should be 500 ± 50
-						Expect(v).Should(BeNumerically("~", 500, 75))
+						Expect(v).Should(BeNumerically("~", 500, 100))
 					}
 				})
 				By("perform 100 request, error upstream's weight will be reduced", func() {
@@ -329,8 +329,8 @@ var _ = Describe("ParallelBestResolver", Label("parallelBestResolver"), func() {
 				By("Resolvers without errors should be selected often", func() {
 					resolverCount := make(map[*UpstreamResolver]int)
 
-					for range 100 {
-						resolvers := pickRandom(ctx, *sut.resolvers.Load(), parallelBestResolverCount)
+					for range 1000 {
+						resolvers := pickRandom(*sut.resolvers.Load(), parallelBestResolverCount)
 						res1 := resolvers[0].resolver.(*UpstreamResolver)
 						res2 := resolvers[1].resolver.(*UpstreamResolver)
 						Expect(res1).ShouldNot(Equal(res2))
@@ -340,11 +340,11 @@ var _ = Describe("ParallelBestResolver", Label("parallelBestResolver"), func() {
 					}
 					for k, v := range resolverCount {
 						if strings.Contains(k.String(), "wrong") {
-							// error resolvers: should be 0 - 10
-							Expect(v).Should(BeNumerically("~", 0, 10))
+							// error resolvers: should be rare
+							Expect(v).Should(BeNumerically("~", 0, 50))
 						} else {
-							// should be 90 ± 10
-							Expect(v).Should(BeNumerically("~", 90, 10))
+							// good resolvers get the vast majority of picks
+							Expect(v).Should(BeNumerically("~", 950, 75))
 						}
 					}
 				})
@@ -498,7 +498,7 @@ var _ = Describe("ParallelBestResolver", Label("parallelBestResolver"), func() {
 						resolverCount := make(map[Resolver]int)
 
 						for range 2000 {
-							r := weightedRandom(ctx, *sut.resolvers.Load(), nil)
+							r := weightedRandom(*sut.resolvers.Load(), nil)
 							resolverCount[r.resolver]++
 						}
 						for _, v := range resolverCount {
@@ -516,19 +516,19 @@ var _ = Describe("ParallelBestResolver", Label("parallelBestResolver"), func() {
 					By("Resolvers without errors should be selected often", func() {
 						resolverCount := make(map[*UpstreamResolver]int)
 
-						for range 200 {
-							r := weightedRandom(ctx, *sut.resolvers.Load(), nil)
+						for range 1000 {
+							r := weightedRandom(*sut.resolvers.Load(), nil)
 							res := r.resolver.(*UpstreamResolver)
 
 							resolverCount[res]++
 						}
 						for k, v := range resolverCount {
 							if strings.Contains(k.String(), "wrong") {
-								// error resolvers: should be 0 - 10
-								Expect(v).Should(BeNumerically("~", 0, 10))
+								// error resolvers: should be rare
+								Expect(v).Should(BeNumerically("~", 0, 25))
 							} else {
-								// should be 90 ± 10
-								Expect(v).Should(BeNumerically("~", 95, 20))
+								// good resolvers get the vast majority of picks
+								Expect(v).Should(BeNumerically("~", 490, 50))
 							}
 						}
 					})

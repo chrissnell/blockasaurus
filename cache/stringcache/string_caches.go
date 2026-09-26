@@ -2,6 +2,7 @@ package stringcache
 
 import (
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -11,7 +12,9 @@ import (
 
 type stringCache interface {
 	elementCount() int
-	contains(searchString string) bool
+	// findMatch reports whether the cache matches searchString and, if so,
+	// returns the rule that matched. rule is empty when ok is false.
+	findMatch(searchString string) (rule string, ok bool)
 }
 
 type cacheFactory interface {
@@ -36,12 +39,12 @@ func (cache stringMap) elementCount() int {
 	return count
 }
 
-func (cache stringMap) contains(searchString string) bool {
+func (cache stringMap) findMatch(searchString string) (string, bool) {
 	normalized := normalizeEntry(searchString)
 	searchLen := len(normalized)
 
 	if searchLen == 0 {
-		return false
+		return "", false
 	}
 
 	searchBucketLen := len(cache[searchLen]) / searchLen
@@ -54,15 +57,17 @@ func (cache stringMap) contains(searchString string) bool {
 		if blockRule == normalized {
 			log.PrefixedLog("string_map").Debugf("block rule '%s' matched with '%s'", blockRule, searchString)
 
-			return true
+			return blockRule, true
 		}
 	}
 
-	return false
+	return "", false
 }
 
 type stringCacheFactory struct {
-	// temporary map which holds sorted slice of strings grouped by string length
+	// temporary map which holds slices of entries grouped by string length.
+	// Entries are appended as they arrive; each bucket is sorted and
+	// deduplicated once, when the cache is created.
 	tmp map[int][]string
 	cnt int
 }
@@ -73,14 +78,6 @@ func newStringCacheFactory() cacheFactory {
 	}
 }
 
-func (s *stringCacheFactory) getBucket(length int) []string {
-	if s.tmp[length] == nil {
-		s.tmp[length] = make([]string, 0)
-	}
-
-	return s.tmp[length]
-}
-
 func (s *stringCacheFactory) count() int {
 	return s.cnt
 }
@@ -88,20 +85,11 @@ func (s *stringCacheFactory) count() int {
 func (s *stringCacheFactory) insertString(entry string) {
 	normalized := normalizeEntry(entry)
 	entryLen := len(normalized)
-	bucket := s.getBucket(entryLen)
-	ix := sort.SearchStrings(bucket, normalized)
 
-	if ix >= len(bucket) || bucket[ix] != normalized {
-		// extend internal bucket
-		bucket = append(s.getBucket(entryLen), "")
-
-		// move elements to make place for the insertion
-		copy(bucket[ix+1:], bucket[ix:])
-
-		// insert string at the calculated position
-		bucket[ix] = normalized
-		s.tmp[entryLen] = bucket
-	}
+	// Append and defer sorting/deduplication to create(): inserting in sorted
+	// order here would shift the whole bucket on every entry, making cache
+	// construction O(n^2) for a list of n entries.
+	s.tmp[entryLen] = append(s.tmp[entryLen], normalized)
 }
 
 func (s *stringCacheFactory) addEntry(entry string) bool {
@@ -121,7 +109,13 @@ func (s *stringCacheFactory) create() stringCache {
 	}
 
 	cache := make(stringMap, len(s.tmp))
+
 	for k, v := range s.tmp {
+		// contains() binary-searches the concatenated bucket, so it must be
+		// sorted; duplicates are dropped to keep elementCount() and memory use
+		// equivalent to inserting one entry at a time.
+		slices.Sort(v)
+		v = slices.Compact(v)
 		cache[k] = strings.Join(v, "")
 	}
 
@@ -134,16 +128,18 @@ func (cache regexCache) elementCount() int {
 	return len(cache)
 }
 
-func (cache regexCache) contains(searchString string) bool {
+func (cache regexCache) findMatch(searchString string) (string, bool) {
 	for _, regex := range cache {
 		if regex.MatchString(searchString) {
 			log.PrefixedLog("regex_cache").Debugf("regex '%s' matched with '%s'", regex, searchString)
 
-			return true
+			// re-wrap in the '/.../' delimiters that addEntry strips on insertion
+			// so the reported rule matches the entry as configured by the user.
+			return "/" + regex.String() + "/", true
 		}
 	}
 
-	return false
+	return "", false
 }
 
 type regexCacheFactory struct {
@@ -151,7 +147,11 @@ type regexCacheFactory struct {
 }
 
 func (r *regexCacheFactory) addEntry(entry string) bool {
-	if !strings.HasPrefix(entry, "/") || !strings.HasSuffix(entry, "/") {
+	// A regex entry is delimited by a leading and a trailing slash (/regex/), so
+	// it needs at least those two characters. Without the length guard a lone
+	// "/" satisfies both HasPrefix and HasSuffix and then panics below, where the
+	// delimiters are stripped (entry[1:len-1] would be "/"[1:0]).
+	if len(entry) < 2 || !strings.HasPrefix(entry, "/") || !strings.HasSuffix(entry, "/") {
 		return false
 	}
 
@@ -197,8 +197,22 @@ func (cache wildcardCache) elementCount() int {
 	return cache.cnt
 }
 
-func (cache wildcardCache) contains(domain string) bool {
-	return cache.trie.HasParentOf(domain)
+func (cache wildcardCache) findMatch(domain string) (string, bool) {
+	labels, ok := cache.trie.HasParentOf(domain)
+	if !ok {
+		return "", false
+	}
+
+	// labels reconstruct the stored wildcard base (normalized, with the "*."
+	// prefix stripped on insertion); re-prepend "*." so the reported rule
+	// matches the entry as configured by the user. trie.JoinTLD pairs with the
+	// trie.SplitTLD this cache is built with, so the separator stays the trie's
+	// concern rather than being hard-coded here.
+	rule := "*." + trie.JoinTLD(labels)
+
+	log.PrefixedLog("wildcard_cache").Debugf("wildcard block rule '%s' matched with '%s'", rule, domain)
+
+	return rule, true
 }
 
 type wildcardCacheFactory struct {

@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/cors"
+	"github.com/rs/cors"
 )
 
 type httpServer struct {
@@ -125,7 +125,17 @@ func newCORSMiddleware() httpMiddleware {
 		// spec-invalid (browsers reject it), and a permissive
 		// AllowOriginFunc defeats the CSRF defense provided by
 		// SameSite=Lax + the X-Requested-With header check.
-		AllowOriginFunc:  sameOriginFunc,
+		//
+		// rs/cors (upstream replaced go-chi/cors) splits the callback: its
+		// AllowOriginFunc sees only the origin string, so same-origin — which
+		// needs the request's Host — has to use the request-aware variant.
+		// AllowOriginRequestFunc is the deprecated spelling of that. No extra
+		// Vary header is declared: the decision varies on Host, but a shared
+		// cache already keys on the effective request URI, so naming it would
+		// add a header to every response for nothing.
+		AllowOriginVaryRequestFunc: func(r *http.Request, origin string) (bool, []string) {
+			return sameOriginFunc(r, origin), nil
+		},
 		AllowCredentials: true,
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token", "X-Requested-With"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE"},

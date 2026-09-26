@@ -44,6 +44,7 @@ const (
 	dnsContentType     = "application/dns-message"
 	htmlContentType    = "text/html; charset=UTF-8"
 	yamlContentType    = "text/yaml"
+	jsonContentType    = "application/json"
 )
 
 // ResolverAccessor implementation — resolves from the current (possibly hot-swapped) chain.
@@ -357,6 +358,12 @@ func configureDocsHandler(router chi.Router) {
 		_, err := writer.Write([]byte(docs.OpenAPI))
 		logAndResponseWithError(err, "can't write OpenAPI definition file: ", writer)
 	})
+
+	router.Get("/docs/config.schema.json", func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set(contentTypeHeader, jsonContentType)
+		_, err := writer.Write(docs.ConfigSchema)
+		logAndResponseWithError(err, "can't write config JSON schema file: ", writer)
+	})
 }
 
 func configureStaticAssetsHandler(router chi.Router) {
@@ -414,6 +421,7 @@ func configureRootHandler(cfg *config.Config, router chi.Router) {
 				{URL: "/ui/", Title: "Web UI", Icon: "◆", Primary: true},
 				{URL: "/docs/openapi.yaml", Title: "REST API docs (OpenAPI)", Icon: "○"},
 				{URL: "/static/rapidoc.html", Title: "Interactive API explorer", Icon: "⚙"},
+				{URL: "/docs/config.schema.json", Title: "Configuration JSON Schema", Icon: "▤"},
 				{URL: "/debug/", Title: "Go profiler (pprof)", Icon: "⏲"},
 			},
 		}

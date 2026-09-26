@@ -60,25 +60,16 @@ func (r *ConditionalUpstreamResolver) processRequest(
 	ctx context.Context, request *model.Request,
 ) (bool, *model.Response, error) {
 	domainFromQuestion := util.ExtractDomain(request.Req.Question[0])
-	domain := domainFromQuestion
 
 	if strings.Contains(domainFromQuestion, ".") {
 		// try with domain with and without sub-domains
-		for len(domain) > 0 {
-			if resolver, found := r.mapping[domain]; found {
-				resp, err := r.internalResolve(ctx, resolver, domainFromQuestion, domain, request)
+		if domain, resolver, found := searchDomainOrParent(r.mapping, domainFromQuestion); found {
+			resp, err := r.internalResolve(ctx, resolver, domainFromQuestion, domain, request)
 
-				return true, resp, err
-			}
-
-			if i := strings.Index(domain, "."); i >= 0 {
-				domain = domain[i+1:]
-			} else {
-				break
-			}
+			return true, resp, err
 		}
 	} else if resolver, found := r.mapping["."]; found {
-		resp, err := r.internalResolve(ctx, resolver, domainFromQuestion, domain, request)
+		resp, err := r.internalResolve(ctx, resolver, domainFromQuestion, domainFromQuestion, request)
 
 		return true, resp, err
 	}
@@ -103,21 +94,31 @@ func (r *ConditionalUpstreamResolver) Resolve(ctx context.Context, request *mode
 	resolved := false
 	if len(r.mapping) > 0 {
 		resolved, response, err = r.processRequest(ctx, request)
-		if err != nil {
-			return nil, err
-		}
 	}
 
+	// Revert the request before it leaves this resolver: the rewritten name is
+	// meant for the mapped upstream, not for the rest of the chain.
+	request.Req = original
+
+	// processRequest only reports `resolved` for a query it sent to a mapped
+	// upstream, so anything else continues down the chain under its original name.
 	if !resolved {
 		logger.WithField("next_resolver", Name(r.next)).Trace("go to next resolver")
-		response, err = r.next.Resolve(ctx, request)
-		if err != nil {
-			return nil, err
-		}
+
+		return r.next.Resolve(ctx, request)
 	}
 
-	// Revert the request
-	request.Req = original
+	// The mapped resolver failed or had nothing: ask the rest of the chain,
+	// using the original name (`fallbackUpstream`).
+	if shouldFallbackUpstream(&r.cfg.RewriterConfig, response, err) {
+		logger.WithField("next_resolver", Name(r.next)).Trace("fallback to next resolver")
+
+		return r.next.Resolve(ctx, request)
+	}
+
+	if err != nil {
+		return nil, err
+	}
 
 	// Revert rewrites in the response
 	if rewritten != nil && response != NoResponse && response != nil && response.Res != nil {
@@ -147,16 +148,18 @@ func (r *ConditionalUpstreamResolver) internalResolve(ctx context.Context, reso 
 		return nil, fmt.Errorf("conditional upstream resolution failed for domain '%s': %w", do, err)
 	}
 
-	var answer string
-	if response != nil {
-		answer = util.AnswerToString(response.Res.Answer)
-	}
+	if isDebugEnabled(logger) {
+		var answer string
+		if response != nil {
+			answer = util.Obfuscate(util.AnswerToString(response.Res.Answer))
+		}
 
-	logger.WithFields(logrus.Fields{
-		"answer":   answer,
-		"domain":   util.Obfuscate(do),
-		"upstream": reso,
-	}).Debugf("received response from conditional upstream")
+		logger.WithFields(logrus.Fields{
+			logFieldAnswer:   answer,
+			logFieldDomain:   util.Obfuscate(do),
+			logFieldUpstream: reso,
+		}).Debugf("received response from conditional upstream")
+	}
 
 	return response, nil
 }

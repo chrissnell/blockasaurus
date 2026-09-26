@@ -1,7 +1,11 @@
 package config
 
 import (
+	"encoding/base64"
 	"encoding/hex"
+	"net"
+
+	"github.com/jedisct1/go-dnsstamps"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -120,12 +124,14 @@ var _ = Describe("ParseUpstream", func() {
 				Expect(err.Error()).Should(ContainSubstring("DNSCrypt"))
 			})
 
-			It("should reject DoQ stamp", func() {
+			It("should parse DoQ stamp", func() {
 				// Valid DoQ (DNS-over-QUIC) stamp from dnsstamps library tests
-				_, err := ParseUpstream("sdns://BAcAAAAAAAAACTEyNy4wLjAuMSDDhGvyS56TymQnTA7GfB7MXgJP_KzS10AZNQ6B_lRq5A9kbnMuZXhhbXBsZS5jb20")
+				upstream, err := ParseUpstream("sdns://BAcAAAAAAAAACTEyNy4wLjAuMSDDhGvyS56TymQnTA7GfB7MXgJP_KzS10AZNQ6B_lRq5A9kbnMuZXhhbXBsZS5jb20")
 
-				Expect(err).Should(HaveOccurred())
-				Expect(err.Error()).Should(ContainSubstring("QUIC"))
+				Expect(err).Should(Succeed())
+				Expect(upstream.Net).Should(Equal(NetProtocolQuic))
+				Expect(upstream.Host).Should(Equal("dns.example.com"))
+				Expect(upstream.Port).Should(Equal(uint16(853)))
 			})
 
 			It("should reject ODoH Target stamp", func() {
@@ -137,8 +143,8 @@ var _ = Describe("ParseUpstream", func() {
 			})
 
 			It("should reject ODoH Relay stamp", func() {
-				// Valid Oblivious DoH Relay stamp from dnsstamps library tests
-				_, err := ParseUpstream("sdns://hQcAAAAAAAAAB1s6OjFdOjGCq80CASMPZG9oLmV4YW1wbGUuY29tBi9yZWxheQ")
+				// Valid Oblivious DoH Relay stamp (addr 1.2.3.4, odoh.example.com, /relay)
+				_, err := ParseUpstream("sdns://hQAAAAAAAAAABzEuMi4zLjQgAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEQb2RvaC5leGFtcGxlLmNvbQYvcmVsYXk")
 
 				Expect(err).Should(HaveOccurred())
 				Expect(err.Error()).Should(ContainSubstring("Relay"))
@@ -240,6 +246,53 @@ var _ = Describe("ParseUpstream", func() {
 				Expect(result.Host).Should(Equal("dns.example.com"))
 				Expect(result.Port).Should(Equal(uint16(8443)))
 				Expect(result.Path).Should(Equal("/dns-query"))
+			})
+		})
+
+		Describe("DoQ", func() {
+			It("should parse DoQ with IP", func() {
+				result, err := ParseUpstream("quic:9.9.9.9:853")
+
+				Expect(err).Should(Succeed())
+				Expect(result.Net).Should(Equal(NetProtocolQuic))
+				Expect(result.Host).Should(Equal("9.9.9.9"))
+				Expect(result.Port).Should(Equal(uint16(853)))
+			})
+
+			It("should parse DoQ with hostname", func() {
+				result, err := ParseUpstream("quic:dns.adguard.com")
+
+				Expect(err).Should(Succeed())
+				Expect(result.Net).Should(Equal(NetProtocolQuic))
+				Expect(result.Host).Should(Equal("dns.adguard.com"))
+				Expect(result.Port).Should(Equal(uint16(853)))
+			})
+
+			It("should parse DoQ with custom port", func() {
+				result, err := ParseUpstream("quic:dns.example.com:8853")
+
+				Expect(err).Should(Succeed())
+				Expect(result.Net).Should(Equal(NetProtocolQuic))
+				Expect(result.Host).Should(Equal("dns.example.com"))
+				Expect(result.Port).Should(Equal(uint16(8853)))
+			})
+
+			It("should parse DoQ with quic:// prefix for AdGuard compatibility", func() {
+				result, err := ParseUpstream("quic://dns.adguard.com")
+
+				Expect(err).Should(Succeed())
+				Expect(result.Net).Should(Equal(NetProtocolQuic))
+				Expect(result.Host).Should(Equal("dns.adguard.com"))
+				Expect(result.Port).Should(Equal(uint16(853)))
+			})
+
+			It("should parse DoQ with quic:// prefix and custom port", func() {
+				result, err := ParseUpstream("quic://dns.example.com:8853")
+
+				Expect(err).Should(Succeed())
+				Expect(result.Net).Should(Equal(NetProtocolQuic))
+				Expect(result.Host).Should(Equal("dns.example.com"))
+				Expect(result.Port).Should(Equal(uint16(8853)))
 			})
 		})
 
@@ -479,6 +532,68 @@ var _ = Describe("ParseUpstream", func() {
 			})
 		})
 
+		Describe("DNS stamp IP preservation for bootstrapping", func() {
+			It("should preserve IP from plain DNS stamp", func() {
+				// sdns://AAcAAAAAAAAABzguOC44Ljg
+				// Google DNS (8.8.8.8) - IP is in ServerAddrStr
+				result, err := ParseUpstream("sdns://AAcAAAAAAAAABzguOC44Ljg")
+
+				Expect(err).Should(Succeed())
+				Expect(result.Host).Should(Equal("8.8.8.8"))
+				Expect(result.IPs).Should(HaveLen(1))
+				Expect(result.IPs[0]).Should(Equal(net.ParseIP("8.8.8.8")))
+			})
+
+			It("should preserve IP from DoH stamp with IP in ServerAddrStr", func() {
+				// sdns://AgcAAAAAAAAACzE5NC4yNDIuMi4yAA9kbnMubXVsbHZhZC5uZXQKL2Rucy1xdWVyeQ
+				// Mullvad DoH - IP 194.242.2.2 in ServerAddrStr, hostname dns.mullvad.net
+				result, err := ParseUpstream("sdns://AgcAAAAAAAAACzE5NC4yNDIuMi4yAA9kbnMubXVsbHZhZC5uZXQKL2Rucy1xdWVyeQ")
+
+				Expect(err).Should(Succeed())
+				// Host should be the provider name (hostname)
+				Expect(result.Host).Should(Equal("dns.mullvad.net"))
+				Expect(result.CommonName).Should(Equal("dns.mullvad.net"))
+				// But IPs should contain the IP from ServerAddrStr
+				Expect(result.IPs).Should(HaveLen(1))
+				Expect(result.IPs[0]).Should(Equal(net.ParseIP("194.242.2.2")))
+			})
+
+			It("should preserve IPv6 from stamp", func() {
+				// sdns://AAcAAAAAAAAAKVsyMDAxOjBkYjg6ODVhMzowMDAwOjAwMDA6OGEyZTowMzcwOjczMzRd
+				// IPv6 address in stamp
+				result, err := ParseUpstream("sdns://AAcAAAAAAAAAKVsyMDAxOjBkYjg6ODVhMzowMDAwOjAwMDA6OGEyZTowMzcwOjczMzRd")
+
+				Expect(err).Should(Succeed())
+				Expect(result.IPs).Should(HaveLen(1))
+				Expect(result.IPs[0]).Should(Equal(net.ParseIP("2001:0db8:85a3:0000:0000:8a2e:0370:7334")))
+			})
+
+			It("should preserve IP from stamp with IP in ServerAddrStr", func() {
+				// Cloudflare DoH stamp - ServerAddrStr contains IP "1.0.0.1:443"
+				// ProviderName is "dns.cloudflare.com" (used as Host)
+				result, err := ParseUpstream("sdns://AgcAAAAAAAAABzEuMC4wLjGgENk8mGSlIfMGXMOlIlCcKvq7AVgcrZxtjon911-ep0cg63Ul-I8NlFj4GplQGb_TTLiczclX57DvMV8Q-JdjgRgSZG5zLmNsb3VkZmxhcmUuY29tCi9kbnMtcXVlcnk")
+
+				Expect(err).Should(Succeed())
+				// Host comes from ProviderName (hostname)
+				Expect(result.Host).Should(Equal("dns.cloudflare.com"))
+				// IPs contains the IP from ServerAddrStr for bootstrapping
+				Expect(result.IPs).Should(HaveLen(1))
+				Expect(result.IPs[0]).Should(Equal(net.ParseIP("1.0.0.1")))
+			})
+
+			It("should preserve IP with custom port in stamp", func() {
+				// sdns://AAcAAAAAAAAADDguOC44Ljg6NTM1Mw
+				// 8.8.8.8:5353
+				result, err := ParseUpstream("sdns://AAcAAAAAAAAADDguOC44Ljg6NTM1Mw")
+
+				if err == nil {
+					Expect(result.IPs).Should(HaveLen(1))
+					Expect(result.IPs[0]).Should(Equal(net.ParseIP("8.8.8.8")))
+					Expect(result.Port).Should(Or(Equal(uint16(5353)), Equal(uint16(53))))
+				}
+			})
+		})
+
 		Describe("extractStampHostPort edge cases", func() {
 			It("should handle empty server address", func() {
 				// Empty server address should use default port
@@ -543,6 +658,191 @@ var _ = Describe("ParseUpstream", func() {
 				}
 			})
 		})
+
+		// https://github.com/0xERR0R/blocky/issues/2052:
+		//   - the optional port lives on the hostname field, not addr (draft-denis-dns-stamps §4.3.2)
+		//   - the stamp's optional bootstrap IPs are used for bootstrapping
+		Describe("issue #2052: port on hostname and bootstrap IPs", func() {
+			// validHash returns a 32-byte placeholder certificate fingerprint.
+			validHash := func() []uint8 {
+				h := make([]uint8, 32)
+				for i := range h {
+					h[i] = 0x01
+				}
+
+				return h
+			}
+
+			// buildDoHStampWire hand-encodes a DoH stamp so tests can craft layouts the
+			// current encoder will not emit, e.g. a port on the addr field or an
+			// invalid certificate hash length.
+			buildDoHStampWire := func(addr string, hash []byte, hostname, path string) string {
+				bin := make([]byte, 0, 12+len(addr)+len(hash)+len(hostname)+len(path))
+				bin = append(bin, byte(dnsstamps.StampProtoTypeDoH))
+				bin = append(bin, 0, 0, 0, 0, 0, 0, 0, 0) // 8 properties bytes
+				bin = append(bin, byte(len(addr)))
+				bin = append(bin, addr...)
+				bin = append(bin, byte(len(hash))) // single hash, no VLP continuation bit
+				bin = append(bin, hash...)
+				bin = append(bin, byte(len(hostname)))
+				bin = append(bin, hostname...)
+				bin = append(bin, byte(len(path)))
+				bin = append(bin, path...)
+
+				return "sdns://" + base64.RawURLEncoding.EncodeToString(bin)
+			}
+
+			It("reads the port from the hostname field for a DoH stamp", func() {
+				stamp := dnsstamps.ServerStamp{
+					Proto:         dnsstamps.StampProtoTypeDoH,
+					ServerAddrStr: "1.1.1.1",
+					ProviderName:  "cloudflare-dns.com:8443", // port on the hostname field, per spec
+					Hashes:        [][]uint8{validHash()},
+					Path:          "/dns-query",
+				}
+
+				result, err := ParseUpstream(stamp.String())
+
+				Expect(err).Should(Succeed())
+				Expect(result.Net).Should(Equal(NetProtocolHttps))
+				Expect(result.Host).Should(Equal("cloudflare-dns.com"))
+				Expect(result.Port).Should(Equal(uint16(8443)))
+				Expect(result.CommonName).Should(Equal("cloudflare-dns.com"))
+				Expect(result.IPs).Should(HaveLen(1))
+				Expect(result.IPs[0]).Should(Equal(net.ParseIP("1.1.1.1")))
+			})
+
+			It("reads the port from the hostname field for a DoT stamp", func() {
+				stamp := dnsstamps.ServerStamp{
+					Proto:         dnsstamps.StampProtoTypeTLS,
+					ServerAddrStr: "9.9.9.9",
+					ProviderName:  "dns.quad9.net:8853", // port on the hostname field, per spec
+					Hashes:        [][]uint8{validHash()},
+				}
+
+				result, err := ParseUpstream(stamp.String())
+
+				Expect(err).Should(Succeed())
+				Expect(result.Net).Should(Equal(NetProtocolTcpTls))
+				Expect(result.Host).Should(Equal("dns.quad9.net"))
+				Expect(result.Port).Should(Equal(uint16(8853)))
+				Expect(result.CommonName).Should(Equal("dns.quad9.net"))
+			})
+
+			It("reads the port from the hostname field for an IPv6 DoH stamp", func() {
+				stamp := dnsstamps.ServerStamp{
+					Proto:         dnsstamps.StampProtoTypeDoH,
+					ServerAddrStr: "[2001:db8::1]", // bare IPv6 literal; the port is carried on the hostname field
+					ProviderName:  "dns.example.com:8443",
+					Hashes:        [][]uint8{validHash()},
+					Path:          "/dns-query",
+				}
+
+				result, err := ParseUpstream(stamp.String())
+
+				Expect(err).Should(Succeed())
+				Expect(result.Host).Should(Equal("dns.example.com"))
+				Expect(result.Port).Should(Equal(uint16(8443)))
+				Expect(result.CommonName).Should(Equal("dns.example.com"))
+				Expect(result.IPs).Should(HaveLen(1))
+				Expect(result.IPs[0]).Should(Equal(net.ParseIP("2001:db8::1")))
+			})
+
+			It("falls back to the protocol default port when the hostname has none", func() {
+				stamp := dnsstamps.ServerStamp{
+					Proto:         dnsstamps.StampProtoTypeDoH,
+					ServerAddrStr: "1.1.1.1",
+					ProviderName:  "cloudflare-dns.com",
+					Hashes:        [][]uint8{validHash()},
+					Path:          "/dns-query",
+				}
+
+				result, err := ParseUpstream(stamp.String())
+
+				Expect(err).Should(Succeed())
+				Expect(result.Host).Should(Equal("cloudflare-dns.com"))
+				Expect(result.Port).Should(Equal(uint16(443)))
+			})
+
+			It("tolerates a legacy DoH stamp that encodes the port on the addr field", func() {
+				// Emitted by an older go-dnsstamps that put the port on the addr field
+				// (ServerAddrStr "1.1.1.1:8443", ProviderName "cloudflare-dns.com").
+				// Current upstream rejects this layout per spec; blocky must still accept it.
+				const legacy = "sdns://AgAAAAAAAAAADDEuMS4xLjE6ODQ0MyABAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBARJjbG91ZGZsYXJlLWRucy5jb20KL2Rucy1xdWVyeQ"
+
+				result, err := ParseUpstream(legacy)
+
+				Expect(err).Should(Succeed())
+				Expect(result.Host).Should(Equal("cloudflare-dns.com"))
+				Expect(result.Port).Should(Equal(uint16(8443)))
+				Expect(result.CommonName).Should(Equal("cloudflare-dns.com"))
+				Expect(result.IPs).Should(HaveLen(1))
+				Expect(result.IPs[0]).Should(Equal(net.ParseIP("1.1.1.1")))
+			})
+
+			It("tolerates a legacy IPv6 DoH stamp with the port on the addr field", func() {
+				// Exercises the IPv6 re-bracketing path of the tolerance shim.
+				wire := buildDoHStampWire("[2001:db8::1]:8443", validHash(), "dns.example.com", "/dns-query")
+
+				result, err := ParseUpstream(wire)
+
+				Expect(err).Should(Succeed())
+				Expect(result.Host).Should(Equal("dns.example.com"))
+				Expect(result.Port).Should(Equal(uint16(8443)))
+				Expect(result.IPs).Should(HaveLen(1))
+				Expect(result.IPs[0]).Should(Equal(net.ParseIP("2001:db8::1")))
+			})
+
+			It("rejects a legacy port-on-addr stamp only when another defect is present", func() {
+				// Control: the port-on-addr layout alone is tolerated.
+				_, err := ParseUpstream(buildDoHStampWire("1.1.1.1:8443", validHash(), "cloudflare-dns.com", "/dns-query"))
+				Expect(err).Should(Succeed())
+
+				// Safety: a second defect (3-byte cert hash) must still be rejected, not
+				// masked by the tolerance shim moving the port off addr.
+				_, err = ParseUpstream(buildDoHStampWire("1.1.1.1:8443", []byte{0x01, 0x02, 0x03}, "cloudflare-dns.com", "/dns-query"))
+				Expect(err).Should(HaveOccurred())
+			})
+
+			It("merges the stamp's bootstrap IPs with the server IP", func() {
+				stamp := dnsstamps.ServerStamp{
+					Proto:         dnsstamps.StampProtoTypeDoH,
+					ServerAddrStr: "8.8.8.8",
+					ProviderName:  "dns.google",
+					Hashes:        [][]uint8{validHash()},
+					Path:          "/dns-query",
+					BootstrapIPs:  []string{"1.1.1.1", "8.8.4.4"},
+				}
+
+				result, err := ParseUpstream(stamp.String())
+
+				Expect(err).Should(Succeed())
+				Expect(result.IPs).Should(ConsistOf(
+					net.ParseIP("8.8.8.8"),
+					net.ParseIP("1.1.1.1"),
+					net.ParseIP("8.8.4.4"),
+				))
+			})
+
+			It("deduplicates a bootstrap IP that repeats the server IP", func() {
+				stamp := dnsstamps.ServerStamp{
+					Proto:         dnsstamps.StampProtoTypeDoH,
+					ServerAddrStr: "8.8.8.8",
+					ProviderName:  "dns.google",
+					Hashes:        [][]uint8{validHash()},
+					Path:          "/dns-query",
+					BootstrapIPs:  []string{"8.8.8.8", "8.8.4.4"},
+				}
+
+				result, err := ParseUpstream(stamp.String())
+
+				Expect(err).Should(Succeed())
+				Expect(result.IPs).Should(ConsistOf(
+					net.ParseIP("8.8.8.8"),
+					net.ParseIP("8.8.4.4"),
+				))
+			})
+		})
 	})
 
 	Context("IsDefault method", func() {
@@ -578,6 +878,11 @@ var _ = Describe("ParseUpstream", func() {
 
 		It("should return false when CertificateFingerprints is set", func() {
 			u := Upstream{CertificateFingerprints: []CertificateFingerprint{[]byte("test")}}
+			Expect(u.IsDefault()).Should(BeFalse())
+		})
+
+		It("should return false when IPs is set", func() {
+			u := Upstream{IPs: []net.IP{net.ParseIP("8.8.8.8")}}
 			Expect(u.IsDefault()).Should(BeFalse())
 		})
 	})

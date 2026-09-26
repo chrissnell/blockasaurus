@@ -12,7 +12,10 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"strconv"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/avast/retry-go/v4"
@@ -27,9 +30,27 @@ import (
 )
 
 const (
-	dnsContentType   = "application/dns-message"
-	retryAttempts    = 3
-	sha256HashLength = 32
+	dnsContentType       = "application/dns-message"
+	upstreamResolverType = "upstream"
+	retryAttempts        = 3
+	sha256HashLength     = 32
+
+	// connPoolMaxIdle bounds the number of idle DoT connections kept per upstream
+	// address, so a burst of concurrent queries can't leak connections.
+	connPoolMaxIdle = 8
+	// connPoolIdleTimeout discards pooled connections idle longer than this,
+	// before an upstream is likely to have closed them.
+	connPoolIdleTimeout = 30 * time.Second
+
+	// upstreamUDPBufferFloor is the minimum EDNS0 UDP buffer (bytes) blocky advertises to plain-DNS
+	// upstreams, independent of what the client requested. 1232 is the DNS-flag-day-2020 value: big
+	// enough to carry most answers without truncation, small enough to avoid IP fragmentation. A
+	// shared-cache miss can then fetch the full answer over UDP instead of falling back to TCP.
+	upstreamUDPBufferFloor = 1232
+
+	// transport names as understood by dns.Client.Net
+	transportTCP = "tcp"
+	transportUDP = "udp"
 )
 
 // UpstreamServerError wraps a response with RCode ServFail so no other resolver tries to use it.
@@ -81,14 +102,21 @@ type UpstreamResolver struct {
 }
 
 type upstreamClient interface {
+	io.Closer
+
 	fmtURL(ip net.IP, port uint16, path string) string
 	callExternal(
-		ctx context.Context, msg *dns.Msg, upstreamURL string, protocol model.RequestProtocol,
+		ctx context.Context, msg *dns.Msg, upstreamURL string,
 	) (response *dns.Msg, rtt time.Duration, err error)
 }
 
 type dnsUpstreamClient struct {
 	tcpClient, udpClient *dns.Client
+	// pool reuses persistent connections for the connection-oriented DoT path;
+	// nil for the plain tcp+udp client, whose TCP leg is only a rare fallback
+	// (truncation, question mismatch, UDP failure) and so does not benefit from
+	// pooling.
+	pool *connPool
 }
 
 type httpUpstreamClient struct {
@@ -157,8 +185,17 @@ func createUpstreamClient(cfg upstreamConfig) upstreamClient {
 	}
 
 	// Add certificate pinning if hashes are provided from DNS stamp
-	if len(cfg.CertificateFingerprints) > 0 {
-		tlsConfig.VerifyPeerCertificate = createCertificatePinningVerifier(cfg.CertificateFingerprints)
+	certPinning := len(cfg.CertificateFingerprints) > 0
+	if certPinning {
+		tlsConfig.VerifyPeerCertificate = createCertificatePinningVerifier(cfg.CertificateFingerprints) //nolint:gosec
+	}
+
+	// Enable TLS session resumption for all TLS-based protocols (DoH, DoT, DoQ) so
+	// reconnections skip the full handshake. Not when a certificate is pinned: Go
+	// does not call VerifyPeerCertificate (our pinning check) on resumed sessions,
+	// so resumption would bypass the pin. (The plain tcp+udp client ignores tlsConfig.)
+	if !certPinning {
+		tlsConfig.ClientSessionCache = tls.NewLRUClientSessionCache(0)
 	}
 
 	switch cfg.Net {
@@ -175,20 +212,26 @@ func createUpstreamClient(cfg upstreamConfig) upstreamClient {
 		}
 
 	case config.NetProtocolTcpTls:
-		return &dnsUpstreamClient{
-			tcpClient: &dns.Client{
-				TLSConfig: &tlsConfig,
-				Net:       cfg.Net.String(),
-			},
+		tcpClient := &dns.Client{
+			TLSConfig: &tlsConfig,
+			Net:       cfg.Net.String(),
 		}
+
+		return &dnsUpstreamClient{
+			tcpClient: tcpClient,
+			pool:      newConnPool(tcpClient, connPoolMaxIdle, connPoolIdleTimeout),
+		}
+
+	case config.NetProtocolQuic:
+		return newQuicUpstreamClient(&tlsConfig, cfg.QUIC)
 
 	case config.NetProtocolTcpUdp:
 		return &dnsUpstreamClient{
 			tcpClient: &dns.Client{
-				Net: "tcp",
+				Net: transportTCP,
 			},
 			udpClient: &dns.Client{
-				Net: "udp",
+				Net: transportUDP,
 			},
 		}
 
@@ -202,8 +245,103 @@ func (r *httpUpstreamClient) fmtURL(ip net.IP, port uint16, path string) string 
 	return fmt.Sprintf("https://%s%s", net.JoinHostPort(ip.String(), strconv.Itoa(int(port))), path)
 }
 
+// Close releases idle keep-alive connections. Implements io.Closer.
+func (r *httpUpstreamClient) Close() error {
+	r.client.CloseIdleConnections()
+
+	return nil
+}
+
+// dohMaxAttempts bounds how often a single DoH query is re-sent after failing on
+// a reused keep-alive connection. Two attempts cover the common case — the pool
+// held a dead connection, discard it and dial — and the third covers a stale
+// connection that discarding the pool did not reach (see do).
+const dohMaxAttempts = 3
+
+// do sends the packed query to the upstream, retrying on a fresh connection when
+// an attempt failed on a reused keep-alive connection.
+//
+// Public DoH resolvers close idle connections after a few seconds, and a
+// connection closed while it sits in the client's keep-alive pool cannot be
+// detected up front: the request is written into an already-closed socket and
+// the read then fails without the query ever being served (`EOF` over HTTP/1.1,
+// `unexpected EOF` over HTTP/2). net/http does not retry that itself — a POST
+// with a body is not replayable, and http2 does not count an unexpected EOF as
+// retryable — so without this the failure surfaces to the caller. This mirrors
+// what connPool.exchange does for DoT: reuse never surfaces a spurious error.
+//
+// Discarding the idle connections usually leaves nothing stale for the retry to
+// draw, but not always: a connection another in-flight query returns lands in
+// the pool afterwards, and over HTTP/2 a stale connection still carrying streams
+// is not idle, so it survives. A retry can therefore be stale in turn, which is
+// why attempts are repeated up to dohMaxAttempts times rather than once.
+//
+// Only a failure on a reused connection is retried. A fresh connection that
+// fails says the upstream itself is unhealthy, which is for the caller's retry
+// and IP rotation to handle, as are timeouts and a cancelled context
+// (see shouldRedial).
+func (r *httpUpstreamClient) do(
+	ctx context.Context, rawDNSMessage []byte, upstreamURL string,
+) (*http.Response, error) {
+	var (
+		resp   *http.Response
+		reused bool
+		err    error
+	)
+
+	for attempt := range dohMaxAttempts {
+		if attempt > 0 {
+			// The upstream turned out to be closing pooled connections, so every
+			// other idle connection to it is just as likely to be dead: discard them
+			// all, or this attempt could draw a second stale connection.
+			r.client.CloseIdleConnections()
+		}
+
+		resp, reused, err = r.attempt(ctx, rawDNSMessage, upstreamURL)
+		if err == nil || !reused || !shouldRedial(ctx, err) {
+			return resp, err
+		}
+
+		// Do only returns a response alongside an error when redirect handling
+		// failed, but that response still holds a body we're about to drop.
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+	}
+
+	return resp, err
+}
+
+// attempt performs a single DoH request, reporting whether it went out on a
+// connection reused from the keep-alive pool.
+func (r *httpUpstreamClient) attempt(
+	ctx context.Context, rawDNSMessage []byte, upstreamURL string,
+) (*http.Response, bool, error) {
+	// atomic because httptrace makes no promise about which goroutine calls the hook.
+	var reused atomic.Bool
+
+	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		GotConn: func(info httptrace.GotConnInfo) { reused.Store(info.Reused) },
+	})
+
+	// The body is built per attempt: a retry cannot reuse the reader the failed
+	// attempt already consumed.
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, upstreamURL, bytes.NewReader(rawDNSMessage))
+	if err != nil {
+		return nil, false, fmt.Errorf("can't create the new request %w", err)
+	}
+
+	req.Header.Set("User-Agent", r.userAgent)
+	req.Header.Set("Content-Type", dnsContentType)
+	req.Host = r.host
+
+	resp, err := r.client.Do(req)
+
+	return resp, reused.Load(), err
+}
+
 func (r *httpUpstreamClient) callExternal(
-	ctx context.Context, msg *dns.Msg, upstreamURL string, _ model.RequestProtocol,
+	ctx context.Context, msg *dns.Msg, upstreamURL string,
 ) (*dns.Msg, time.Duration, error) {
 	start := time.Now()
 
@@ -212,16 +350,7 @@ func (r *httpUpstreamClient) callExternal(
 		return nil, 0, fmt.Errorf("can't pack message: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, upstreamURL, bytes.NewReader(rawDNSMessage))
-	if err != nil {
-		return nil, 0, fmt.Errorf("can't create the new request %w", err)
-	}
-
-	req.Header.Set("User-Agent", r.userAgent)
-	req.Header.Set("Content-Type", dnsContentType)
-	req.Host = r.host
-
-	httpResponse, err := r.client.Do(req)
+	httpResponse, err := r.do(ctx, rawDNSMessage, upstreamURL)
 	if err != nil {
 		return nil, 0, fmt.Errorf("can't perform https request: %w", err)
 	}
@@ -261,83 +390,169 @@ func (r *dnsUpstreamClient) fmtURL(ip net.IP, port uint16, _ string) string {
 	return net.JoinHostPort(ip.String(), strconv.Itoa(int(port)))
 }
 
+// Close releases the connection pool's idle connections, if pooling is in use
+// (the DoT path). Implements io.Closer.
+func (r *dnsUpstreamClient) Close() error {
+	if r.pool != nil {
+		return r.pool.Close()
+	}
+
+	return nil
+}
+
 func (r *dnsUpstreamClient) callExternal(
-	ctx context.Context, msg *dns.Msg, upstreamURL string, protocol model.RequestProtocol,
+	ctx context.Context, msg *dns.Msg, upstreamURL string,
 ) (response *dns.Msg, rtt time.Duration, err error) {
 	if r.udpClient == nil {
-		resp, rtt, err := r.tcpClient.ExchangeContext(ctx, msg, upstreamURL)
+		// Single connection-oriented client (DoT): reuse pooled connections when a
+		// pool is configured, otherwise fall back to a one-shot exchange rather than
+		// dereferencing a nil pool.
+		var (
+			resp *dns.Msg
+			rtt  time.Duration
+			err  error
+		)
+
+		if r.pool != nil {
+			resp, rtt, err = r.pool.exchange(ctx, msg, upstreamURL)
+		} else {
+			resp, rtt, err = r.tcpClient.ExchangeContext(ctx, msg, upstreamURL)
+		}
+
 		if err != nil {
 			return nil, 0, fmt.Errorf("TCP DNS exchange failed to %s: %w", upstreamURL, err)
 		}
 
-		return resp, rtt, nil
+		return resp, rtt, servFailToError(resp)
 	}
 
-	return r.raceClients(ctx, msg, upstreamURL, protocol)
+	return r.exchangeUDPWithTCPFallback(ctx, msg, upstreamURL)
 }
 
-type exchangeResult struct {
-	proto model.RequestProtocol
-	msg   *dns.Msg
-	rtt   time.Duration
-	err   error
+// servFailToError returns an UpstreamServerError if resp is a SERVFAIL, so no other resolver tries
+// to reuse the response; nil otherwise.
+func servFailToError(resp *dns.Msg) error {
+	if resp.Rcode == dns.RcodeServerFailure {
+		return &UpstreamServerError{resp}
+	}
+
+	return nil
 }
 
-func (r *dnsUpstreamClient) raceClients(
-	ctx context.Context, msg *dns.Msg, upstreamURL string, protocol model.RequestProtocol,
-) (response *dns.Msg, rtt time.Duration, err error) {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+// exchange performs a single DNS exchange and maps an upstream SERVFAIL to an UpstreamServerError.
+func (r *dnsUpstreamClient) exchange(
+	ctx context.Context, client *dns.Client, msg *dns.Msg, upstreamURL string,
+) (*dns.Msg, time.Duration, error) {
+	resp, rtt, err := client.ExchangeContext(ctx, msg, upstreamURL)
+	if err == nil {
+		err = servFailToError(resp)
+	}
 
-	// We don't explicitly close the channel, but since the buffer is big enough for all goroutines,
-	// it will be GC'ed and closed automatically.
-	ch := make(chan exchangeResult, 2) // TCP and UDP
+	return resp, rtt, err
+}
 
-	exchange := func(client *dns.Client, proto model.RequestProtocol) {
-		msg, rtt, err := client.ExchangeContext(ctx, msg, upstreamURL)
+// exchangeUDPWithTCPFallback queries the upstream over UDP first and only re-queries over TCP when
+// the UDP exchange failed (timeout, network error, SERVFAIL — e.g. UDP/53 blocked while TCP still
+// works) or its answer can't be used as-is: it is truncated (TC bit) or its question section doesn't
+// match the request. UDP serves the vast majority of queries, so this avoids opening a TCP
+// connection — and paying its dial/handshake/goroutine cost — on the common path. The UDP query
+// advertises an EDNS0 buffer floor (see udpRequestWithBufferFloor) so larger answers arrive over UDP
+// rather than forcing the TCP fallback.
+//
+// Note the UDP exchange shares the per-attempt context deadline with the fallback: if UDP fails by
+// timing out, the TCP fallback inherits an (almost) expired context and fails immediately, and the
+// retry in Resolve takes over. The fallback helps when UDP fails fast (e.g. ICMP port unreachable).
+func (r *dnsUpstreamClient) exchangeUDPWithTCPFallback(
+	ctx context.Context, msg *dns.Msg, upstreamURL string,
+) (*dns.Msg, time.Duration, error) {
+	resp, rtt, err := r.exchange(ctx, r.udpClient, udpRequestWithBufferFloor(msg), upstreamURL)
 
-		if err == nil && msg.Rcode == dns.RcodeServerFailure {
-			err = &UpstreamServerError{msg}
+	switch {
+	case err != nil:
+		// Hard UDP failure (timeout, network error, SERVFAIL): re-ask over TCP, which may still work
+		// on networks where UDP/53 is blocked or dropped. On TCP failure, return the UDP result —
+		// it's the primary transport, so its error is the more representative one.
+		tcpResp, tcpRTT, tcpErr := r.exchange(ctx, r.tcpClient, msg, upstreamURL)
+		if tcpErr != nil {
+			return resp, rtt, err
 		}
 
-		ch <- exchangeResult{proto, msg, rtt, err}
-	}
+		resp, rtt = tcpResp, tcpRTT
 
-	go exchange(r.tcpClient, model.RequestProtocolTCP)
-	go exchange(r.udpClient, model.RequestProtocolUDP)
+	case resp.Truncated:
+		// Re-ask over TCP, which has no size limit. The original request is sent so we don't
+		// advertise an EDNS0 buffer the client never asked for over the TCP hop.
+		if tcpResp, tcpRTT, tcpErr := r.exchange(ctx, r.tcpClient, msg, upstreamURL); tcpErr == nil {
+			resp, rtt = tcpResp, tcpRTT
+		}
+		// On TCP failure we keep the truncated UDP answer: it is a valid (partial) answer for the
+		// right question, and the downstream `Server` sets the TC bit if it is too big for the
+		// client's transport.
 
-	// We don't care about a response too big for the downstream protocol: that's handled by `Server`,
-	// and returning a larger request from here might allow us to cache it.
-
-	res1 := <-ch
-	if res1.err == nil && !res1.msg.Truncated {
-		return res1.msg, res1.rtt, nil
-	}
-
-	res2 := <-ch
-	if res2.err == nil && !res2.msg.Truncated {
-		return res2.msg, res2.rtt, nil
-	}
-
-	resWhere := func(pred func(*exchangeResult) bool) *exchangeResult {
-		if pred(&res1) {
-			return &res1
+	case !responseMatchesRequest(msg, resp):
+		// The UDP answer can't be trusted at all, so unlike the truncated case it must not be
+		// returned: a TCP failure here fails the whole exchange.
+		tcpResp, tcpRTT, tcpErr := r.exchange(ctx, r.tcpClient, msg, upstreamURL)
+		if tcpErr != nil {
+			return nil, 0, fmt.Errorf(
+				"UDP response question section doesn't match the request and TCP fallback failed: %w", tcpErr)
 		}
 
-		return &res2
+		resp, rtt = tcpResp, tcpRTT
 	}
 
-	// When both failed, return the result that used the same protocol as the downstream request
-	if res1.err != nil && res2.err != nil {
-		sameProto := resWhere(func(r *exchangeResult) bool { return r.proto == protocol })
-
-		return sameProto.msg, sameProto.rtt, sameProto.err
+	if msg.IsEdns0() == nil {
+		// We may have advertised the EDNS0 buffer floor the client never asked for; don't leak the
+		// resulting OPT record back to a client that didn't request EDNS0.
+		util.RemoveEdns0Record(resp)
 	}
 
-	// Only a single one failed, use the one that succeeded
-	successful := resWhere(func(r *exchangeResult) bool { return r.err == nil })
+	return resp, rtt, nil
+}
 
-	return successful.msg, successful.rtt, nil
+// udpRequestWithBufferFloor returns the message to send to an upstream over UDP, ensuring it
+// advertises an EDNS0 UDP buffer of at least upstreamUDPBufferFloor. If msg already advertises
+// enough it is returned unchanged; otherwise a copy with a raised (or newly added) OPT is returned,
+// so the caller's shared request — which also drives per-client response truncation in the Server —
+// is never mutated.
+func udpRequestWithBufferFloor(msg *dns.Msg) *dns.Msg {
+	if opt := msg.IsEdns0(); opt != nil && opt.UDPSize() >= upstreamUDPBufferFloor {
+		return msg
+	}
+
+	clone := msg.Copy()
+	if opt := clone.IsEdns0(); opt != nil {
+		// raise the existing OPT in place so its options and DO bit are kept
+		opt.SetUDPSize(upstreamUDPBufferFloor)
+	} else {
+		clone.SetEdns0(upstreamUDPBufferFloor, false)
+	}
+
+	return clone
+}
+
+// responseMatchesRequest reports whether resp can be trusted as an answer to req: its question
+// section must be empty — servers commonly omit it on error rcodes such as REFUSED — or contain the
+// same questions, each with a matching type, class, and (case-insensitive) name. A question for
+// something else indicates a buggy or confused upstream whose UDP answer can't be trusted, so the
+// caller re-asks over TCP.
+func responseMatchesRequest(req, resp *dns.Msg) bool {
+	if len(resp.Question) == 0 {
+		return true
+	}
+
+	if len(resp.Question) != len(req.Question) {
+		return false
+	}
+
+	for i := range req.Question {
+		q, rq := req.Question[i], resp.Question[i]
+		if rq.Qtype != q.Qtype || rq.Qclass != q.Qclass || !strings.EqualFold(rq.Name, q.Name) {
+			return false
+		}
+	}
+
+	return true
 }
 
 // NewUpstreamResolver creates new resolver instance
@@ -365,7 +580,7 @@ func newUpstreamResolverUnchecked(cfg upstreamConfig, bootstrap *Bootstrap) *Ups
 	upstreamClient := createUpstreamClient(cfg)
 
 	return &UpstreamResolver{
-		typed:        withType("upstream"),
+		typed:        withType(upstreamResolverType),
 		configurable: withConfig(cfg),
 
 		upstreamClient: upstreamClient,
@@ -383,14 +598,14 @@ func (r UpstreamResolver) Upstream() config.Upstream {
 
 func (r *UpstreamResolver) log(ctx context.Context) (context.Context, *logrus.Entry) {
 	return r.logWithFields(ctx, logrus.Fields{
-		"upstream": r.cfg.String(),
+		logFieldUpstream: r.cfg.String(),
 	})
 }
 
 // testResolve sends a test query to verify the upstream is reachable and working
 func (r *UpstreamResolver) testResolve(ctx context.Context) error {
 	// example.com MUST always resolve. See SUDN resolver
-	request := newRequest("example.com.", dns.Type(dns.TypeA))
+	request := newRequest(exampleDomain, dns.Type(dns.TypeA))
 
 	_, err := r.Resolve(ctx, request)
 	if err != nil {
@@ -422,7 +637,7 @@ func (r *UpstreamResolver) Resolve(ctx context.Context, request *model.Request) 
 			ctx, cancel := context.WithTimeout(ctx, r.cfg.Timeout.ToDuration())
 			defer cancel()
 
-			response, rtt, err := r.upstreamClient.callExternal(ctx, request.Req, upstreamURL, request.Protocol)
+			response, rtt, err := r.upstreamClient.callExternal(ctx, request.Req, upstreamURL)
 			if err != nil {
 				return fmt.Errorf("can't resolve request via upstream server %s (%s): %w", r.cfg, upstreamURL, err)
 			}
@@ -440,10 +655,10 @@ func (r *UpstreamResolver) Resolve(ctx context.Context, request *model.Request) 
 		retry.RetryIf(isTimeout),
 		retry.OnRetry(func(n uint, err error) {
 			logger.WithFields(logrus.Fields{
-				"upstream":    r.cfg.String(),
-				"upstream_ip": ip.String(),
-				"question":    util.QuestionToString(request.Req.Question),
-				"attempt":     fmt.Sprintf("%d/%d", n+1, retryAttempts),
+				logFieldUpstream: r.cfg.String(),
+				"upstream_ip":    ip.String(),
+				"question":       util.QuestionToString(request.Req.Question),
+				"attempt":        fmt.Sprintf("%d/%d", n+1, retryAttempts),
 			}).Debugf("%s, retrying...", err)
 
 			ips.Next()
@@ -458,12 +673,18 @@ func (r *UpstreamResolver) Resolve(ctx context.Context, request *model.Request) 
 func (r *UpstreamResolver) logResponse(
 	logger *logrus.Entry, request *model.Request, resp *dns.Msg, ip net.IP, rtt time.Duration,
 ) {
+	// runs on every successful upstream response (every cache miss); skip building the
+	// (expensive) answer string / field map entirely when Debug isn't enabled.
+	if !isDebugEnabled(logger) {
+		return
+	}
+
 	logger.WithFields(logrus.Fields{
-		"answer":           util.AnswerToString(resp.Answer),
+		logFieldAnswer:     util.Obfuscate(util.AnswerToString(resp.Answer)),
 		"return_code":      dns.RcodeToString[resp.Rcode],
-		"upstream":         r.cfg.String(),
+		logFieldUpstream:   r.cfg.String(),
 		"upstream_ip":      ip.String(),
-		"protocol":         request.Protocol,
+		logFieldProtocol:   request.Protocol,
 		"net":              r.cfg.Net,
 		"response_time_ms": rtt.Milliseconds(),
 	}).Debugf("received response from upstream")

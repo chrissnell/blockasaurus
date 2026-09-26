@@ -52,7 +52,7 @@ Some links/ideas for lists:
 
 * [https://github.com/StevenBlack/hosts](https://github.com/StevenBlack/hosts)
 * [https://github.com/nickspaargaren/no-google](https://github.com/nickspaargaren/no-google)
-* [https://energized.pro/](https://energized.pro/)
+* [https://github.com/hagezi/dns-blocklists](https://github.com/hagezi/dns-blocklists)
 * [https://github.com/Perflyst/PiHoleBlocklist](https://github.com/Perflyst/PiHoleBlocklist)
 * [https://github.com/kboghdady/youTube_ads_4_pi-hole](https://github.com/kboghdady/youTube_ads_4_pi-hole)
 * [https://github.com/chadmayfield/my-pihole-blocklists](https://github.com/chadmayfield/my-pihole-blocklists)
@@ -116,5 +116,3 @@ This will trigger a workflow on every push of a branch starting with `fb-` and c
 
 To enable automatic fork synchronisation create a secret with the name `FORK_SYNC_TOKEN` with an access token that has write permission to the fork repository.
 The enabled workflow will sync the main branch every 30 minutes with its upstream.
-
---8<-- "docs/includes/abbreviations.md"

@@ -17,9 +17,39 @@ import (
 )
 
 var _ = Describe("Common function tests", func() {
+	Describe("Obfuscate", func() {
+		When("LogPrivacy is enabled", func() {
+			BeforeEach(func() {
+				LogPrivacy.Store(true)
+			})
+
+			AfterEach(func() {
+				LogPrivacy.Store(false)
+			})
+
+			It("should replace alphanumeric characters with *", func() {
+				Expect(Obfuscate("example.com")).Should(Equal("*******.***"))
+			})
+
+			It("should handle empty string", func() {
+				Expect(Obfuscate("")).Should(Equal(""))
+			})
+
+			It("should preserve non-alphanumeric characters", func() {
+				Expect(Obfuscate("a-b.c")).Should(Equal("*-*.*"))
+			})
+		})
+
+		When("LogPrivacy is disabled", func() {
+			It("should return the input unchanged", func() {
+				Expect(Obfuscate("example.com")).Should(Equal("example.com"))
+			})
+		})
+	})
+
 	Describe("Print DNS answer", func() {
 		When("different types of DNS answers", func() {
-			rr := make([]dns.RR, 0)
+			rr := make([]dns.RR, 0, 5)
 			rr = append(rr, &dns.A{A: net.ParseIP("127.0.0.1")})
 			rr = append(rr, &dns.AAAA{AAAA: net.ParseIP("2001:0db8:85a3:08d3:1319:8a2e:0370:7344")})
 			rr = append(rr, &dns.CNAME{Target: "cname"})
@@ -29,6 +59,21 @@ var _ = Describe("Common function tests", func() {
 				answerToString := AnswerToString(rr)
 				Expect(answerToString).Should(Equal("A (127.0.0.1), " +
 					"AAAA (2001:db8:85a3:8d3:1319:8a2e:370:7344), CNAME (cname), PTR (ptr), \t0\tCLASS0\tNone\tns"))
+			})
+		})
+
+		When("LogPrivacy is enabled", func() {
+			BeforeEach(func() {
+				LogPrivacy.Store(true)
+			})
+
+			AfterEach(func() {
+				LogPrivacy.Store(false)
+			})
+
+			It("should still return the raw representation (obfuscation is the caller's job)", func() {
+				rr := []dns.RR{&dns.A{A: net.ParseIP("127.0.0.1")}}
+				Expect(AnswerToString(rr)).Should(Equal("A (127.0.0.1)"))
 			})
 		})
 	})

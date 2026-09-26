@@ -252,13 +252,13 @@ func TestValidateUsername_Accepts(t *testing.T) {
 	t.Parallel()
 
 	for _, u := range []string{
-		"abc",                             // minimum length
-		"alice",                           // common
-		"admin",                           // common
-		"a.b",                             // dot allowed
-		"a-b",                             // hyphen allowed
-		"a_b",                             // underscore allowed
-		"user.name_01",                    // combination
+		"abc",                                  // minimum length
+		"alice",                                // common
+		"admin",                                // common
+		"a.b",                                  // dot allowed
+		"a-b",                                  // hyphen allowed
+		"a_b",                                  // underscore allowed
+		"user.name_01",                         // combination
 		strings.Repeat("a", UsernameMaxLength), // maximum length
 	} {
 		if err := ValidateUsername(u); err != nil {

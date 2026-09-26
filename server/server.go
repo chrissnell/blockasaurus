@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"runtime"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/0xERR0R/blocky/auth"
+	"github.com/0xERR0R/blocky/cache"
 	"github.com/0xERR0R/blocky/config"
 	"github.com/0xERR0R/blocky/configstore"
 	"github.com/0xERR0R/blocky/log"
@@ -28,13 +30,17 @@ import (
 	"github.com/0xERR0R/blocky/pkg/statscollector"
 	"github.com/0xERR0R/blocky/redis"
 	"github.com/0xERR0R/blocky/resolver"
+	"github.com/0xERR0R/blocky/server/freebind"
 
 	"github.com/0xERR0R/blocky/util"
+	goredis "github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
 	"github.com/hashicorp/go-multierror"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/miekg/dns"
+	"github.com/pires/go-proxyproto"
+	"github.com/quic-go/quic-go"
 	"github.com/sirupsen/logrus"
 )
 
@@ -42,6 +48,10 @@ const (
 	maxUDPBufferSize = 65535
 	caExpiryYears    = 10
 	certExpiryYears  = 5
+
+	networkUDP    = "udp"
+	networkTCP    = "tcp"
+	networkTCPTLS = "tcp-tls"
 )
 
 // chainSnapshot holds a resolver chain for atomic swap.
@@ -57,14 +67,23 @@ type Server struct {
 	cfg         *config.Config
 	cfgMu       sync.RWMutex
 
-	configStore    *configstore.ConfigStore
-	bootstrap      *resolver.Bootstrap
-	redisClient    *redis.Client
-	broadcaster    *logstream.Broadcaster
-	statsCollector *statscollector.Collector
-	wsRevoker      *auth.WSRevoker
+	configStore *configstore.ConfigStore
+	bootstrap   *resolver.Bootstrap
+	// newCacheDecorator builds the caching resolver's write-through decorator
+	// for a chain being constructed under a given context. It replaces the
+	// *redis.Client the chain used to take: upstream moved redis from a
+	// parameter of the blocking resolver to a decorator around the result
+	// cache. Reconfigure must pass its own chain context, not the server's, or
+	// the decorated cache outlives the chain that owns it.
+	newCacheDecorator func(chainCtx context.Context) resolver.CacheDecorator
+	broadcaster       *logstream.Broadcaster
+	statsCollector    *statscollector.Collector
+	wsRevoker         *auth.WSRevoker
 
-	servers map[net.Listener]*httpServer
+	servers          map[net.Listener]*httpServer
+	http3Server      *http3Server     // nil when disabled
+	http3PacketConns []net.PacketConn // one per address in ports.https
+	closers          []io.Closer
 }
 
 func logger() *logrus.Entry {
@@ -114,7 +133,7 @@ func newTLSConfig(cfg *config.Config) (*tls.Config, error) {
 
 	// #nosec G402 // See TLSVersion.validate
 	res := &tls.Config{
-		MinVersion:   uint16(cfg.MinTLSServeVer),
+		MinVersion:   uint16(cfg.MinTLSServeVer), //nolint:gosec // TLS version constants fit safely in uint16
 		CipherSuites: tlsCipherSuites(),
 		Certificates: []tls.Certificate{cert},
 	}
@@ -135,12 +154,17 @@ func NewServer(ctx context.Context, cfg *config.Config, store *configstore.Confi
 		}
 	}
 
-	dnsServers, err := createServers(cfg, tlsCfg)
+	if cfg.Ports.FreeBind && !freebind.Supported {
+		logger().Warn("ports.freeBind: true is only supported on Linux; " +
+			"ignoring on this platform (binding normally)")
+	}
+
+	dnsServers, err := createServers(ctx, cfg, tlsCfg)
 	if err != nil {
 		return nil, fmt.Errorf("server creation failed: %w", err)
 	}
 
-	httpListeners, httpsListeners, err := createHTTPListeners(ctx, cfg, tlsCfg)
+	httpListeners, httpsListeners, http3PacketConns, err := createHTTPListeners(ctx, cfg, tlsCfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HTTP/HTTPS listeners: %w", err)
 	}
@@ -152,12 +176,21 @@ func NewServer(ctx context.Context, cfg *config.Config, store *configstore.Confi
 		return nil, fmt.Errorf("failed to create bootstrap resolver: %w", err)
 	}
 
-	var redisClient *redis.Client
+	var redisConn *goredis.Client
 	if cfg.Redis.IsEnabled() {
-		redisClient, err = redis.New(ctx, &cfg.Redis)
-		if err != nil && cfg.Redis.Required {
-			return nil, fmt.Errorf("failed to create required Redis client: %w", err)
+		redisConn, err = redis.New(ctx, &cfg.Redis)
+		if err != nil {
+			if cfg.Redis.Required {
+				return nil, fmt.Errorf("failed to create required Redis client: %w", err)
+			}
+
+			logger().WithError(err).Warn("Redis is enabled but optional and could not be initialized, continuing without Redis")
 		}
+	}
+
+	redisResult, err := createRedisCacheDecorator(ctx, redisConn, cfg.Redis.Required)
+	if err != nil {
+		return nil, err
 	}
 
 	broadcaster := logstream.NewBroadcaster(ctx, 1000)
@@ -172,7 +205,8 @@ func NewServer(ctx context.Context, cfg *config.Config, store *configstore.Confi
 
 	chainCtx, chainCancel := context.WithCancel(ctx)
 
-	queryResolver, queryError := createQueryResolver(chainCtx, cfg, bootstrap, redisClient, broadcaster, sc)
+	queryResolver, queryError := createQueryResolver(chainCtx, cfg, bootstrap,
+		redisResult.decoratorFor(chainCtx), broadcaster, sc)
 	if queryError != nil {
 		chainCancel()
 
@@ -187,16 +221,25 @@ func NewServer(ctx context.Context, cfg *config.Config, store *configstore.Confi
 	wsRevoker := auth.NewWSRevoker()
 
 	server = &Server{
-		dnsServers:     dnsServers,
-		cfg:            cfg,
-		configStore:    store,
-		bootstrap:      bootstrap,
-		redisClient:    redisClient,
-		broadcaster:    broadcaster,
-		statsCollector: sc,
-		wsRevoker:      wsRevoker,
+		dnsServers:        dnsServers,
+		cfg:               cfg,
+		configStore:       store,
+		bootstrap:         bootstrap,
+		newCacheDecorator: redisResult.decoratorFor,
+		broadcaster:       broadcaster,
+		statsCollector:    sc,
+		wsRevoker:         wsRevoker,
 
-		servers: make(map[net.Listener]*httpServer),
+		servers:          make(map[net.Listener]*httpServer),
+		http3PacketConns: http3PacketConns,
+	}
+
+	if redisResult.bridge != nil {
+		server.closers = append(server.closers, redisResult.bridge)
+	}
+
+	if redisConn != nil {
+		server.closers = append(server.closers, redisConn)
 	}
 
 	// Start the session-revocation consumer goroutine. It drains
@@ -217,33 +260,32 @@ func NewServer(ctx context.Context, cfg *config.Config, store *configstore.Confi
 		return nil, fmt.Errorf("failed to create OpenAPI interface implementation: %w", err)
 	}
 
+	// mainRouter serves ports.http / ports.https — and, via HTTP/3, the UDP
+	// mirrors of ports.https. With the admin UI on its own ports it carries
+	// DoH only; otherwise it carries DoH plus the UI and the REST API.
+	var (
+		mainRouter *chi.Mux
+		httpName   = "http"
+		httpsName  = "https"
+	)
+
 	if cfg.Ports.AdminPortEnabled() {
+		httpName, httpsName = "http-doh", "https-doh"
+
 		// DoH-only router for main http/https ports
 		dohRouter := chi.NewRouter()
 		server.registerDoHEndpoints(dohRouter, cfg)
+		mainRouter = dohRouter
 
 		// UI-only router for admin ports
 		uiRouter := chi.NewRouter()
-		registerUIRoutes(uiRouter, cfg, openAPIImpl, server.configStore, server, server.broadcaster, server.statsCollector, server.wsRevoker)
+		registerUIRoutes(uiRouter, cfg, openAPIImpl, server.configStore, server, server.broadcaster,
+			server.statsCollector, server.wsRevoker)
 
 		// Create admin listeners
 		adminHTTP, adminHTTPS, err := createAdminListeners(ctx, cfg, tlsCfg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create admin listeners: %w", err)
-		}
-
-		if len(cfg.Ports.HTTP) != 0 {
-			srv := newHTTPServer("http-doh", dohRouter)
-			for _, l := range httpListeners {
-				server.servers[l] = srv
-			}
-		}
-
-		if len(cfg.Ports.HTTPS) != 0 {
-			srv := newHTTPServer("https-doh", dohRouter)
-			for _, l := range httpsListeners {
-				server.servers[l] = srv
-			}
 		}
 
 		if len(cfg.Ports.AdminPort) != 0 {
@@ -260,21 +302,34 @@ func NewServer(ctx context.Context, cfg *config.Config, store *configstore.Confi
 			}
 		}
 	} else {
-		httpRouter := createHTTPRouter(cfg, openAPIImpl, server.configStore, server, server.broadcaster, server.statsCollector, server.wsRevoker)
+		httpRouter := createHTTPRouter(cfg, openAPIImpl, server.configStore, server, server.broadcaster,
+			server.statsCollector, server.wsRevoker)
 		server.registerDoHEndpoints(httpRouter, cfg)
+		mainRouter = httpRouter
+	}
 
-		if len(cfg.Ports.HTTP) != 0 {
-			srv := newHTTPServer("http", httpRouter)
-			for _, l := range httpListeners {
-				server.servers[l] = srv
-			}
+	// HTTP/3 listens on the UDP counterparts of ports.https, so it serves
+	// whatever that port serves — DoH only when the admin UI is split off.
+	if len(http3PacketConns) > 0 {
+		server.http3Server = newHTTP3Server(mainRouter, newH3TLSConfig(tlsCfg))
+	}
+
+	if len(cfg.Ports.HTTP) != 0 {
+		srv := newHTTPServer(httpName, mainRouter)
+		for _, l := range httpListeners {
+			server.servers[l] = srv
+		}
+	}
+
+	if len(cfg.Ports.HTTPS) != 0 {
+		var httpsHandler http.Handler = mainRouter
+		if server.http3Server != nil {
+			httpsHandler = newAltSvcMiddleware(server.http3Server)(mainRouter)
 		}
 
-		if len(cfg.Ports.HTTPS) != 0 {
-			srv := newHTTPServer("https", httpRouter)
-			for _, l := range httpsListeners {
-				server.servers[l] = srv
-			}
+		srv := newHTTPServer(httpsName, httpsHandler)
+		for _, l := range httpsListeners {
+			server.servers[l] = srv
 		}
 	}
 
@@ -307,10 +362,12 @@ func NewServer(ctx context.Context, cfg *config.Config, store *configstore.Confi
 	return server, err
 }
 
-func createServers(cfg *config.Config, tlsCfg *tls.Config) ([]*dns.Server, error) {
+func createServers(ctx context.Context, cfg *config.Config, tlsCfg *tls.Config) ([]*dns.Server, error) {
 	var dnsServers []*dns.Server
 
 	var err *multierror.Error
+
+	freeBind := cfg.Ports.FreeBind
 
 	addServers := func(newServer NewServerFunc, addresses config.ListenConfig) error {
 		for _, address := range addresses {
@@ -326,10 +383,20 @@ func createServers(cfg *config.Config, tlsCfg *tls.Config) ([]*dns.Server, error
 	}
 
 	err = multierror.Append(err,
-		addServers(createUDPServer, cfg.Ports.DNS),
-		addServers(createTCPServer, cfg.Ports.DNS),
 		addServers(func(address string) (*dns.Server, error) {
-			return createTLSServer(address, tlsCfg)
+			return createUDPServer(ctx, address, listenerOptions{freeBind: freeBind})
+		}, cfg.Ports.DNS),
+		addServers(func(address string) (*dns.Server, error) {
+			return createTCPServer(ctx, address, listenerOptions{
+				freeBind:      freeBind,
+				proxyProtocol: cfg.Ports.ProxyProtocol.Has(config.ProxyProtocolTypeDns),
+			})
+		}, cfg.Ports.DNS),
+		addServers(func(address string) (*dns.Server, error) {
+			return createTLSServer(ctx, address, tlsCfg, listenerOptions{
+				freeBind:      freeBind,
+				proxyProtocol: cfg.Ports.ProxyProtocol.Has(config.ProxyProtocolTypeTls),
+			})
 		}, cfg.Ports.TLS))
 
 	if multiErr := err.ErrorOrNil(); multiErr != nil {
@@ -341,30 +408,63 @@ func createServers(cfg *config.Config, tlsCfg *tls.Config) ([]*dns.Server, error
 
 func createHTTPListeners(
 	ctx context.Context, cfg *config.Config, tlsCfg *tls.Config,
-) (httpListeners, httpsListeners []net.Listener, err error) {
-	httpListeners, err = newTCPListeners(ctx, "http", cfg.Ports.HTTP)
+) (httpListeners, httpsListeners []net.Listener, http3PacketConns []net.PacketConn, err error) {
+	httpListeners, err = newTCPListeners(ctx, "http", cfg.Ports.HTTP,
+		cfg.Ports.ProxyProtocol.Has(config.ProxyProtocolTypeHttp))
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create HTTP listeners: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to create HTTP listeners: %w", err)
 	}
 
-	httpsListeners, err = newTLSListeners(ctx, "https", cfg.Ports.HTTPS, tlsCfg)
+	httpsListeners, err = newTLSListeners(ctx, "https", cfg.Ports.HTTPS, tlsCfg,
+		cfg.Ports.ProxyProtocol.Has(config.ProxyProtocolTypeHttps))
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create HTTPS listeners: %w", err)
+		closeAll(httpListeners)
+
+		return nil, nil, nil, fmt.Errorf("failed to create HTTPS listeners: %w", err)
 	}
 
-	return httpListeners, httpsListeners, nil
+	if cfg.HTTP3.IsEnabled() {
+		switch {
+		case len(cfg.Ports.HTTPS) == 0:
+			logger().Warn("http3.enable is true but ports.https is empty; HTTP/3 disabled")
+		case cfg.Ports.ProxyProtocol.Has(config.ProxyProtocolTypeHttps):
+			logger().Warn("http3.enable is true but ports.proxyProtocol includes 'https'; " +
+				"HTTP/3 cannot carry PROXY protocol headers and is disabled to keep the client IP consistent")
+		default:
+			http3PacketConns, err = newUDPPacketConns(ctx, cfg.Ports.HTTPS)
+			if err != nil {
+				closeAll(httpListeners)
+				closeAll(httpsListeners)
+
+				return nil, nil, nil, fmt.Errorf("failed to create HTTP/3 UDP listeners: %w", err)
+			}
+		}
+	}
+
+	return httpListeners, httpsListeners, http3PacketConns, nil
 }
 
+func closeAll[T io.Closer](closers []T) {
+	for _, c := range closers {
+		_ = c.Close()
+	}
+}
+
+// createAdminListeners opens the admin UI ports. PROXY protocol is never
+// enabled on them: ports.proxyProtocol only names dns, tls, http and https,
+// and the admin UI is not one of them, so there is no way to ask for it here.
 func createAdminListeners(
 	ctx context.Context, cfg *config.Config, tlsCfg *tls.Config,
 ) (httpListeners, httpsListeners []net.Listener, err error) {
-	httpListeners, err = newTCPListeners(ctx, "http-admin", cfg.Ports.AdminPort)
+	httpListeners, err = newTCPListeners(ctx, "http-admin", cfg.Ports.AdminPort, false)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create admin HTTP listeners: %w", err)
 	}
 
-	httpsListeners, err = newTLSListeners(ctx, "https-admin", cfg.Ports.AdminPortTLS, tlsCfg)
+	httpsListeners, err = newTLSListeners(ctx, "https-admin", cfg.Ports.AdminPortTLS, tlsCfg, false)
 	if err != nil {
+		closeAll(httpListeners)
+
 		return nil, nil, fmt.Errorf("failed to create admin HTTPS listeners: %w", err)
 	}
 
@@ -372,16 +472,18 @@ func createAdminListeners(
 }
 
 func newTCPListeners(
-	ctx context.Context, proto string, addresses config.ListenConfig,
+	ctx context.Context, proto string, addresses config.ListenConfig, proxyProtocol bool,
 ) ([]net.Listener, error) {
 	listeners := make([]net.Listener, 0, len(addresses))
 	lc := &net.ListenConfig{}
 
 	for _, address := range addresses {
-		listener, err := lc.Listen(ctx, "tcp", address)
+		listener, err := lc.Listen(ctx, networkTCP, address)
 		if err != nil {
 			return nil, fmt.Errorf("start %s listener on %s failed: %w", proto, address, err)
 		}
+
+		listener = newProxyProtocolListener(listener, proxyProtocol)
 
 		listeners = append(listeners, listener)
 	}
@@ -390,9 +492,9 @@ func newTCPListeners(
 }
 
 func newTLSListeners(
-	ctx context.Context, proto string, addresses config.ListenConfig, tlsCfg *tls.Config,
+	ctx context.Context, proto string, addresses config.ListenConfig, tlsCfg *tls.Config, proxyProtocol bool,
 ) ([]net.Listener, error) {
-	listeners, err := newTCPListeners(ctx, proto, addresses)
+	listeners, err := newTCPListeners(ctx, proto, addresses, proxyProtocol)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create TCP listeners for TLS: %w", err)
 	}
@@ -404,7 +506,28 @@ func newTLSListeners(
 	return listeners, nil
 }
 
-func createDNSServer(network string, address string, tlsCfg *tls.Config) (*dns.Server, error) {
+func newProxyProtocolListener(listener net.Listener, enabled bool) net.Listener {
+	if !enabled {
+		return listener
+	}
+
+	return &proxyproto.Listener{
+		Listener: listener,
+		ConnPolicy: func(proxyproto.ConnPolicyOptions) (proxyproto.Policy, error) {
+			return proxyproto.REQUIRE, nil
+		},
+	}
+}
+
+// listenerOptions bundles the socket-level options applied when a DNS listener is pre-created
+// before miekg/dns starts serving (freebind socket option, PROXY protocol wrapping).
+type listenerOptions struct {
+	freeBind      bool
+	proxyProtocol bool
+}
+
+func createDNSServer(ctx context.Context, network, address string, tlsCfg *tls.Config, opts listenerOptions,
+) (*dns.Server, error) {
 	srv := &dns.Server{
 		Addr:    address,
 		Net:     network,
@@ -414,7 +537,7 @@ func createDNSServer(network string, address string, tlsCfg *tls.Config) (*dns.S
 		},
 	}
 
-	if network == "udp" {
+	if network == networkUDP {
 		srv.UDPSize = maxUDPBufferSize
 	}
 
@@ -422,36 +545,141 @@ func createDNSServer(network string, address string, tlsCfg *tls.Config) (*dns.S
 		srv.TLSConfig = tlsCfg
 	}
 
+	// When freeBind is enabled (and supported), pre-create the listener with the IP_FREEBIND socket
+	// option and hand it to the server, which is then started via ActivateAndServe (see Server.Start).
+	if (opts.freeBind && freebind.Supported) || (opts.proxyProtocol && network != networkUDP) {
+		if err := attachListener(ctx, srv, network, address, tlsCfg, listenerOptions{
+			freeBind:      opts.freeBind && freebind.Supported,
+			proxyProtocol: opts.proxyProtocol,
+		}); err != nil {
+			return nil, err
+		}
+	}
+
 	return srv, nil
 }
 
-func createTLSServer(address string, tlsCfg *tls.Config) (*dns.Server, error) {
-	return createDNSServer("tcp-tls", address, tlsCfg)
+// attachListener creates a listener/packet connection for DNS servers that need custom socket handling
+// before miekg/dns starts serving, such as freebind or PROXY protocol wrapping.
+func attachListener(ctx context.Context, srv *dns.Server, network, address string,
+	tlsCfg *tls.Config, opts listenerOptions,
+) error {
+	lc := net.ListenConfig{}
+	if opts.freeBind {
+		lc.Control = freebind.Control
+	}
+
+	switch network {
+	case networkUDP:
+		pc, err := lc.ListenPacket(ctx, networkUDP, address)
+		if err != nil {
+			return fmt.Errorf("freebind udp listener on %s failed: %w", address, err)
+		}
+
+		srv.PacketConn = pc
+	case networkTCP:
+		l, err := lc.Listen(ctx, networkTCP, address)
+		if err != nil {
+			return fmt.Errorf("tcp listener on %s failed: %w", address, err)
+		}
+
+		l = newProxyProtocolListener(l, opts.proxyProtocol)
+		srv.Listener = l
+	case networkTCPTLS:
+		l, err := lc.Listen(ctx, networkTCP, address)
+		if err != nil {
+			return fmt.Errorf("tcp-tls listener on %s failed: %w", address, err)
+		}
+
+		l = newProxyProtocolListener(l, opts.proxyProtocol)
+		srv.Listener = tls.NewListener(l, tlsCfg)
+	default:
+		return fmt.Errorf("unsupported DNS listener network %q", network)
+	}
+
+	return nil
 }
 
-func createTCPServer(address string) (*dns.Server, error) {
-	return createDNSServer("tcp", address, nil)
+func createTLSServer(ctx context.Context, address string, tlsCfg *tls.Config, opts listenerOptions,
+) (*dns.Server, error) {
+	return createDNSServer(ctx, networkTCPTLS, address, tlsCfg, opts)
 }
 
-func createUDPServer(address string) (*dns.Server, error) {
-	return createDNSServer("udp", address, nil)
+func createTCPServer(ctx context.Context, address string, opts listenerOptions) (*dns.Server, error) {
+	return createDNSServer(ctx, networkTCP, address, nil, opts)
+}
+
+func createUDPServer(ctx context.Context, address string, opts listenerOptions) (*dns.Server, error) {
+	return createDNSServer(ctx, networkUDP, address, nil, opts)
+}
+
+type redisBridgeResult struct {
+	// decoratorFor builds the decorator for a chain being constructed under
+	// chainCtx, rather than a single decorator captured at startup. The
+	// Redis-backed cache launches a subscriber and a batching writer that run
+	// until their context is cancelled (see cache.NewRedisExpiringCache), so a
+	// decorator bound to the server context would leak one set of goroutines —
+	// plus the cache they feed — on every Reconfigure. It returns nil when
+	// Redis is not configured, which is what disables the decoration.
+	decoratorFor func(chainCtx context.Context) resolver.CacheDecorator
+	bridge       *redis.EventBusBridge
+}
+
+func createRedisCacheDecorator(
+	ctx context.Context, redisConn *goredis.Client, required bool,
+) (*redisBridgeResult, error) {
+	if redisConn == nil {
+		return &redisBridgeResult{
+			decoratorFor: func(context.Context) resolver.CacheDecorator { return nil },
+		}, nil
+	}
+
+	bridge, err := redis.NewEventBusBridge(ctx, redisConn)
+	if err != nil {
+		if required {
+			return nil, fmt.Errorf("failed to create required Redis event bridge: %w", err)
+		}
+
+		logger().Warn("failed to create Redis event bridge: ", err)
+	}
+
+	decoratorFor := func(chainCtx context.Context) resolver.CacheDecorator {
+		return func(inner cache.ExpiringCache[[]byte]) (cache.ExpiringCache[[]byte], error) {
+			return cache.NewRedisExpiringByteCache(chainCtx, inner, redisConn, cache.RedisOptions[[]byte]{
+				Prefix:  "blocky:cache:",
+				Channel: "blocky_cache_sync",
+			})
+		}
+	}
+
+	return &redisBridgeResult{decoratorFor: decoratorFor, bridge: bridge}, nil
 }
 
 func createQueryResolver(
 	ctx context.Context,
 	cfg *config.Config,
 	bootstrap *resolver.Bootstrap,
-	redisClient *redis.Client,
+	cacheDecorator resolver.CacheDecorator,
 	broadcaster *logstream.Broadcaster,
 	statsCollector *statscollector.Collector,
 ) (resolver.ChainedResolver, error) {
 	upstreamTree, utErr := resolver.NewUpstreamTreeResolver(ctx, cfg.Upstreams, bootstrap)
-	blocking, blErr := resolver.NewBlockingResolver(ctx, cfg.Blocking, redisClient, bootstrap)
-	clientNames, cnErr := resolver.NewClientNamesResolver(ctx, cfg.ClientLookup, cfg.Upstreams, bootstrap)
+	blocking, blErr := resolver.NewBlockingResolver(ctx, cfg.Blocking, bootstrap)
 	queryLogging, qlErr := resolver.NewQueryLoggingResolver(ctx, cfg.QueryLog, broadcaster)
 	condUpstream, cuErr := resolver.NewConditionalUpstreamResolver(ctx, cfg.Conditional, cfg.Upstreams, bootstrap)
+	customDNS := resolver.NewCustomDNSResolver(cfg.CustomDNS)
 	hostsFile, hfErr := resolver.NewHostsFileResolver(ctx, cfg.HostsFile, bootstrap)
-	cachingResolver, crErr := resolver.NewCachingResolver(ctx, cfg.Caching, redisClient)
+	// client name resolution consults local reverse sources (custom DNS, hosts file) before the rDNS upstream
+	clientNames, cnErr := resolver.NewClientNamesResolver(
+		ctx, cfg.ClientLookup, cfg.Upstreams, bootstrap, customDNS, hostsFile)
+	decorator := cacheDecorator
+	if !cfg.Caching.IsEnabled() {
+		decorator = nil
+	}
+
+	// cfg.DNSSEC gates the DO bit on prefetch reloads (they bypass the DNSSEC
+	// resolver above the cache).
+	cachingResolver, crErr := resolver.NewCachingResolver(ctx, cfg.Caching, cfg.DNSSEC, decorator)
 	// Pass upstreamTree to DNSSEC resolver so it can query for DNSKEY/DS records
 	dnssecResolver, dsErr := resolver.NewDNSSECResolver(ctx, cfg.DNSSEC, upstreamTree)
 
@@ -473,14 +701,37 @@ func createQueryResolver(
 	metricsResolver.StatsCollector = statsCollector
 
 	r := resolver.Chain(
+		// stays above the ECS and client-name lookups: its bucket key must remain the
+		// connection's source IP. Keyed on the ECS address instead (ecs.useAsClient), the
+		// key would be attacker-controlled, letting a client both evade its own bucket and
+		// fill the bounded bucket store, which drops queries of every new client once full.
+		// Dropped queries therefore carry no client name and are attributed to the client
+		// IP in the statistics.
+		resolver.NewRateLimitingResolver(ctx, cfg.RateLimit),
+		// adopts the ECS subnet as the internal client IP (ecs.useAsClient) before the
+		// client-name lookup, blocking and the cache consume the client identity, so the
+		// ECS client is used for those features and is preserved across cache hits
+		resolver.NewECSClientResolver(cfg.ECS),
+		// above filtering and fqdnOnly, which answer a query on their own: a lookup below
+		// them would leave request.ClientNames empty for every query they short-circuit,
+		// and the statistics would attribute those to the raw client IP while the same
+		// client's other queries are attributed to its name
+		clientNames,
 		resolver.NewFilteringResolver(cfg.Filtering),
 		resolver.NewFQDNOnlyResolver(cfg.FQDNOnly),
-		clientNames,
 		resolver.NewEDEResolver(cfg.EDE),
 		queryLogging,
 		metricsResolver,
-		resolver.NewCustomDNSResolver(cfg.CustomDNS),
+		customDNS,
 		hostsFile,
+		// above blocking and the cache: it inspects only RESOLVED/CACHED answers
+		// (conditional/custom DNS/hosts file/SUDN/blocked answers are recognized
+		// by response type and pass through; the cache stores only
+		// upstream-derived answers, so CACHED implies upstream origin), cached
+		// answers — incl. entries synced via redis — are re-inspected on every
+		// hit, and blocking's internal FQDN client-identifier lookups enter the
+		// chain below it
+		resolver.NewRebindingProtectionResolver(cfg.RebindingProtection),
 		blocking,
 		dnssecResolver, // DNSSEC validation BEFORE caching - validates all responses before they are cached
 		cachingResolver,
@@ -496,6 +747,7 @@ func createQueryResolver(
 
 func (s *Server) registerDNSHandlers(ctx context.Context) {
 	for _, server := range s.dnsServers {
+		//nolint:forcetypeassert // handler is always *dns.ServeMux; set during server construction
 		handler := server.Handler.(*dns.ServeMux)
 		handler.HandleFunc(".", func(w dns.ResponseWriter, m *dns.Msg) {
 			s.OnRequest(ctx, w, m)
@@ -520,6 +772,11 @@ func (s *Server) printConfiguration() {
 
 	logger().Info("listeners:")
 	log.WithIndent(logger(), "  ", s.cfg.Ports.LogConfig)
+
+	if len(s.http3PacketConns) > 0 {
+		logger().Info("HTTP/3:")
+		log.WithIndent(logger(), "  ", s.cfg.HTTP3.LogConfig)
+	}
 
 	logger().Info("runtime information:")
 
@@ -553,7 +810,14 @@ func (s *Server) Start(ctx context.Context, errCh chan<- error) {
 
 	for _, srv := range s.dnsServers {
 		go func() {
-			if err := srv.ListenAndServe(); err != nil {
+			// When a listener/packet connection was pre-created (freeBind), serve it via
+			// ActivateAndServe; otherwise let miekg/dns create the socket via ListenAndServe.
+			serve := srv.ListenAndServe
+			if srv.Listener != nil || srv.PacketConn != nil {
+				serve = srv.ActivateAndServe
+			}
+
+			if err := serve(); err != nil {
 				errCh <- fmt.Errorf("start %s listener failed: %w", srv.Net, err)
 			}
 		}()
@@ -570,6 +834,23 @@ func (s *Server) Start(ctx context.Context, errCh chan<- error) {
 		}()
 	}
 
+	if s.http3Server != nil {
+		for _, pc := range s.http3PacketConns {
+			go func() {
+				logger().Infof("%s server is up and running on addr/port %s",
+					s.http3Server, pc.LocalAddr())
+
+				err := s.http3Server.inner.Serve(pc)
+				if err != nil &&
+					!errors.Is(err, quic.ErrServerClosed) &&
+					!errors.Is(err, http.ErrServerClosed) &&
+					!errors.Is(err, net.ErrClosed) {
+					errCh <- fmt.Errorf("%s on %s: %w", s.http3Server, pc.LocalAddr(), err)
+				}
+			}()
+		}
+	}
+
 	registerPrintConfigurationTrigger(ctx, s)
 }
 
@@ -583,6 +864,29 @@ func (s *Server) Stop(ctx context.Context) error {
 
 	if s.broadcaster != nil {
 		s.broadcaster.Shutdown()
+	}
+
+	// Shut down HTTP/3 in order: server first (drains in-flight
+	// requests and unblocks the Serve goroutines), then UDP packet
+	// conns. Closing the packet conns first would cause Serve to
+	// return a non-sentinel error that would land in errCh as a
+	// spurious "server start failed".
+	if s.http3Server != nil {
+		if err := s.http3Server.Close(); err != nil {
+			logger().Warn("failed to close http3 server: ", err)
+		}
+	}
+
+	for _, pc := range s.http3PacketConns {
+		if err := pc.Close(); err != nil {
+			logger().Warn("failed to close http3 packet conn: ", err)
+		}
+	}
+
+	for _, c := range s.closers {
+		if err := c.Close(); err != nil {
+			logger().Warn("failed to close resource: ", err)
+		}
 	}
 
 	// Every listener gets a shutdown attempt even if an earlier one fails:
@@ -665,7 +969,8 @@ func (s *Server) Reconfigure(ctx context.Context) error {
 	// like writeLog that need to run for the lifetime of the chain).
 	chainCtx, chainCancel := context.WithCancel(context.Background())
 
-	newChain, err := createQueryResolver(chainCtx, &newCfg, s.bootstrap, s.redisClient, s.broadcaster, s.statsCollector)
+	newChain, err := createQueryResolver(chainCtx, &newCfg, s.bootstrap,
+		s.newCacheDecorator(chainCtx), s.broadcaster, s.statsCollector)
 	if err != nil {
 		chainCancel()
 
@@ -790,14 +1095,16 @@ type msgWriter interface {
 
 func (s *Server) handleReq(ctx context.Context, request *model.Request, w msgWriter) {
 	response, err := s.resolve(ctx, request)
-	if err != nil {
+	switch {
+	case errors.Is(err, resolver.ErrRateLimited):
+		return
+	case err != nil:
 		log.FromCtx(ctx).Error("error on processing request:", err)
-
 		m := new(dns.Msg)
 		m.SetRcode(request.Req, dns.RcodeServerFailure)
 		err := w.WriteMsg(m)
 		util.LogOnError(ctx, "can't write message: ", err)
-	} else {
+	default:
 		err := w.WriteMsg(response.Res)
 		util.LogOnError(ctx, "can't write message: ", err)
 	}
@@ -816,6 +1123,18 @@ func (s *Server) resolve(ctx context.Context, request *model.Request) (response 
 	ctx, cancel := context.WithTimeout(ctx, timeoutDuration)
 
 	defer cancel()
+
+	// The resolver chain mutates request.Req in place, so capture what the client itself asked for
+	// up front: the response is normalized against that, not the mutated request.
+	query := newClientQuery(request)
+
+	// Blocky doesn't implement DNS Cookies (RFC 7873), so a Server Cookie a client returns is one
+	// an upstream issued and blocky can neither validate nor reissue it. Forwarding it is worse
+	// than dropping it: it is likely to reach a different upstream than the one that issued it
+	// (`parallel_best` picks at random), which can't validate it either and may answer BADCOOKIE.
+	// The OPT record itself is kept, since it still carries the DO bit and the buffer size the
+	// client advertised.
+	util.RemoveEdns0OptionKeepRecord[*dns.EDNS0_COOKIE](request.Req)
 
 	switch {
 	case len(request.Req.Question) == 0:
@@ -840,30 +1159,9 @@ func (s *Server) resolve(ctx context.Context, request *model.Request) (response 
 		}
 	}
 
-	response.Res.RecursionAvailable = request.Req.RecursionDesired
-
-	// truncate if necessary
-	response.Res.Truncate(getMaxResponseSize(request))
-
-	// enable compression
-	response.Res.Compress = true
+	query.normalizeResponse(response.Res)
 
 	return response, nil
-}
-
-// For TCP returns 64k
-// For UDP returns EDNS UDP size or if not present, 512
-func getMaxResponseSize(req *model.Request) int {
-	if req.Protocol == model.RequestProtocolTCP {
-		return dns.MaxMsgSize
-	}
-
-	edns := req.Req.IsEdns0()
-	if edns != nil && edns.UDPSize() > 0 {
-		return int(edns.UDPSize())
-	}
-
-	return dns.MinMsgSize
 }
 
 // OnHealthCheck Handler for docker health check. Just returns OK code without delegating to resolver chain

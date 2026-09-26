@@ -3,4 +3,4 @@ generate:
   chi-server: true
   strict-server: true
   embedded-spec: false
-output: api/configapi/server.gen.go
+output: server.gen.go

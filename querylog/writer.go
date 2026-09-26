@@ -2,6 +2,8 @@ package querylog
 
 import (
 	"time"
+
+	"github.com/0xERR0R/blocky/model"
 )
 
 type LogEntry struct {
@@ -17,6 +19,11 @@ type LogEntry struct {
 	QuestionName   string
 	Answer         string
 	BlockyInstance string
+	QueryWire      []byte
+	ResponseWire   []byte
+	QueryTime      time.Time
+	ResponseTime   time.Time
+	SocketProtocol model.RequestProtocol
 }
 
 type Writer interface {

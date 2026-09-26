@@ -39,14 +39,14 @@ var _ = Describe("DNSSEC validation", Label("dnssec"), func() {
 					Expect(err).Should(Succeed())
 
 					// Create blocky with DNSSEC validation enabled
-					blocky, err = createBlockyContainer(ctx, e2eNet,
-						"upstreams:",
-						"  groups:",
-						"    default:",
-						"      - moka-dnssec",
-						"dnssec:",
-						"  validate: true",
-					)
+					blocky, err = createBlockyContainerFromString(ctx, e2eNet, dedent(`
+						upstreams:
+						  groups:
+						    default:
+						      - moka-dnssec
+						dnssec:
+						  validate: true
+						`))
 					Expect(err).Should(Succeed())
 				})
 
@@ -70,7 +70,10 @@ var _ = Describe("DNSSEC validation", Label("dnssec"), func() {
 			})
 
 			When("upstream returns RRSIG with matching valid DNSKEY", func() {
-				var validData *DNSSECTestData
+				var (
+					validData *DNSSECTestData
+					mokka     testcontainers.Container
+				)
 
 				BeforeEach(func(ctx context.Context) {
 					// Generate cryptographically valid DNSSEC data for a TLD
@@ -88,7 +91,7 @@ var _ = Describe("DNSSEC validation", Label("dnssec"), func() {
 					// Mokka needs to handle two query types:
 					// 1. A query for www.example -> return A + RRSIG
 					// 2. DNSKEY query for example -> return DNSKEY
-					_, err = createDNSMokkaContainer(ctx, "moka-dnssec-valid", e2eNet,
+					mokka, err = createDNSMokkaContainer(ctx, "moka-dnssec-valid", e2eNet,
 						fmt.Sprintf(`A www.example/NOERROR("%s", "%s")`, aRecordStr, rrsigStr),
 						fmt.Sprintf(`DNSKEY example/NOERROR("%s")`, dnskeyStr),
 					)
@@ -97,18 +100,18 @@ var _ = Describe("DNSSEC validation", Label("dnssec"), func() {
 					// Create blocky with DNSSEC validation enabled
 					// Add the generated DNSKEY as a trust anchor for the example. TLD
 					// This makes example. a trusted zone, similar to how root trust anchors work
-					blocky, err = createBlockyContainer(ctx, e2eNet,
-						"upstreams:",
-						"  groups:",
-						"    default:",
-						"      - moka-dnssec-valid",
-						"dnssec:",
-						"  validate: true",
-						"  trustAnchors:",
-						fmt.Sprintf("    - \"%s\"", validData.DNSKEY.String()),
-						"log:",
-						"  level: debug",
-					)
+					blocky, err = createBlockyContainerFromString(ctx, e2eNet, dedent(`
+						upstreams:
+						  groups:
+						    default:
+						      - moka-dnssec-valid
+						dnssec:
+						  validate: true
+						  trustAnchors:
+						    - "`+validData.DNSKEY.String()+`"
+						log:
+						  level: debug
+						`))
 					Expect(err).Should(Succeed())
 				})
 
@@ -132,6 +135,56 @@ var _ = Describe("DNSSEC validation", Label("dnssec"), func() {
 						BeDNSRecord("www.example.", A, "192.0.2.10"),
 					))
 				})
+
+				It("should not return the DNSSEC records to a client with the DO bit clear", func(ctx context.Context) {
+					// Blocky queries the upstream with DO set so it can validate, but the records it
+					// gets back are for validation, not for the client (RFC 4035 §3.2.1).
+					msg := util.NewMsgWithQuestion("www.example.", A)
+					msg.SetEdns0(4096, false) // EDNS0 present, DNSSEC OK (DO) bit clear
+
+					resp, err := doDNSRequest(ctx, blocky, msg)
+					Expect(err).Should(Succeed())
+
+					Expect(resp.Rcode).Should(Equal(dns.RcodeSuccess),
+						"Expected NOERROR for valid DNSSEC signatures")
+
+					// The validated answer is still returned, just without the DNSSEC records
+					Expect(resp.Answer).Should(ContainElement(
+						BeDNSRecord("www.example.", A, "192.0.2.10"),
+					))
+					Expect(resp.Answer).ShouldNot(ContainElement(BeAssignableToTypeOf(&dns.RRSIG{})),
+						"RRSIG must not be returned to a client that didn't set the DO bit")
+
+					Expect(resp.AuthenticatedData).Should(BeFalse(),
+						"AD flag should not be set for a client that set neither DO nor AD")
+				})
+
+				It("should still serve the DNSSEC records from cache to a client with the DO bit set",
+					func(ctx context.Context) {
+						// The cache sits below the DNSSEC resolver and holds the signed answer.
+						// Stripping happens per client on the way out, so it must not take the
+						// records out of the cached entry other clients are served from.
+						withoutDO := util.NewMsgWithQuestion("www.example.", A)
+						withoutDO.SetEdns0(4096, false)
+
+						resp, err := doDNSRequest(ctx, blocky, withoutDO)
+						Expect(err).Should(Succeed())
+						Expect(resp.Answer).ShouldNot(ContainElement(BeAssignableToTypeOf(&dns.RRSIG{})))
+
+						// The upstream disappears; any later answer comes from the cache.
+						Expect(mokka.Terminate(ctx)).Should(Succeed())
+
+						withDO := util.NewMsgWithQuestion("www.example.", A)
+						withDO.SetEdns0(4096, true)
+
+						resp, err = doDNSRequest(ctx, blocky, withDO)
+						Expect(err).Should(Succeed())
+						Expect(resp.Rcode).Should(Equal(dns.RcodeSuccess))
+						Expect(resp.Answer).Should(ContainElement(BeAssignableToTypeOf(&dns.RRSIG{})),
+							"the cached entry must still carry the signatures")
+						// The AD flag is not asserted here: the cached answer is re-validated on
+						// every hit, which can no longer reach the upstream for the DNSKEY.
+					})
 			})
 
 			When("upstream returns RRSIG with wrong DNSKEY signature", func() {
@@ -158,18 +211,19 @@ var _ = Describe("DNSSEC validation", Label("dnssec"), func() {
 					// Create blocky with DNSSEC validation enabled
 					// Add the wrong key as trust anchor so chain validation passes,
 					// but signature verification will fail
-					blocky, err = createBlockyContainer(ctx, e2eNet,
-						"upstreams:",
-						"  groups:",
-						"    default:",
-						"      - moka-dnssec-mismatch",
-						"dnssec:",
-						"  validate: true",
-						"  trustAnchors:",
-						fmt.Sprintf("    - \"%s\"", wrongKey.String()),
-						"log:",
-						"  level: debug",
-					)
+					blocky, err = createBlockyContainerFromString(ctx, e2eNet,
+						dedent(`
+						upstreams:
+						  groups:
+						    default:
+						      - moka-dnssec-mismatch
+						dnssec:
+						  validate: true
+						  trustAnchors:
+						    - "`+wrongKey.String()+`"
+						log:
+						  level: debug
+						`))
 					Expect(err).Should(Succeed())
 				})
 
@@ -194,14 +248,14 @@ var _ = Describe("DNSSEC validation", Label("dnssec"), func() {
 				BeforeEach(func(ctx context.Context) {
 					// For now, use a real DNSSEC-validating upstream (Cloudflare)
 					// In the future, we could mock a proper DNSSEC-signed response
-					blocky, err = createBlockyContainer(ctx, e2eNet,
-						"upstreams:",
-						"  groups:",
-						"    default:",
-						"      - 1.1.1.1", // Cloudflare validates DNSSEC
-						"dnssec:",
-						"  validate: true",
-					)
+					blocky, err = createBlockyContainerFromString(ctx, e2eNet, dedent(`
+						upstreams:
+						  groups:
+						    default:
+						      - 1.1.1.1
+						dnssec:
+						  validate: true
+						`))
 					Expect(err).Should(Succeed())
 				})
 
@@ -268,18 +322,19 @@ var _ = Describe("DNSSEC validation", Label("dnssec"), func() {
 					// 2. Verify child DNSKEY against DS record
 					// 3. Verify DS record signature against parent DNSKEY
 					// 4. Verify parent DNSKEY against trust anchor
-					blocky, err = createBlockyContainer(ctx, e2eNet,
-						"upstreams:",
-						"  groups:",
-						"    default:",
-						"      - moka-dnssec-chain",
-						"dnssec:",
-						"  validate: true",
-						"  trustAnchors:",
-						fmt.Sprintf("    - \"%s\"", chainData.ParentDNSKEY.String()),
-						"log:",
-						"  level: debug",
-					)
+					blocky, err = createBlockyContainerFromString(ctx, e2eNet,
+						dedent(`
+						upstreams:
+						  groups:
+						    default:
+						      - moka-dnssec-chain
+						dnssec:
+						  validate: true
+						  trustAnchors:
+						    - "`+chainData.ParentDNSKEY.String()+`"
+						log:
+						  level: debug
+						`))
 					Expect(err).Should(Succeed())
 				})
 
@@ -305,6 +360,158 @@ var _ = Describe("DNSSEC validation", Label("dnssec"), func() {
 				})
 			})
 
+			When("upstream returns an unsigned answer for a DNSSEC-signed zone", func() {
+				var signed *DNSSECTestData
+
+				BeforeEach(func(ctx context.Context) {
+					// example. is a DNSSEC-signed zone; its KSK is installed as a trust
+					// anchor so blocky knows the zone is signed. An unsigned answer below
+					// it must therefore be treated as bogus, not insecure.
+					var genErr error
+					signed, genErr = GenerateValidDNSSEC("example.", "www.example.", "192.0.2.10")
+					Expect(genErr).Should(Succeed())
+
+					// Upstream returns a forged A record with no RRSIG.
+					_, err = createDNSMokkaContainer(ctx, "moka-unsigned", e2eNet,
+						`A www.example/NOERROR("A 203.0.113.77 300")`)
+					Expect(err).Should(Succeed())
+
+					blocky, err = createBlockyContainerFromString(ctx, e2eNet, dedent(`
+						upstreams:
+						  groups:
+						    default:
+						      - moka-unsigned
+						dnssec:
+						  validate: true
+						  trustAnchors:
+						    - "`+signed.DNSKEY.String()+`"
+						log:
+						  level: debug
+						`))
+					Expect(err).Should(Succeed())
+				})
+
+				It("should reject the unsigned answer and return SERVFAIL", func(ctx context.Context) {
+					msg := util.NewMsgWithQuestion("www.example.", A)
+					msg.SetEdns0(4096, true) // DO bit
+
+					resp, err := doDNSRequest(ctx, blocky, msg)
+					Expect(err).Should(Succeed())
+
+					Expect(resp.Rcode).Should(Equal(dns.RcodeServerFailure),
+						"unsigned answer accepted for a DNSSEC-signed zone")
+					Expect(resp.AuthenticatedData).Should(BeFalse())
+					Expect(resp.Answer).ShouldNot(ContainElement(
+						BeDNSRecord("www.example.", A, "203.0.113.77")))
+				})
+			})
+
+			When("an unsigned answer for a signed zone has been cached", func() {
+				var (
+					signed *DNSSECTestData
+					mokka  testcontainers.Container
+				)
+
+				BeforeEach(func(ctx context.Context) {
+					var genErr error
+					signed, genErr = GenerateValidDNSSEC("example.", "www.example.", "192.0.2.10")
+					Expect(genErr).Should(Succeed())
+
+					mokka, err = createDNSMokkaContainer(ctx, "moka-cache", e2eNet,
+						`A www.example/NOERROR("A 203.0.113.77 300")`)
+					Expect(err).Should(Succeed())
+
+					blocky, err = createBlockyContainerFromString(ctx, e2eNet, dedent(`
+						upstreams:
+						  groups:
+						    default:
+						      - moka-cache
+						dnssec:
+						  validate: true
+						  trustAnchors:
+						    - "`+signed.DNSKEY.String()+`"
+						caching:
+						  minTime: 5m
+						log:
+						  level: debug
+						`))
+					Expect(err).Should(Succeed())
+				})
+
+				It("should not serve the unsigned answer from cache after the upstream is gone",
+					func(ctx context.Context) {
+						msg := util.NewMsgWithQuestion("www.example.", A)
+						msg.SetEdns0(4096, true) // DO bit
+
+						// First query populates the cache.
+						_, err := doDNSRequest(ctx, blocky, msg)
+						Expect(err).Should(Succeed())
+
+						// The upstream disappears; any later answer comes from the cache.
+						Expect(mokka.Terminate(ctx)).Should(Succeed())
+
+						resp, err := doDNSRequest(ctx, blocky, msg)
+						Expect(err).Should(Succeed())
+
+						Expect(resp.Answer).ShouldNot(ContainElement(
+							BeDNSRecord("www.example.", A, "203.0.113.77")),
+							"forged unsigned answer replayed from cache after upstream shutdown")
+					})
+			})
+
+			When("upstream returns an unsigned answer for a signed public domain under only the default root anchor", func() {
+				// GHSA-x845-2f78-7v36 finding 1 + 2: the documented basic configuration is just
+				// `dnssec: {validate: true}` with no custom trustAnchors, so only the implicit IANA
+				// root anchor is present. A malicious/compromised upstream that returns an unsigned
+				// forged answer for a DNSSEC-signed public name (and cannot supply an authenticated
+				// insecure-delegation proof) must NOT have that answer accepted or replayed.
+				var mokka testcontainers.Container
+
+				BeforeEach(func(ctx context.Context) {
+					// Forged unsigned A for cloudflare.com (a signed public domain), no RRSIG, and
+					// no DS/NSEC proofs for the auxiliary chain queries.
+					mokka, err = createDNSMokkaContainer(ctx, "moka-root-bypass", e2eNet,
+						`A cloudflare.com/NOERROR("A 203.0.113.77 300")`)
+					Expect(err).Should(Succeed())
+
+					blocky, err = createBlockyContainerFromString(ctx, e2eNet, dedent(`
+						upstreams:
+						  groups:
+						    default:
+						      - moka-root-bypass
+						dnssec:
+						  validate: true
+						caching:
+						  minTime: 5m
+						log:
+						  level: debug
+						`))
+					Expect(err).Should(Succeed())
+				})
+
+				It("rejects the forged answer and does not replay it from cache after the upstream is gone",
+					func(ctx context.Context) {
+						msg := util.NewMsgWithQuestion("cloudflare.com.", A)
+						msg.SetEdns0(4096, true) // DO bit
+
+						resp, err := doDNSRequest(ctx, blocky, msg)
+						Expect(err).Should(Succeed())
+						Expect(resp.Rcode).Should(Equal(dns.RcodeServerFailure),
+							"forged unsigned answer accepted under the default root anchor")
+						Expect(resp.Answer).ShouldNot(ContainElement(
+							BeDNSRecord("cloudflare.com.", A, "203.0.113.77")))
+
+						// The malicious upstream disappears; any later answer comes from the cache.
+						Expect(mokka.Terminate(ctx)).Should(Succeed())
+
+						resp, err = doDNSRequest(ctx, blocky, msg)
+						Expect(err).Should(Succeed())
+						Expect(resp.Answer).ShouldNot(ContainElement(
+							BeDNSRecord("cloudflare.com.", A, "203.0.113.77")),
+							"forged unsigned answer replayed from cache after upstream shutdown")
+					})
+			})
+
 			When("DNSSEC validation is disabled", func() {
 				BeforeEach(func(ctx context.Context) {
 					// Note: Using .example TLD instead of .test (SUDN resolver blocks .test)
@@ -313,13 +520,13 @@ var _ = Describe("DNSSEC validation", Label("dnssec"), func() {
 					)
 					Expect(err).Should(Succeed())
 
-					blocky, err = createBlockyContainer(ctx, e2eNet,
-						"upstreams:",
-						"  groups:",
-						"    default:",
-						"      - moka-dnssec-disabled",
-						"# dnssec validation is disabled by default",
-					)
+					blocky, err = createBlockyContainerFromString(ctx, e2eNet, dedent(`
+						upstreams:
+						  groups:
+						    default:
+						      - moka-dnssec-disabled
+						# dnssec validation is disabled by default
+						`))
 					Expect(err).Should(Succeed())
 				})
 
@@ -346,16 +553,16 @@ var _ = Describe("DNSSEC validation", Label("dnssec"), func() {
 				BeforeEach(func(ctx context.Context) {
 					// Use Google DNS - when queried with +cd flag, it returns data even for broken DNSSEC
 					// With DNSSEC validation enabled, Blocky should independently validate and reject
-					blocky, err = createBlockyContainer(ctx, e2eNet,
-						"upstreams:",
-						"  groups:",
-						"    default:",
-						"      - 8.8.8.8",
-						"dnssec:",
-						"  validate: true",
-						"log:",
-						"  level: debug",
-					)
+					blocky, err = createBlockyContainerFromString(ctx, e2eNet, dedent(`
+						upstreams:
+						  groups:
+						    default:
+						      - 8.8.8.8
+						dnssec:
+						  validate: true
+						log:
+						  level: debug
+						`))
 					Expect(err).Should(Succeed())
 				})
 
