@@ -40,7 +40,7 @@ var _ = Describe("Healthcheck derives the port from the config (#2218)", func() 
 			Expect(srv.ListenAndServe()).Should(Succeed())
 		}()
 
-		writeConfig("ports:\n  dns: " + port + "\nupstreams:\n  groups:\n    default:\n      - 1.1.1.1\n")
+		writeConfig("ports:\n  dns: " + port + "\n")
 
 		Eventually(func() error {
 			c := NewHealthcheckCommand()
@@ -62,7 +62,7 @@ var _ = Describe("Healthcheck derives the port from the config (#2218)", func() 
 		}()
 
 		// Config points somewhere nothing is listening; the flag must take precedence.
-		writeConfig("ports:\n  dns: 65113\nupstreams:\n  groups:\n    default:\n      - 1.1.1.1\n")
+		writeConfig("ports:\n  dns: 65113\n")
 
 		Eventually(func() error {
 			c := NewHealthcheckCommand()

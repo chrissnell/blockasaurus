@@ -133,6 +133,15 @@ upstream added schema-driven config validation and JSON-schema generation
 plus four new sections (`statistics`, `http3`, `rateLimit`, `rebindingProtection`). Our sentinel
 field will flow into the generated schema unless it is handled deliberately.
 
+**Resolved (Phase 3).** `Config.Upstreams` keeps `yaml:"-"` and the `UpstreamsYAML` sentinel
+carries `jsonschema:"-"`, which `invopop/jsonschema` honours the same way as a `-` field name.
+`docs/config.schema.json` therefore has no `upstreams` property at all, and because the schema
+sets `additionalProperties: false`, an `upstreams:` block is reported as an unknown key alongside
+the sentinel's migration error. Two specs lock this: `config/schema` asserts the property is
+absent, and `config` asserts the loader still rejects the block with a pointer to
+`docs/migration-upstreams.md`. Upstream tests that used `upstreams:` merely as a valid-config
+vehicle were re-pointed at `customDNS.mapping` / `blocking.denylists`.
+
 ### 3.5 Toolchain and generated-artifact churn
 
 - Go 1.26.1 → 1.26.2; golangci-lint → v2.12.2, with additional linters enabled upstream (#2073).

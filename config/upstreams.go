@@ -9,7 +9,6 @@ import (
 
 const UpstreamDefaultCfgName = "default"
 
-<<<<<<< HEAD
 // upstreamsYAMLSentinel rejects any `upstreams:` section in YAML. Upstream
 // configuration lives in the SQLite config store and is managed via the web UI.
 // A hard error is returned with a pointer to the migration docs.
@@ -21,14 +20,14 @@ func (upstreamsYAMLSentinel) UnmarshalYAML(_ func(any) error) error {
 			"remove the 'upstreams:' block from your YAML configuration and manage " +
 			"upstream groups + settings via the web UI (see docs/migration-upstreams.md)",
 	)
-=======
+}
+
 // QUICConfig holds QUIC-specific upstream settings.
 type QUICConfig struct {
 	// Maximum idle duration before the QUIC connection is closed.
 	MaxIdleTimeout Duration `default:"30s" yaml:"maxIdleTimeout"`
 	// Interval at which keep-alive packets are sent to maintain the QUIC connection.
 	KeepAlivePeriod Duration `default:"15s" yaml:"keepAlivePeriod"`
->>>>>>> upstream/main
 }
 
 // Upstreams upstream servers configuration

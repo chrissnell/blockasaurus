@@ -12,9 +12,28 @@ import (
 
 var _ = Describe("ValidateYAML", func() {
 	It("accepts a minimal valid config", func() {
-		errs, err := schema.ValidateYAML([]byte("upstreams:\n  groups:\n    default:\n      - 1.1.1.1\n"))
+		errs, err := schema.ValidateYAML([]byte("connectIPVersion: dual\n"))
 		Expect(err).Should(Succeed())
 		Expect(errs).Should(BeEmpty())
+	})
+
+	// Blockasaurus keeps upstream configuration in the SQLite config store and
+	// rejects an `upstreams:` block in YAML (docs/UPSTREAM_SYNC.md, D2). The
+	// schema describes what YAML accepts, so the section must be absent from it.
+	It("has no upstreams section", func() {
+		var doc map[string]any
+		Expect(json.Unmarshal(schema.JSON, &doc)).Should(Succeed())
+
+		props, ok := doc["properties"].(map[string]any)
+		Expect(ok).Should(BeTrue())
+		Expect(props).ShouldNot(HaveKey("upstreams"))
+	})
+
+	It("reports an upstreams block as an unknown key", func() {
+		errs, err := schema.ValidateYAML([]byte("upstreams:\n  groups:\n    default:\n      - 1.1.1.1\n"))
+		Expect(err).Should(Succeed())
+		Expect(errs).ShouldNot(BeEmpty())
+		Expect(errs[0].String()).Should(ContainSubstring("upstreams"))
 	})
 
 	It("reports an unknown top-level key with its path", func() {
@@ -151,19 +170,19 @@ var _ = Describe("schema enum value descriptions", func() {
 		return desc
 	}
 
-	It("documents each upstreams.init.strategy enum value", func() {
-		d := description("upstreams", "init", "strategy")
+	It("documents each loading strategy enum value", func() {
+		d := description("blocking", "loading", "strategy")
 		Expect(d).Should(ContainSubstring("blocking"))
 		Expect(d).Should(ContainSubstring("failOnError"))
 		Expect(d).Should(ContainSubstring("fast"))
 		Expect(d).Should(ContainSubstring("background"), "fast should mention background initialization")
 	})
 
-	It("documents each upstreams.strategy enum value", func() {
-		d := description("upstreams", "strategy")
-		Expect(d).Should(ContainSubstring("parallel_best"))
-		Expect(d).Should(ContainSubstring("strict"))
-		Expect(d).Should(ContainSubstring("random"))
+	It("documents each queryLog.type enum value", func() {
+		d := description("queryLog", "type")
+		Expect(d).Should(ContainSubstring("console"))
+		Expect(d).Should(ContainSubstring("none"))
+		Expect(d).Should(ContainSubstring("csv-client"))
 	})
 })
 
@@ -223,7 +242,7 @@ var _ = Describe("schema default value types", func() {
 
 	It("keeps enum and custom string-scalar defaults as strings", func() {
 		// enum (string), and Duration (anyOf string/integer) must NOT be coerced.
-		Expect(defaultAt("upstreams", "init", "strategy")).Should(Equal("blocking"))
+		Expect(defaultAt("blocking", "loading", "strategy")).Should(Equal("blocking"))
 		Expect(defaultAt("customDNS", "customTTL")).Should(Equal("1h"))
 	})
 })
@@ -250,6 +269,6 @@ var _ = Describe("schema field descriptions from Go comments", func() {
 	}
 
 	It("uses a field comment as the description", func() {
-		Expect(description("upstreams", "timeout")).Should(ContainSubstring("Timeout for upstream DNS connections"))
+		Expect(description("ports", "dohPath")).Should(ContainSubstring("URL path for DoH queries"))
 	})
 })

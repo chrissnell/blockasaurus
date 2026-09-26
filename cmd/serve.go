@@ -8,11 +8,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-<<<<<<< HEAD
 	"runtime/debug"
 	"strconv"
-=======
->>>>>>> upstream/main
 	"strings"
 	"syscall"
 	"time"
@@ -113,13 +110,9 @@ func runServer(ctx context.Context) error {
 
 	log.Configure(&cfg.Log)
 
-<<<<<<< HEAD
-	var store *configstore.ConfigStore
-=======
 	warnMissingPrivilegedPortCapability(cfg.Ports)
 
-	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
->>>>>>> upstream/main
+	var store *configstore.ConfigStore
 
 	if cfg.DatabasePath != "" {
 		var storeErr error

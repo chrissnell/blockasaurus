@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"fmt"
+	"net"
 	"os"
 
 	"github.com/0xERR0R/blocky/config"
@@ -9,17 +11,11 @@ import (
 )
 
 //nolint:gochecknoglobals
-<<<<<<< HEAD
-var configPath string
-=======
 var (
 	configPath string
-	apiHost    string
-	apiPort    uint16
 	dnsHost    = defaultIPAddress
 	dnsPort    = uint16(defaultDNSPort)
 )
->>>>>>> upstream/main
 
 const (
 	defaultConfigPath   = "./config.yml"
@@ -49,15 +45,9 @@ Complete documentation is available at https://github.com/0xERR0R/blocky`,
 		NewVersionCommand(),
 		newServeCommand(),
 		NewHealthcheckCommand(),
-<<<<<<< HEAD
 		NewValidateCommand(),
 		newUserCommand(),
 	)
-=======
-		newCacheCommand(),
-		NewStatsCommand(),
-		NewValidateCommand())
->>>>>>> upstream/main
 
 	return c
 }
@@ -86,23 +76,6 @@ func initConfig() error {
 
 	log.Configure(&cfg.Log)
 
-<<<<<<< HEAD
-=======
-	if len(cfg.Ports.HTTP) != 0 {
-		split := strings.Split(cfg.Ports.HTTP[0], ":")
-
-		lastIdx := len(split) - 1
-
-		apiHost = strings.Join(split[:lastIdx], ":")
-
-		port, err := config.ConvertPort(split[lastIdx])
-		if err != nil {
-			return fmt.Errorf("can't convert port '%s' to number (1 - 65535): %w", split[lastIdx], err)
-		}
-
-		apiPort = port
-	}
-
 	if len(cfg.Ports.DNS) != 0 {
 		host, port, err := splitListenAddress(cfg.Ports.DNS[0])
 		if err != nil {
@@ -118,7 +91,6 @@ func initConfig() error {
 		dnsPort = port
 	}
 
->>>>>>> upstream/main
 	return nil
 }
 

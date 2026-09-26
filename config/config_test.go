@@ -289,47 +289,45 @@ var _ = Describe("Config", func() {
 		When("multiple config files share keys", func() {
 			It("merges maps across files (issue #1827)", func() {
 				tmpDir.CreateStringFile("00_default.yaml",
-					"upstreams:",
-					"  groups:",
-					"    default:",
-					"      - 8.8.8.8",
+					"customDNS:",
+					"  mapping:",
+					"    printer.lan: 192.168.178.3",
 				)
 				tmpDir.CreateStringFile("10_local.yaml",
-					"upstreams:",
-					"  groups:",
-					"    192.168.0.0/16:",
-					"      - 1.1.1.1",
+					"customDNS:",
+					"  mapping:",
+					"    nas.lan: 192.168.178.4",
 				)
 
 				c, err := LoadConfig(tmpDir.Path, true)
 				Expect(err).Should(Succeed())
-				Expect(c.Upstreams.Groups).Should(HaveLen(2))
-				Expect(c.Upstreams.Groups).Should(HaveKey("default"))
-				Expect(c.Upstreams.Groups).Should(HaveKey("192.168.0.0/16"))
+				Expect(c.CustomDNS.Mapping).Should(HaveLen(2))
+				Expect(c.CustomDNS.Mapping).Should(HaveKey("printer.lan"))
+				Expect(c.CustomDNS.Mapping).Should(HaveKey("nas.lan"))
 			})
 
 			It("lets the last file win scalar and list conflicts", func() {
 				tmpDir.CreateStringFile("00_default.yaml",
-					"upstreams:",
-					"  groups:",
-					"    default:",
-					"      - 8.8.8.8",
-					"      - 8.8.4.4",
+					"blocking:",
+					"  denylists:",
+					"    ads:",
+					"      - /etc/blocky/ads.txt",
+					"      - /etc/blocky/more-ads.txt",
 					"log:",
 					"  level: info",
 				)
 				tmpDir.CreateStringFile("10_local.yaml",
-					"upstreams:",
-					"  groups:",
-					"    default:",
-					"      - 1.1.1.1",
+					"blocking:",
+					"  denylists:",
+					"    ads:",
+					"      - /etc/blocky/local-ads.txt",
 					"log:",
 					"  level: debug",
 				)
 
 				c, err := LoadConfig(tmpDir.Path, true)
 				Expect(err).Should(Succeed())
-				Expect(c.Upstreams.Groups["default"]).Should(HaveLen(1))
+				Expect(c.Blocking.Denylists["ads"]).Should(HaveLen(1))
 				Expect(c.Log.Level).Should(Equal(logrus.DebugLevel))
 			})
 

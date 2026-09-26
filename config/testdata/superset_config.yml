@@ -2,16 +2,9 @@
 # does NOT cover. It guards the permissive-superset guarantee: every value here
 # must be accepted by BOTH blocky's parser and the generated JSON schema.
 # Loaded by config_schema_test.go — this is not user-facing documentation.
-upstreams:
-  groups:
-    default:
-      - 1.1.1.1
-  # deprecated bare-number Duration (minutes form)
-  timeout: 30
-  strategy: strict
-  init:
-    strategy: fast
-
+# No `upstreams:` block: it is rejected in YAML and absent from the schema
+# (docs/UPSTREAM_SYNC.md, D2). The bare-number Duration form it used to cover
+# is exercised below by customDNS.customTTL.
 connectIPVersion: v4
 
 customDNS:

@@ -22,7 +22,7 @@ var _ = Describe("schema-enriched config loading", func() {
 
 	When("config is valid", func() {
 		It("loads without error and without schema warnings", func() {
-			data := []byte("upstreams:\n  groups:\n    default:\n      - 1.1.1.1\n")
+			data := []byte("customDNS:\n  mapping:\n    printer.lan: 192.168.178.3\n")
 
 			err := unmarshalConfig(logger, data, &Config{}, nil)
 			Expect(err).Should(Succeed())
@@ -30,11 +30,7 @@ var _ = Describe("schema-enriched config loading", func() {
 		})
 
 		It("accepts PROXY protocol listener families", func() {
-			data := []byte(`upstreams:
-  groups:
-    default:
-      - 1.1.1.1
-ports:
+			data := []byte(`ports:
   proxyProtocol:
     - dns
     - http
@@ -48,13 +44,20 @@ ports:
 		})
 	})
 
+	When("config carries a legacy upstreams: block", func() {
+		It("is rejected with a pointer to the config store", func() {
+			data := []byte("upstreams:\n  groups:\n    default:\n      - 1.1.1.1\n")
+
+			err := unmarshalConfig(logger, data, &Config{}, nil)
+			Expect(err).Should(HaveOccurred())
+			Expect(err.Error()).Should(ContainSubstring("SQLite config store"))
+			Expect(err.Error()).Should(ContainSubstring("docs/migration-upstreams.md"))
+		})
+	})
+
 	When("a PROXY protocol listener family is unknown", func() {
 		It("returns an error naming the valid families", func() {
-			data := []byte(`upstreams:
-  groups:
-    default:
-      - 1.1.1.1
-ports:
+			data := []byte(`ports:
   proxyProtocol:
     - bogus
 `)

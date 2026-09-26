@@ -2,115 +2,6 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/0xERR0R/blocky/config/config",
   "properties": {
-    "upstreams": {
-      "properties": {
-        "init": {
-          "properties": {
-            "strategy": {
-              "type": "string",
-              "enum": [
-                "blocking",
-                "failOnError",
-                "fast"
-              ],
-              "description": "Startup strategy controlling how initialization failures are handled.\n\n- `blocking`: Initialization runs before DNS resolution starts; errors are logged but Blocky keeps running if possible.\n- `failOnError`: Like blocking but Blocky exits with an error if initialization fails.\n- `fast`: Blocky serves DNS immediately and runs initialization in the background.",
-              "default": "blocking"
-            }
-          },
-          "additionalProperties": false,
-          "type": "object",
-          "description": "Initialization strategy controlling when upstream resolvers are tested on startup."
-        },
-        "timeout": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "integer"
-            }
-          ],
-          "description": "Timeout for upstream DNS connections; a value \u003c= 0 is reset to the default.",
-          "default": "2s",
-          "examples": [
-            "30s",
-            "1h"
-          ]
-        },
-        "groups": {
-          "additionalProperties": {
-            "items": {
-              "type": "string",
-              "description": "Upstream DNS server: [net:]host[:port][/path][#commonName] or sdns://...",
-              "examples": [
-                "tcp+udp:1.1.1.1",
-                "https://dns.google/dns-query",
-                "tcp-tls:1.1.1.1:853"
-              ]
-            },
-            "type": "array"
-          },
-          "type": "object",
-          "description": "Named groups of upstream DNS resolvers; the \"default\" group is required."
-        },
-        "strategy": {
-          "type": "string",
-          "enum": [
-            "parallel_best",
-            "strict",
-            "random"
-          ],
-          "description": "Strategy for selecting which upstream(s) to use per query (parallel_best, random, strict).\n\n- `parallel_best`: Picks 2 random weighted resolvers per query and returns the fastest answer (default).\n- `strict`: Queries upstreams in strict order; the next is tried only if the previous fails.\n- `random`: Picks one random weighted resolver per query; another is tried on failure.",
-          "default": "parallel_best"
-        },
-        "userAgent": {
-          "type": "string",
-          "description": "HTTP User-Agent header sent when connecting to DoH upstream servers."
-        },
-        "quic": {
-          "properties": {
-            "maxIdleTimeout": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "integer"
-                }
-              ],
-              "description": "Maximum idle duration before the QUIC connection is closed.",
-              "default": "30s",
-              "examples": [
-                "30s",
-                "1h"
-              ]
-            },
-            "keepAlivePeriod": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "integer"
-                }
-              ],
-              "description": "Interval at which keep-alive packets are sent to maintain the QUIC connection.",
-              "default": "15s",
-              "examples": [
-                "30s",
-                "1h"
-              ]
-            }
-          },
-          "additionalProperties": false,
-          "type": "object",
-          "description": "QUIC-specific connection settings used when DoQ upstreams are configured."
-        }
-      },
-      "additionalProperties": false,
-      "type": "object",
-      "description": "Upstream DNS servers and strategy configuration."
-    },
     "connectIPVersion": {
       "type": "string",
       "enum": [
@@ -811,7 +702,7 @@
       },
       "additionalProperties": false,
       "type": "object",
-      "description": "In-memory statistics subsystem (24h window), served at /api/stats."
+      "description": "Upstream's in-memory statistics collector (24h window). Merged at upstream\ndefaults: Blockasaurus serves its own persisted statistics instead\n(docs/UPSTREAM_SYNC.md, D1)."
     },
     "redis": {
       "properties": {
@@ -1017,6 +908,54 @@
           "type": "string",
           "description": "URL path for DoH queries.",
           "default": "/dns-query"
+        },
+        "adminPort": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ]
+              },
+              "type": "array"
+            }
+          ],
+          "description": "Listen address(es) for the admin UI and REST API over HTTP. When set, the admin\nsurface is served here instead of on the HTTP/HTTPS listeners shared with DoH."
+        },
+        "adminPortTLS": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ]
+              },
+              "type": "array"
+            }
+          ],
+          "description": "Listen address(es) for the admin UI and REST API over HTTPS."
         },
         "freeBind": {
           "type": "boolean",
@@ -1656,6 +1595,33 @@
       "additionalProperties": false,
       "type": "object",
       "description": "DNS rebinding protection configuration."
+    },
+    "clientGroupEndpoints": {
+      "properties": {
+        "domains": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Domains lists base domains for subdomain-based client group identification.\nA query to {group-slug}.{domain} extracts the group slug from TLS SNI or HTTP Host."
+        },
+        "cpeId": {
+          "type": "boolean",
+          "description": "CpeID enables EDNS CPE-ID (option 65074) extraction for plain DNS queries.",
+          "default": true
+        },
+        "advertiseAddress": {
+          "type": "string",
+          "description": "AdvertiseAddress controls automatic DNS record injection for configured domains.\n\"auto\" detects the IP (k8s LB service → outbound interface), an explicit IP uses\nthat address, empty/omitted disables the feature."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "Subdomain- and EDNS-based client group identification endpoints."
+    },
+    "databasePath": {
+      "type": "string",
+      "description": "Path to the SQLite database holding upstreams, blocking, custom DNS, users and statistics."
     },
     "upstream": {
       "additionalProperties": {

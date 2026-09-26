@@ -1,12 +1,8 @@
-<<<<<<< HEAD
 // Modified by Chris Snell, 2026
 // SPDX-License-Identifier: Apache-2.0
 
-//go:generate go tool go-enum -f=$GOFILE --marshal --names --values
-=======
 //go:generate go tool go-enum -f=$GOFILE --marshal --names --values --template ../tools/schemagen/templates/enum_description.tmpl
 //go:generate go run ../tools/schemagen
->>>>>>> upstream/main
 package config
 
 import (
@@ -271,40 +267,16 @@ func (b *BootstrappedUpstream) UnmarshalYAML(unmarshal func(any) error) error {
 
 // Config main configuration
 type Config struct {
-<<<<<<< HEAD
-	Upstreams        Upstreams           `yaml:"-"`
+	// Upstream DNS servers and strategy configuration. Populated from the SQLite
+	// config store, never from YAML - see UpstreamsYAML.
+	Upstreams Upstreams `yaml:"-"`
 	// UpstreamsYAML is a write-only sentinel that rejects any legacy `upstreams:`
 	// section in YAML. Upstream configuration lives in the SQLite config store and
 	// is managed via the web UI. See docs/migration-upstreams.md.
-	UpstreamsYAML    upstreamsYAMLSentinel `yaml:"upstreams,omitempty"`
-	ConnectIPVersion IPVersion           `yaml:"connectIPVersion"`
-	CustomDNS        CustomDNS           `yaml:"customDNS"`
-	Conditional      ConditionalUpstream `yaml:"conditional"`
-	Blocking         Blocking            `yaml:"blocking"`
-	ClientLookup     ClientLookup        `yaml:"clientLookup"`
-	Caching          Caching             `yaml:"caching"`
-	QueryLog         QueryLog            `yaml:"queryLog"`
-	Prometheus       Metrics             `yaml:"prometheus"`
-	Redis            Redis               `yaml:"redis"`
-	Log              log.Config          `yaml:"log"`
-	Ports            Ports               `yaml:"ports"`
-	MinTLSServeVer   TLSVersion          `default:"1.2"            yaml:"minTlsServeVersion"`
-	CertFile         string              `yaml:"certFile"`
-	KeyFile          string              `yaml:"keyFile"`
-	BootstrapDNS     BootstrapDNS        `yaml:"bootstrapDns"`
-	HostsFile        HostsFile           `yaml:"hostsFile"`
-	FQDNOnly         FQDNOnly            `yaml:"fqdnOnly"`
-	Filtering        Filtering           `yaml:"filtering"`
-	EDE              EDE                 `yaml:"ede"`
-	ECS              ECS                 `yaml:"ecs"`
-	SUDN             SUDN                `yaml:"specialUseDomains"`
-	DNS64            DNS64               `yaml:"dns64"`
-	DNSSEC               DNSSEC               `yaml:"dnssec"`
-	ClientGroupEndpoints ClientGroupEndpoints `yaml:"clientGroupEndpoints"`
-	DatabasePath         string               `yaml:"databasePath"`
-=======
-	// Upstream DNS servers and strategy configuration.
-	Upstreams Upstreams `yaml:"upstreams"`
+	//
+	// It is excluded from the generated JSON schema (`jsonschema:"-"`): the schema
+	// describes what YAML accepts, and `upstreams:` is not accepted.
+	UpstreamsYAML upstreamsYAMLSentinel `yaml:"upstreams,omitempty" jsonschema:"-"`
 	// IP version used for outgoing connections (dual, v4, v6).
 	ConnectIPVersion IPVersion `yaml:"connectIPVersion"`
 	// Custom static DNS mappings and zone definitions.
@@ -321,7 +293,9 @@ type Config struct {
 	QueryLog QueryLog `yaml:"queryLog"`
 	// Prometheus metrics configuration.
 	Prometheus Metrics `yaml:"prometheus"`
-	// In-memory statistics subsystem (24h window), served at /api/stats.
+	// Upstream's in-memory statistics collector (24h window). Merged at upstream
+	// defaults: Blockasaurus serves its own persisted statistics instead
+	// (docs/UPSTREAM_SYNC.md, D1).
 	Statistics Statistics `yaml:"statistics"`
 	// Redis configuration for cache and state synchronization between instances.
 	Redis Redis `yaml:"redis"`
@@ -359,7 +333,10 @@ type Config struct {
 	RateLimit RateLimit `yaml:"rateLimit"`
 	// DNS rebinding protection configuration.
 	RebindingProtection RebindingProtection `yaml:"rebindingProtection"`
->>>>>>> upstream/main
+	// Subdomain- and EDNS-based client group identification endpoints.
+	ClientGroupEndpoints ClientGroupEndpoints `yaml:"clientGroupEndpoints"`
+	// Path to the SQLite database holding upstreams, blocking, custom DNS, users and statistics.
+	DatabasePath string `yaml:"databasePath"`
 
 	// Deprecated options
 	Deprecated struct {
@@ -380,32 +357,6 @@ type Config struct {
 }
 
 type Ports struct {
-<<<<<<< HEAD
-	DNS        ListenConfig `default:"53"         yaml:"dns"`
-	HTTP       ListenConfig `yaml:"http"`
-	HTTPS      ListenConfig `yaml:"https"`
-	TLS        ListenConfig `yaml:"tls"`
-	DOHPath    string       `default:"/dns-query" yaml:"dohPath"`
-	AdminPort    ListenConfig `yaml:"adminPort"`
-	AdminPortTLS ListenConfig `yaml:"adminPortTLS"`
-}
-
-// AdminPortEnabled returns true when the admin UI is on separate listeners from DoH.
-func (c *Ports) AdminPortEnabled() bool {
-	return len(c.AdminPort) > 0 || len(c.AdminPortTLS) > 0
-}
-
-func (c *Ports) LogConfig(logger *logrus.Entry) {
-	logger.Infof("DNS   = %s", c.DNS)
-	logger.Infof("TLS   = %s", c.TLS)
-	logger.Infof("HTTP  = %s", c.HTTP)
-	logger.Infof("HTTPS = %s", c.HTTPS)
-
-	if c.AdminPortEnabled() {
-		logger.Infof("Admin       = %s", c.AdminPort)
-		logger.Infof("Admin (TLS) = %s", c.AdminPortTLS)
-	}
-=======
 	// Listen address(es) for DNS over TCP and UDP (default: 53).
 	DNS ListenConfig `default:"53" yaml:"dns"`
 	// Listen address(es) for HTTP (metrics, REST API, DoH).
@@ -416,6 +367,11 @@ func (c *Ports) LogConfig(logger *logrus.Entry) {
 	TLS ListenConfig `yaml:"tls"`
 	// URL path for DoH queries.
 	DOHPath string `default:"/dns-query" yaml:"dohPath"`
+	// Listen address(es) for the admin UI and REST API over HTTP. When set, the admin
+	// surface is served here instead of on the HTTP/HTTPS listeners shared with DoH.
+	AdminPort ListenConfig `yaml:"adminPort"`
+	// Listen address(es) for the admin UI and REST API over HTTPS.
+	AdminPortTLS ListenConfig `yaml:"adminPortTLS"`
 	// Allow binding the DNS and DoT listeners to addresses that are not yet assigned to a network
 	// interface, via the Linux IP_FREEBIND socket option (e.g. for Tailscale/WireGuard/VRRP addresses
 	// brought up after startup). Has no effect on wildcard binds and is ignored, with a warning, on
@@ -434,6 +390,11 @@ func (p ProxyProtocolListeners) Has(t ProxyProtocolType) bool {
 	return slices.Contains(p, t)
 }
 
+// AdminPortEnabled returns true when the admin UI is on separate listeners from DoH.
+func (c *Ports) AdminPortEnabled() bool {
+	return len(c.AdminPort) > 0 || len(c.AdminPortTLS) > 0
+}
+
 func (c *Ports) LogConfig(logger *logrus.Entry) {
 	logger.Infof("DNS      = %s", c.DNS)
 	logger.Infof("TLS      = %s", c.TLS)
@@ -442,6 +403,11 @@ func (c *Ports) LogConfig(logger *logrus.Entry) {
 	logger.Infof("DOHPath  = %s", c.DOHPath)
 	logger.Infof("FreeBind = %t", c.FreeBind)
 	logger.Infof("PROXY protocol = %s", c.ProxyProtocol)
+
+	if c.AdminPortEnabled() {
+		logger.Infof("Admin       = %s", c.AdminPort)
+		logger.Infof("Admin (TLS) = %s", c.AdminPortTLS)
+	}
 }
 
 func (c *Ports) validate() error {
@@ -503,11 +469,11 @@ func (c *Ports) proxyProtocolListenConfig(listener ProxyProtocolType) (ListenCon
 const privilegedPortCeiling = 1024
 
 // PrivilegedPorts returns the configured listen addresses across DNS, HTTP,
-// HTTPS and TLS whose port is below privilegedPortCeiling.
+// HTTPS, TLS and the admin listeners whose port is below privilegedPortCeiling.
 func (p *Ports) PrivilegedPorts() []string {
 	var privileged []string
 
-	for _, lc := range []ListenConfig{p.DNS, p.HTTP, p.HTTPS, p.TLS} {
+	for _, lc := range []ListenConfig{p.DNS, p.HTTP, p.HTTPS, p.TLS, p.AdminPort, p.AdminPortTLS} {
 		for _, addr := range lc {
 			// Port 0 (OS-assigned ephemeral port) is never privileged.
 			if port, ok := extractPort(addr); ok && port > 0 && port < privilegedPortCeiling {
@@ -537,7 +503,6 @@ func extractPort(addr string) (uint16, bool) {
 	}
 
 	return uint16(port), true
->>>>>>> upstream/main
 }
 
 // split in two types to avoid infinite recursion. See `BootstrapDNS.UnmarshalYAML`.
