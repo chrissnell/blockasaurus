@@ -35,7 +35,7 @@ const (
 //nolint:gochecknoglobals
 var dnstapFramesDropped = promauto.With(metrics.Reg).NewCounter(
 	prometheus.CounterOpts{
-		Name: "blocky_dnstap_frames_dropped_total",
+		Name: "blockasaurus_dnstap_frames_dropped_total",
 		Help: "Number of dnstap query-log frames dropped because the internal buffer was full",
 	},
 )

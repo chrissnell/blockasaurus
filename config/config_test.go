@@ -408,10 +408,9 @@ var _ = Describe("Config", func() {
 				// single-document Unmarshal in schema.ValidateYAML).
 				tmpDir.CreateStringFile("00_good.yaml", "log:", "  level: debug")
 				tmpDir.CreateStringFile("10_multidoc.yaml",
-					"upstreams:",
-					"  groups:",
-					"    default:",
-					"      - 8.8.8.8",
+					"customDNS:",
+					"  mapping:",
+					"    printer.lan: 192.168.178.3",
 					"---",
 					"blocing:",
 					"  blockType: zeroIp",

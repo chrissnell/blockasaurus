@@ -29,7 +29,7 @@ const (
 //nolint:gochecknoglobals
 var redisBufferDrops = promauto.With(metrics.Reg).NewCounter(
 	prometheus.CounterOpts{
-		Name: "blocky_redis_cache_buffer_drops_total",
+		Name: "blockasaurus_redis_cache_buffer_drops_total",
 		Help: "Number of cache entries dropped because the Redis send buffer was full",
 	},
 )

@@ -1312,6 +1312,64 @@ var _ = Describe("BlockingResolver", Label("blockingResolver"), func() {
 		})
 	})
 
+	// request.ClientGroup is what the dashboard and the query log display as the
+	// matched client group. Upstream's pre-classified client index (byID / cidrs /
+	// fqdns / names) carries no notion of which identifier matched, so the
+	// attribution is re-established on top of it and pinned here.
+	Describe("Client group attribution", func() {
+		BeforeEach(func() {
+			sutConfig = config.Blocking{
+				BlockType: "ZEROIP",
+				BlockTTL:  config.Duration(time.Minute),
+				Denylists: map[string][]config.BytesSource{
+					"gr1": config.NewBytesSources(group1File.Path),
+				},
+				ClientGroupsBlock: map[string][]string{
+					"default":      {"gr1"},
+					"192.168.1.5":  {"gr1"},
+					"laptop":       {"gr1"},
+					"phone-*":      {"gr1"},
+					"10.43.8.0/24": {"gr1"},
+				},
+			}
+		})
+
+		DescribeTable("records the matched client identifier on the request",
+			func(ip string, clientNames []string, expected string) {
+				request := newRequestWithClient("example.com.", A, ip, clientNames...)
+
+				_, err := sut.Resolve(ctx, request)
+				Expect(err).Should(Succeed())
+
+				Expect(request.ClientGroup).Should(Equal(expected))
+			},
+			Entry("exact IP identifier", "192.168.1.5", []string{"unknown"}, "192.168.1.5"),
+			Entry("literal client name", "1.2.1.2", []string{"laptop"}, "laptop"),
+			Entry("client name matched case-insensitively", "1.2.1.2", []string{"LAPTOP"}, "laptop"),
+			Entry("glob client name", "1.2.1.2", []string{"phone-1"}, "phone-*"),
+			Entry("CIDR identifier", "10.43.8.9", []string{"unknown"}, "10.43.8.0/24"),
+			Entry("nothing matches, falls back to default", "1.2.1.2", []string{"unknown"}, "default"),
+		)
+
+		When("no client groups are configured at all", func() {
+			BeforeEach(func() {
+				sutConfig = config.Blocking{
+					BlockType: "ZEROIP",
+					BlockTTL:  config.Duration(time.Minute),
+				}
+			})
+
+			It("still attributes the request to the default group", func() {
+				request := newRequestWithClient("example.com.", A, "1.2.1.2", "unknown")
+
+				_, err := sut.Resolve(ctx, request)
+				Expect(err).Should(Succeed())
+
+				Expect(request.ClientGroup).Should(Equal("default"))
+			})
+		})
+	})
+
 	Describe("Control status via API", func() {
 		BeforeEach(func() {
 			sutConfig = config.Blocking{

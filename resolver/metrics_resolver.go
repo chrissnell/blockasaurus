@@ -37,25 +37,22 @@ type MetricsResolver struct {
 	NextResolver
 	typed
 
-<<<<<<< HEAD
-	totalQueries      *prometheus.CounterVec
-	totalResponse     *prometheus.CounterVec
-	totalErrors       prometheus.Counter
-	durationHistogram *prometheus.HistogramVec
-
-	StatsCollector *statscollector.Collector
-=======
 	totalQueries        *prometheus.CounterVec
 	totalResponse       *prometheus.CounterVec
 	totalClientResponse *prometheus.CounterVec
 	totalErrors         prometheus.Counter
 	durationHistogram   *prometheus.HistogramVec
->>>>>>> upstream/main
+
+	StatsCollector *statscollector.Collector
 }
 
 // Resolve resolves the passed request
 func (r *MetricsResolver) Resolve(ctx context.Context, request *model.Request) (*model.Response, error) {
 	response, err := r.next.Resolve(ctx, request)
+
+	// The dashboard's stats collector is independent of the Prometheus exporter
+	// (docs/UPSTREAM_SYNC.md §4b), so it is fed before the cfg.Enable check below.
+	r.recordStats(request, response)
 
 	if !r.cfg.Enable {
 		return response, err
@@ -98,36 +95,42 @@ func (r *MetricsResolver) Resolve(ctx context.Context, request *model.Request) (
 		).Inc()
 	}
 
-	if r.StatsCollector != nil && response != nil {
-		domain := request.Req.Question[0].Name
-		if len(domain) > 0 && domain[len(domain)-1] == '.' {
-			domain = domain[:len(domain)-1]
-		}
+	return response, err
+}
 
-		// Prefer the client IP for dashboard display (like Pi-hole).
-		// ClientNames may be a group slug for DoH requests, which isn't useful.
-		// Fall back to ClientNames only when IP is unavailable.
-		client := ""
-		if request.ClientIP != nil {
-			client = request.ClientIP.String()
-		} else if len(request.ClientNames) > 0 {
-			client = strings.Join(request.ClientNames, ",")
-		}
-
-		upstream := response.RType == model.ResponseTypeRESOLVED
-
-		r.StatsCollector.Record(statscollector.QueryRecord{
-			Timestamp:    request.RequestTS,
-			Client:       client,
-			Domain:       strings.ToLower(domain),
-			QueryType:    dns.TypeToString[request.Req.Question[0].Qtype],
-			ResponseType: response.RType.String(),
-			Upstream:     upstream,
-			Latency:      time.Since(request.RequestTS),
-		})
+// recordStats feeds the dashboard stats collector, which is wired only when
+// statistics collection is enabled and does not depend on metrics.enable.
+func (r *MetricsResolver) recordStats(request *model.Request, response *model.Response) {
+	if r.StatsCollector == nil || response == nil {
+		return
 	}
 
-	return response, err
+	domain := request.Req.Question[0].Name
+	if len(domain) > 0 && domain[len(domain)-1] == '.' {
+		domain = domain[:len(domain)-1]
+	}
+
+	// Prefer the client IP for dashboard display (like Pi-hole).
+	// ClientNames may be a group slug for DoH requests, which isn't useful.
+	// Fall back to ClientNames only when IP is unavailable.
+	client := ""
+	if request.ClientIP != nil {
+		client = request.ClientIP.String()
+	} else if len(request.ClientNames) > 0 {
+		client = strings.Join(request.ClientNames, ",")
+	}
+
+	upstream := response.RType == model.ResponseTypeRESOLVED
+
+	r.StatsCollector.Record(statscollector.QueryRecord{
+		Timestamp:    request.RequestTS,
+		Client:       client,
+		Domain:       strings.ToLower(domain),
+		QueryType:    dns.TypeToString[request.Req.Question[0].Qtype],
+		ResponseType: response.RType.String(),
+		Upstream:     upstream,
+		Latency:      time.Since(request.RequestTS),
+	})
 }
 
 // NewMetricsResolver creates a new intance of the MetricsResolver type
@@ -198,7 +201,7 @@ func totalResponseMetric() *prometheus.CounterVec {
 func totalClientResponseMetric() *prometheus.CounterVec {
 	return prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "blocky_client_response_total",
+			Name: "blockasaurus_client_response_total",
 			Help: "Number of total responses per client and response type, " +
 				"including failed requests as response_type=\"err\"",
 		}, []string{labelClient, labelResponseType},

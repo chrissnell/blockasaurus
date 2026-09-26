@@ -1,9 +1,7 @@
-<<<<<<< HEAD
 // Modified by Chris Snell, 2026
 // SPDX-License-Identifier: Apache-2.0
-=======
+
 //go:build !mips && !mipsle && !mips64 && !mips64le && !loong64 && !(netbsd && !amd64) && !(openbsd && !amd64 && !arm64) && !solaris
->>>>>>> upstream/main
 
 package querylog
 
@@ -20,10 +18,6 @@ import (
 	"github.com/glebarez/sqlite"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
-<<<<<<< HEAD
-	"github.com/glebarez/sqlite"
-=======
->>>>>>> upstream/main
 	"gorm.io/gorm"
 
 	. "github.com/onsi/gomega"

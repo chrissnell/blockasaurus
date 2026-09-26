@@ -167,30 +167,12 @@ var _ = Describe("EDNS0 utils", func() {
 		})
 	})
 
-<<<<<<< HEAD
-	Describe("ExtractCpeID", func() {
-		When("CPE-ID option is present", func() {
-=======
 	Describe("RemoveEdns0OptionKeepRecord", func() {
 		When("the removed option is the only one in the OPT record", func() {
->>>>>>> upstream/main
 			BeforeEach(func() {
 				opt := new(dns.OPT)
 				opt.Hdr.Name = "."
 				opt.Hdr.Rrtype = dns.TypeOPT
-<<<<<<< HEAD
-				local := &dns.EDNS0_LOCAL{Code: EDNSCpeIDOption, Data: []byte("kids-devices")}
-				opt.Option = append(opt.Option, local)
-				baseMsg.Extra = append(baseMsg.Extra, opt)
-			})
-
-			It("should return the CPE-ID string", func() {
-				Expect(ExtractCpeID(baseMsg)).Should(Equal("kids-devices"))
-			})
-		})
-
-		When("EDNS0_LOCAL with different code is present", func() {
-=======
 				opt.SetUDPSize(1232)
 				opt.SetDo(true)
 				opt.Option = append(opt.Option, new(dns.EDNS0_COOKIE))
@@ -210,26 +192,10 @@ var _ = Describe("EDNS0 utils", func() {
 		})
 
 		When("other options are present", func() {
->>>>>>> upstream/main
 			BeforeEach(func() {
 				opt := new(dns.OPT)
 				opt.Hdr.Name = "."
 				opt.Hdr.Rrtype = dns.TypeOPT
-<<<<<<< HEAD
-				local := &dns.EDNS0_LOCAL{Code: 65001, Data: []byte("other")}
-				opt.Option = append(opt.Option, local)
-				baseMsg.Extra = append(baseMsg.Extra, opt)
-			})
-
-			It("should return empty string", func() {
-				Expect(ExtractCpeID(baseMsg)).Should(BeEmpty())
-			})
-		})
-
-		When("no OPT record exists", func() {
-			It("should return empty string", func() {
-				Expect(ExtractCpeID(baseMsg)).Should(BeEmpty())
-=======
 				opt.Option = append(opt.Option, new(dns.EDNS0_COOKIE), new(dns.EDNS0_SUBNET))
 				baseMsg.Extra = append(baseMsg.Extra, opt)
 			})
@@ -265,18 +231,56 @@ var _ = Describe("EDNS0 utils", func() {
 
 			It("should return false", func() {
 				Expect(RemoveEdns0OptionKeepRecord[*dns.EDNS0_COOKIE](baseMsg)).Should(BeFalse())
->>>>>>> upstream/main
 			})
 		})
 
 		When("message is nil", func() {
-<<<<<<< HEAD
-			It("should return empty string", func() {
-				Expect(ExtractCpeID(nil)).Should(BeEmpty())
-=======
 			It("should return false", func() {
 				Expect(RemoveEdns0OptionKeepRecord[*dns.EDNS0_COOKIE](nil)).Should(BeFalse())
->>>>>>> upstream/main
+			})
+		})
+	})
+
+	Describe("ExtractCpeID", func() {
+		When("CPE-ID option is present", func() {
+			BeforeEach(func() {
+				opt := new(dns.OPT)
+				opt.Hdr.Name = "."
+				opt.Hdr.Rrtype = dns.TypeOPT
+				local := &dns.EDNS0_LOCAL{Code: EDNSCpeIDOption, Data: []byte("kids-devices")}
+				opt.Option = append(opt.Option, local)
+				baseMsg.Extra = append(baseMsg.Extra, opt)
+			})
+
+			It("should return the CPE-ID string", func() {
+				Expect(ExtractCpeID(baseMsg)).Should(Equal("kids-devices"))
+			})
+		})
+
+		When("EDNS0_LOCAL with different code is present", func() {
+			BeforeEach(func() {
+				opt := new(dns.OPT)
+				opt.Hdr.Name = "."
+				opt.Hdr.Rrtype = dns.TypeOPT
+				local := &dns.EDNS0_LOCAL{Code: 65001, Data: []byte("other")}
+				opt.Option = append(opt.Option, local)
+				baseMsg.Extra = append(baseMsg.Extra, opt)
+			})
+
+			It("should return empty string", func() {
+				Expect(ExtractCpeID(baseMsg)).Should(BeEmpty())
+			})
+		})
+
+		When("no OPT record exists", func() {
+			It("should return empty string", func() {
+				Expect(ExtractCpeID(baseMsg)).Should(BeEmpty())
+			})
+		})
+
+		When("message is nil", func() {
+			It("should return empty string", func() {
+				Expect(ExtractCpeID(nil)).Should(BeEmpty())
 			})
 		})
 	})

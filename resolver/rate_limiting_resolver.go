@@ -57,20 +57,20 @@ func NewRateLimitingResolver(ctx context.Context, cfg config.RateLimit) *RateLim
 
 	r.drops = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "blocky_rate_limit_drops_total",
+			Name: "blockasaurus_rate_limit_drops_total",
 			Help: "Total number of DNS queries dropped by the rate limiter, by protocol.",
 		},
 		[]string{logFieldProtocol},
 	)
 	r.capExhausted = prometheus.NewCounter(
 		prometheus.CounterOpts{
-			Name: "blocky_rate_limit_cap_exhausted_total",
+			Name: "blockasaurus_rate_limit_cap_exhausted_total",
 			Help: "Total number of queries dropped because the in-memory bucket store was full.",
 		},
 	)
 	r.activeBuckets = prometheus.NewGaugeFunc(
 		prometheus.GaugeOpts{
-			Name: "blocky_rate_limit_active_buckets",
+			Name: "blockasaurus_rate_limit_active_buckets",
 			Help: "Number of token buckets currently held in memory.",
 		},
 		func() float64 { return float64(r.store.size.Load()) },

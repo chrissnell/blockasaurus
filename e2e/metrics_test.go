@@ -68,12 +68,12 @@ var _ = Describe("Metrics functional tests", func() {
 			metricsURL = fmt.Sprintf("http://%s/metrics", net.JoinHostPort(host, port))
 		})
 		When("Blocky is started", func() {
-			It("Should provide 'blocky_build_info' prometheus metrics", func(ctx context.Context) {
+			It("Should provide 'blockasaurus_build_info' prometheus metrics", func(ctx context.Context) {
 				Eventually(fetchBlockyMetrics).WithArguments(ctx, metricsURL).
 					Should(ContainElement(ContainSubstring("blockasaurus_build_info")))
 			})
 
-			It("Should provide 'blocky_blocking_enabled' prometheus metrics", func(ctx context.Context) {
+			It("Should provide 'blockasaurus_blocking_enabled' prometheus metrics", func(ctx context.Context) {
 				Eventually(fetchBlockyMetrics, "30s", "2ms").WithArguments(ctx, metricsURL).
 					Should(ContainElement("blockasaurus_blocking_enabled 1"))
 			})
@@ -198,24 +198,24 @@ var _ = Describe("Metrics functional tests", func() {
 			metricsList := fetchAllBlockyMetrics(ctx, testMetricsURL)
 
 			By("verifying build info metric exists", func() {
-				Expect(metricsList).Should(ContainElement(ContainSubstring("blocky_build_info")))
+				Expect(metricsList).Should(ContainElement(ContainSubstring("blockasaurus_build_info")))
 			})
 
 			By("verifying blocking enabled metric", func() {
-				Expect(metricsList).Should(ContainElement("blocky_blocking_enabled 1"))
+				Expect(metricsList).Should(ContainElement("blockasaurus_blocking_enabled 1"))
 			})
 
 			By("verifying denylist cache entries", func() {
-				Expect(metricsList).Should(ContainElement(MatchRegexp(`blocky_denylist_cache_entries\{group="ads"\} 2`)))
-				Expect(metricsList).Should(ContainElement(MatchRegexp(`blocky_denylist_cache_entries\{group="malware"\} 1`)))
+				Expect(metricsList).Should(ContainElement(MatchRegexp(`blockasaurus_denylist_cache_entries\{group="ads"\} 2`)))
+				Expect(metricsList).Should(ContainElement(MatchRegexp(`blockasaurus_denylist_cache_entries\{group="malware"\} 1`)))
 			})
 
 			By("verifying allowlist cache entries", func() {
-				Expect(metricsList).Should(ContainElement(MatchRegexp(`blocky_allowlist_cache_entries\{group="trusted"\} 2`)))
+				Expect(metricsList).Should(ContainElement(MatchRegexp(`blockasaurus_allowlist_cache_entries\{group="trusted"\} 2`)))
 			})
 
 			By("verifying last list refresh timestamp", func() {
-				Expect(metricsList).Should(ContainElement(MatchRegexp(`blocky_last_list_group_refresh_timestamp_seconds \d+`)))
+				Expect(metricsList).Should(ContainElement(MatchRegexp(`blockasaurus_last_list_group_refresh_timestamp_seconds \d+`)))
 			})
 
 			By("performing DNS queries to trigger query/response metrics", func() {
@@ -243,22 +243,22 @@ var _ = Describe("Metrics functional tests", func() {
 			Eventually(func(g Gomega) {
 				metrics := fetchAllBlockyMetrics(ctx, testMetricsURL)
 				g.Expect(metrics).Should(SatisfyAll(
-					ContainElement(MatchRegexp(`blocky_query_total\{[^}]*type="A"[^}]*\} \d+`)),
-					ContainElement(MatchRegexp(`blocky_response_total\{[^}]*\} \d+`)),
+					ContainElement(MatchRegexp(`blockasaurus_query_total\{[^}]*type="A"[^}]*\} \d+`)),
+					ContainElement(MatchRegexp(`blockasaurus_response_total\{[^}]*\} \d+`)),
 					// blocked.com is on the ads denylist, so the per-client counter must show it
-					ContainElement(MatchRegexp(`blocky_client_response_total\{client="[^"]+",response_type="BLOCKED"\} \d+`)),
-					ContainElement(MatchRegexp(`blocky_client_response_total\{client="[^"]+",response_type="RESOLVED"\} \d+`)),
-					ContainElement(MatchRegexp(`blocky_request_duration_seconds_bucket\{[^}]*\}`)),
-					ContainElement(MatchRegexp(`blocky_request_duration_seconds_sum\{[^}]*\} [\d.]+`)),
-					ContainElement(MatchRegexp(`blocky_request_duration_seconds_count\{[^}]*\} \d+`)),
+					ContainElement(MatchRegexp(`blockasaurus_client_response_total\{client="[^"]+",response_type="BLOCKED"\} \d+`)),
+					ContainElement(MatchRegexp(`blockasaurus_client_response_total\{client="[^"]+",response_type="RESOLVED"\} \d+`)),
+					ContainElement(MatchRegexp(`blockasaurus_request_duration_seconds_bucket\{[^}]*\}`)),
+					ContainElement(MatchRegexp(`blockasaurus_request_duration_seconds_sum\{[^}]*\} [\d.]+`)),
+					ContainElement(MatchRegexp(`blockasaurus_request_duration_seconds_count\{[^}]*\} \d+`)),
 				))
 			}, "30s", "2s").Should(Succeed())
 
 			By("verifying cache metrics", func() {
 				metrics := fetchAllBlockyMetrics(ctx, testMetricsURL)
-				Expect(metrics).Should(ContainElement(MatchRegexp(`blocky_cache_entries \d+`)))
-				Expect(metrics).Should(ContainElement(MatchRegexp(`blocky_cache_hits_total \d+`)))
-				Expect(metrics).Should(ContainElement(MatchRegexp(`blocky_cache_misses_total \d+`)))
+				Expect(metrics).Should(ContainElement(MatchRegexp(`blockasaurus_cache_entries \d+`)))
+				Expect(metrics).Should(ContainElement(MatchRegexp(`blockasaurus_cache_hits_total \d+`)))
+				Expect(metrics).Should(ContainElement(MatchRegexp(`blockasaurus_cache_misses_total \d+`)))
 			})
 		})
 	})
@@ -307,8 +307,8 @@ var _ = Describe("Metrics functional tests", func() {
 			Eventually(func(g Gomega) {
 				metrics := fetchAllBlockyMetrics(ctx, testMetricsURL)
 				g.Expect(metrics).Should(ContainElements(
-					MatchRegexp(`blocky_allowlist_cache_entries\{group="group1"\} 1`),
-					MatchRegexp(`blocky_allowlist_cache_entries\{group="group2"\} 2`),
+					MatchRegexp(`blockasaurus_allowlist_cache_entries\{group="group1"\} 1`),
+					MatchRegexp(`blockasaurus_allowlist_cache_entries\{group="group2"\} 2`),
 				))
 			}, "30s", "2s").Should(Succeed())
 		})
@@ -351,7 +351,7 @@ var _ = Describe("Metrics functional tests", func() {
 		It("Should increment failed downloads counter when list download fails", func(ctx context.Context) {
 			Eventually(func(g Gomega) {
 				metrics := fetchAllBlockyMetrics(ctx, testMetricsURL)
-				g.Expect(metrics).Should(ContainElement(MatchRegexp(`blocky_failed_downloads_total \d+`)))
+				g.Expect(metrics).Should(ContainElement(MatchRegexp(`blockasaurus_failed_downloads_total \d+`)))
 			}, "30s", "2s").Should(Succeed())
 		})
 	})
@@ -407,14 +407,14 @@ var _ = Describe("Metrics functional tests", func() {
 			Eventually(func(g Gomega) {
 				metrics := fetchAllBlockyMetrics(ctx, testMetricsURL)
 				g.Expect(metrics).Should(SatisfyAll(
-					ContainElement(MatchRegexp(`blocky_query_total\{[^}]*type="A"[^}]*\} 3`)),
-					ContainElement(MatchRegexp(`blocky_response_total\{[^}]*\} \d+`)),
-					ContainElement(MatchRegexp(`blocky_cache_hits_total 1`)),
-					ContainElement(MatchRegexp(`blocky_cache_misses_total 2`)),
-					ContainElement(MatchRegexp(`blocky_cache_entries 2`)),
-					ContainElement(MatchRegexp(`blocky_request_duration_seconds_bucket\{[^}]*\}`)),
-					ContainElement(MatchRegexp(`blocky_request_duration_seconds_sum\{[^}]*\} [\d.]+`)),
-					ContainElement(MatchRegexp(`blocky_request_duration_seconds_count\{[^}]*\} \d+`)),
+					ContainElement(MatchRegexp(`blockasaurus_query_total\{[^}]*type="A"[^}]*\} 3`)),
+					ContainElement(MatchRegexp(`blockasaurus_response_total\{[^}]*\} \d+`)),
+					ContainElement(MatchRegexp(`blockasaurus_cache_hits_total 1`)),
+					ContainElement(MatchRegexp(`blockasaurus_cache_misses_total 2`)),
+					ContainElement(MatchRegexp(`blockasaurus_cache_entries 2`)),
+					ContainElement(MatchRegexp(`blockasaurus_request_duration_seconds_bucket\{[^}]*\}`)),
+					ContainElement(MatchRegexp(`blockasaurus_request_duration_seconds_sum\{[^}]*\} [\d.]+`)),
+					ContainElement(MatchRegexp(`blockasaurus_request_duration_seconds_count\{[^}]*\} \d+`)),
 				))
 			}, "30s", "2s").Should(Succeed())
 		})
@@ -480,11 +480,11 @@ var _ = Describe("Metrics functional tests", func() {
 					metrics := fetchAllBlockyMetrics(ctx, testMetricsURL)
 
 					g.Expect(metrics).Should(SatisfyAll(
-						ContainElement(MatchRegexp(`blocky_prefetches_total \d+`)),
-						ContainElement(MatchRegexp(`blocky_prefetch_hits_total \d+`)),
-						ContainElement(MatchRegexp(`blocky_prefetch_domain_name_cache_entries [1-9]`)),
+						ContainElement(MatchRegexp(`blockasaurus_prefetches_total \d+`)),
+						ContainElement(MatchRegexp(`blockasaurus_prefetch_hits_total \d+`)),
+						ContainElement(MatchRegexp(`blockasaurus_prefetch_domain_name_cache_entries [1-9]`)),
 					))
-					g.Expect(metrics).Should(ContainElement(MatchRegexp(`blocky_prefetches_total [1-9]`)))
+					g.Expect(metrics).Should(ContainElement(MatchRegexp(`blockasaurus_prefetches_total [1-9]`)))
 				}, "10s", "1s").Should(Succeed())
 			})
 		})

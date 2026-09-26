@@ -167,8 +167,11 @@ type clientGroupsIndex struct {
 }
 
 type cidrGroups struct {
-	ipNet  *net.IPNet
-	groups []scheduledGroup
+	// identifier is the configured CIDR string, kept for request.ClientGroup
+	// attribution.
+	identifier string
+	ipNet      *net.IPNet
+	groups     []scheduledGroup
 }
 
 type fqdnGroups struct {
@@ -209,7 +212,7 @@ func newClientGroupsIndex(cfg config.Blocking) clientGroupsIndex {
 		// Pre-parse CIDR identifiers so per-query matching is a cheap
 		// ipNet.Contains instead of a net.ParseCIDR allocation per entry.
 		if _, ipNet, err := net.ParseCIDR(id); err == nil {
-			idx.cidrs = append(idx.cidrs, cidrGroups{ipNet: ipNet, groups: groups})
+			idx.cidrs = append(idx.cidrs, cidrGroups{identifier: id, ipNet: ipNet, groups: groups})
 		}
 
 		// Mirror the previous per-query isFQDN(identifier) check so FQDN
@@ -528,6 +531,10 @@ func (r *BlockingResolver) Resolve(ctx context.Context, request *model.Request) 
 	// per-request logger derivation and group resolution entirely (matches the
 	// disabled-path early-return in hosts_file/rebinding resolvers).
 	if !r.IsEnabled() {
+		// Still attribute the request to the default group: the dashboard and query
+		// log display ClientGroup for every query, configured groups or not.
+		request.ClientGroup = "default"
+
 		return r.next.Resolve(ctx, request)
 	}
 
@@ -593,12 +600,17 @@ func (r *BlockingResolver) groupsToCheckForClient(request *model.Request) ([]str
 	disabledGroups := r.status.disabledGroups
 	r.status.lock.RUnlock()
 
-	groups := r.collectGroupsForClient(request)
+	groups, matchedClient := r.collectGroupsForClient(request)
 
 	if len(groups) == 0 {
 		// return default
 		groups = r.clientGroups.byID["default"]
+		matchedClient = "default"
 	}
+
+	// Surface the matched client identifier on the request: the dashboard and the
+	// query log both display which client group a query was attributed to.
+	request.ClientGroup = matchedClient
 
 	// Exclusive mode is derived from the client's configured groups, not from the
 	// active ones filtered below: a client that also has a denylist group uses its
@@ -650,25 +662,28 @@ func isAnyScheduleActive(schedules []*config.Schedule, now time.Time) bool {
 		}
 	}
 
-<<<<<<< HEAD
-	var groups []string
-	var matchedClient string
-
-	// try client names
-	for _, cName := range request.ClientNames {
-		for blockGroup, groupsByName := range r.clientGroupsBlock {
-			if util.ClientNameMatchesGroupName(blockGroup, cName) {
-				groups = append(groups, groupsByName...)
-
-				if matchedClient == "" {
-					matchedClient = blockGroup
-				}
-=======
 	return false
 }
 
-func (r *BlockingResolver) collectGroupsForClient(request *model.Request) []scheduledGroup {
-	var groups []scheduledGroup
+// clientMatch accumulates the groups configured for a request's client together
+// with the first identifier that matched them, which becomes request.ClientGroup.
+type clientMatch struct {
+	groups     []scheduledGroup
+	identifier string
+}
+
+func (m *clientMatch) add(identifier string, groups []scheduledGroup) {
+	m.groups = append(m.groups, groups...)
+
+	if m.identifier == "" {
+		m.identifier = identifier
+	}
+}
+
+// collectGroupsForClient returns the groups configured for the request's client,
+// along with the first client identifier that matched (empty when none did).
+func (r *BlockingResolver) collectGroupsForClient(request *model.Request) ([]scheduledGroup, string) {
+	var match clientMatch
 
 	cg := r.clientGroups
 
@@ -681,60 +696,28 @@ func (r *BlockingResolver) collectGroupsForClient(request *model.Request) []sche
 		// client name exactly, so resolve them with a single map lookup instead of
 		// running filepath.Match against every entry.
 		if groupsByName, found := cg.byID[lowerName]; found {
-			groups = append(groups, groupsByName...)
+			match.add(lowerName, groupsByName)
 		}
 
 		// Only the (usually tiny) set of glob identifiers needs a pattern match.
 		for _, ng := range cg.names {
 			if matched, _ := filepath.Match(ng.pattern, lowerName); matched {
-				groups = append(groups, ng.groups...)
->>>>>>> upstream/main
+				match.add(ng.pattern, ng.groups)
 			}
 		}
 	}
 
 	// try IP
-<<<<<<< HEAD
 	ipStr := request.ClientIP.String()
 
-	groupsByIP, found := r.clientGroupsBlock[ipStr]
-
-	if found {
-=======
-	if groupsByIP, found := cg.byID[request.ClientIP.String()]; found {
->>>>>>> upstream/main
-		groups = append(groups, groupsByIP...)
-
-		if matchedClient == "" {
-			matchedClient = ipStr
-		}
+	if groupsByIP, found := cg.byID[ipStr]; found {
+		match.add(ipStr, groupsByIP)
 	}
 
-<<<<<<< HEAD
-	for clientIdentifier, groupsByCidr := range r.clientGroupsBlock {
-		// try CIDR
-		if util.CidrContainsIP(clientIdentifier, request.ClientIP) {
-			groups = append(groups, groupsByCidr...)
-
-			if matchedClient == "" {
-				matchedClient = clientIdentifier
-			}
-		} else if isFQDN(clientIdentifier) && r.fqdnIPCache != nil {
-			ips, _ := r.fqdnIPCache.Get(clientIdentifier)
-			if ips != nil {
-				for _, ip := range *ips {
-					if ip.Equal(request.ClientIP) {
-						groups = append(groups, groupsByCidr...)
-
-						if matchedClient == "" {
-							matchedClient = clientIdentifier
-						}
-					}
-=======
 	// try CIDR using the networks pre-parsed at config load
 	for _, c := range cg.cidrs {
 		if c.ipNet.Contains(request.ClientIP) {
-			groups = append(groups, c.groups...)
+			match.add(c.identifier, c.groups)
 		}
 	}
 
@@ -748,36 +731,13 @@ func (r *BlockingResolver) collectGroupsForClient(request *model.Request) []sche
 
 			for _, ip := range *ips {
 				if ip.Equal(request.ClientIP) {
-					groups = append(groups, f.groups...)
->>>>>>> upstream/main
+					match.add(f.identifier, f.groups)
 				}
 			}
 		}
 	}
 
-<<<<<<< HEAD
-	if len(groups) == 0 {
-		// return default
-		groups = r.clientGroupsBlock["default"]
-		matchedClient = "default"
-	}
-
-	request.ClientGroup = matchedClient
-
-	var result []string
-
-	for _, g := range groups {
-		if !r.isGroupDisabled(g) {
-			result = append(result, g)
-		}
-	}
-
-	sort.Strings(result)
-
-	return result
-=======
-	return groups
->>>>>>> upstream/main
+	return match.groups, match.identifier
 }
 
 func (r *BlockingResolver) matches(groupsToCheck []string, m lists.Matcher,

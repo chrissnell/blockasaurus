@@ -6,6 +6,7 @@ import (
 
 	"github.com/0xERR0R/blocky/config"
 	"github.com/0xERR0R/blocky/log"
+	"github.com/0xERR0R/blocky/pkg/statscollector"
 
 	. "github.com/0xERR0R/blocky/helpertest"
 	. "github.com/0xERR0R/blocky/model"
@@ -190,6 +191,52 @@ var _ = Describe("MetricResolver", func() {
 					Expect(testutil.CollectAndCount(sut.totalQueries)).Should(BeZero())
 					Expect(testutil.CollectAndCount(sut.totalResponse)).Should(BeZero())
 				})
+			})
+		})
+	})
+
+	// The dashboard's stats collector is independent of the Prometheus exporter, so
+	// it must keep receiving queries when metrics.enable is false. Upstream's
+	// allocation-free rewrite turned that guard into an early return, which left the
+	// collector unreachable and silently emptied every dashboard series.
+	Describe("Feeding the dashboard stats collector", func() {
+		var collector *statscollector.Collector
+
+		JustBeforeEach(func() {
+			collector = statscollector.New()
+			sut.StatsCollector = collector
+		})
+
+		expectRecorded := func() {
+			_, err := sut.Resolve(ctx, newRequestWithClient("example.com.", A, "1.2.3.4", "client"))
+			Expect(err).Should(Succeed())
+
+			total, _ := collector.TotalQueries()
+			Expect(total).Should(BeNumerically("==", 1))
+
+			permitted, _ := collector.TopDomains(statscollector.DefaultTopN)
+			Expect(permitted).Should(ConsistOf(statscollector.DomainCount{Domain: "example.com", Count: 1}))
+
+			clients, _ := collector.TopClients(statscollector.DefaultTopN)
+			Expect(clients).Should(ConsistOf(statscollector.ClientCount{Client: "1.2.3.4", Count: 1}))
+		}
+
+		When("prometheus metrics are enabled", func() {
+			It("records the query", func() {
+				expectRecorded()
+			})
+		})
+
+		When("prometheus metrics are disabled", func() {
+			BeforeEach(func() {
+				sut = NewMetricsResolver(config.Metrics{Enable: false})
+				sut.Next(m)
+			})
+
+			It("still records the query", func() {
+				expectRecorded()
+
+				Expect(testutil.CollectAndCount(sut.totalQueries)).Should(BeZero())
 			})
 		})
 	})

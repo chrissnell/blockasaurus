@@ -158,19 +158,11 @@ func NewQueryLoggingResolver(ctx context.Context, cfg config.QueryLog, broadcast
 		cfg.Type = config.QueryLogTypeConsole
 	}
 
-<<<<<<< HEAD
 	// Wire broadcaster to LoggerWriter for direct WebSocket publishing
 	if lw, ok := writer.(*querylog.LoggerWriter); ok && broadcaster != nil {
 		lw.SetBroadcaster(broadcaster)
 	}
 
-	instanceID, err := readInstanceID("/etc/hostname")
-	if err != nil {
-		return nil, fmt.Errorf("failed to determine instance ID for query logging: %w", err)
-	}
-
-=======
->>>>>>> upstream/main
 	logChan := make(chan *querylog.LogEntry, logChanCap)
 
 	ignoreDomains := newIgnoreDomainsMatcher(cfg.Ignore.Domains, logger)

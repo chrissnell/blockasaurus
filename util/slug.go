@@ -6,8 +6,8 @@ import (
 )
 
 var (
-	slugDisallowed    = regexp.MustCompile(`[^a-z0-9-]`)
-	slugMultiHyphens  = regexp.MustCompile(`-{2,}`)
+	slugDisallowed   = regexp.MustCompile(`[^a-z0-9-]`)
+	slugMultiHyphens = regexp.MustCompile(`-{2,}`)
 )
 
 // SanitizeGroupSlug converts a human-readable client group name into a

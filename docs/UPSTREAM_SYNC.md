@@ -85,6 +85,19 @@ our change:
 `resolver/dnssec/validator.go` is the highest-stakes entry: upstream landed a DNSSEC validation
 bypass fix there (GHSA-x845-2f78-7v36) plus three other DNSSEC correctness fixes.
 
+**Audited in Phase 4 (GRA-632)** for the Go files in the resolver/querylog/util/metrics/model/cache
+set. The check that is worth repeating next sync: for each file both sides touched, diff
+merge-base→ours to enumerate our added lines, then assert every one of them is present in the
+merged file. On this sync it cleared `model/models.go`, `querylog/database_writer.go`,
+`querylog/writer.go`, `resolver/caching_resolver.go`, `resolver/dnssec/validator.go`,
+`util/edns0.go` and `resolver/query_logging_resolver_test.go` — each is byte-identical to upstream
+apart from exactly our fork delta, which is also what proves the four DNSSEC fixes arrived
+verbatim. `resolver/parallel_best_resolver.go` turned out never to have been patched by us, so
+upstream's `b73422e` rewrite dropping the `weightedrand` chooser lost nothing of ours; only two
+comments and a stale `go.sum` entry still mention it. The one real miss the line-level check does
+*not* catch is a semantic reordering — see §4b on `resolver/metrics_resolver.go`, where every one
+of our lines survived in the wrong place.
+
 ## 3. Why this is more than a textual merge
 
 The original estimate treated the fork as "mostly additive." The trial merge says otherwise in
@@ -123,6 +136,20 @@ structures (`byID` exact map, parsed CIDR list, FQDN list) and a `scheduledGroup
 schedule-based blocking (#2037). We modified that same function to record `request.ClientGroup`
 and to filter disabled groups. Our behavior must be re-implemented against upstream's new data
 model; taking either side wholesale loses something.
+
+**Resolved in Phase 4 (GRA-632).** Upstream's data model was taken as-is and the attribution
+re-implemented on top of it: `cidrGroups` gained an `identifier` field, `collectGroupsForClient`
+returns `([]scheduledGroup, string)` where the string is the first matching client identifier, and
+`groupsToCheckForClient` assigns it to `request.ClientGroup`. Precedence follows the pre-merge
+order — client names (literal before glob), exact IP, CIDR, FQDN — falling back to `"default"`.
+The accumulation goes through a `clientMatch` value whose `add` method is inlined and whose
+storage stays on the stack, so `BenchmarkBlockingGroupsToCheck{LiteralName,GlobName}` report the
+same 200 B / 5 allocs per op as upstream's unpatched version — the point of upstream's rewrite is
+preserved. Upstream's new `!r.IsEnabled()` early return in `Resolve` also sets `ClientGroup` to
+`"default"`, because pre-merge every request carried a group and the query log and dashboard both
+display it. `resolver/blocking_resolver_test.go` ("Client group attribution") pins all of it;
+upstream's disabled-group filtering, which now happens inline under a released read lock, replaced
+our `isGroupDisabled` helper and its recursive-RLock hazard.
 
 ### 3.4 Config ownership is a design conflict
 
@@ -373,6 +400,13 @@ the resolver chain:
   guard, so this collects regardless of that flag, and `configstore/stats.go`
   flushes it to SQLite every 30s and reloads at startup. These survive restarts.
 
+  Upstream's `77b0fe7` turned that guard into an early return, which silently put the
+  `Record` call behind it and emptied every series above whenever `prometheus.enable`
+  was false. Phase 4 hoisted it into `MetricsResolver.recordStats`, called before the
+  early return, and pinned the independence with a test
+  (`resolver/metrics_resolver_test.go`, "Feeding the dashboard stats collector"). Keep
+  that call above the guard.
+
 What the query log alone gives you is durable per-query history — which client
 asked for which name at which time. The dashboard's aggregates are not a
 substitute for that, and it is the only thing lost by leaving query logging on
@@ -496,12 +530,21 @@ Keep this current — it is what makes the *next* sync cheap.
 `model/models.go`, `util/edns0.go`, `web/index.html`, `Makefile`, `.goreleaser.yml`,
 `.github/workflows/release.yml`.
 
+Plus the files patched **only** to carry the metric prefix: `resolver/caching_resolver.go`,
+`resolver/dnssec/validator.go`, `resolver/rate_limiting_resolver.go`,
+`metrics/metrics_event_publisher.go`, `querylog/dnstap_writer.go`, `cache/redis.go`,
+`metrics/metrics_test.go`, `e2e/metrics_test.go`.
+
 **Deliberately deleted:** `cmd/blocking.go`, `cmd/cache.go`, `cmd/lists.go`, `cmd/query.go`
 (+ tests) — replaced by the web UI. Upstream CI workflows other than `release.yml`.
 
 **Design divergences:** upstream configuration lives in the SQLite config store, not YAML
 (`upstreams:` is rejected); admin UI runs on its own listeners (`adminPort`, `adminPortTLS`);
-statistics are persisted rather than in-memory.
+statistics are persisted rather than in-memory; every Prometheus metric is named
+`blockasaurus_*`, so each upstream sync has to rename the metrics upstream added (this one brought
+`client_response_total`, `redis_cache_buffer_drops_total`, `dnstap_frames_dropped_total` and the
+three `rate_limit_*` metrics). `metrics/metrics_test.go` is the gate: it fails on any registered
+metric missing from its expected list, in either direction.
 
 ## 8. Cadence
 
