@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/0xERR0R/blocky/config"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"gorm.io/gorm"
@@ -224,6 +225,88 @@ var _ = Describe("ConfigStore", func() {
 			entries, err := store.ListCustomDNSEntries()
 			Expect(err).Should(Succeed())
 			Expect(entries).Should(BeEmpty())
+		})
+	})
+
+	Describe("RebindingSettings", func() {
+		It("should return defaults on first access", func() {
+			rs, err := store.GetRebindingSettings()
+			Expect(err).Should(Succeed())
+			Expect(rs.Enabled).Should(BeFalse())
+			Expect(rs.AllowedDomains).Should(BeEmpty())
+		})
+
+		It("should round-trip the allowlist", func() {
+			rs := &RebindingSettings{Enabled: true, AllowedDomains: StringList{"nas.example.com"}}
+			Expect(store.PutRebindingSettings(rs)).Should(Succeed())
+
+			got, err := store.GetRebindingSettings()
+			Expect(err).Should(Succeed())
+			Expect(got.Enabled).Should(BeTrue())
+			Expect([]string(got.AllowedDomains)).Should(Equal([]string{"nas.example.com"}))
+		})
+
+		It("should persist disabling, not skip the zero value", func() {
+			Expect(store.PutRebindingSettings(&RebindingSettings{
+				Enabled: true, AllowedDomains: StringList{"nas.example.com"},
+			})).Should(Succeed())
+
+			// gorm's Save skips zero-valued struct fields, which would leave the
+			// protection stuck on after a UI toggle-off
+			Expect(store.PutRebindingSettings(&RebindingSettings{Enabled: false})).Should(Succeed())
+
+			got, err := store.GetRebindingSettings()
+			Expect(err).Should(Succeed())
+			Expect(got.Enabled).Should(BeFalse())
+			Expect(got.AllowedDomains).Should(BeEmpty())
+		})
+
+		It("should reject a wildcard entry", func() {
+			err := store.PutRebindingSettings(&RebindingSettings{
+				Enabled: true, AllowedDomains: StringList{"*.example.com"},
+			})
+			Expect(err).Should(HaveOccurred())
+			Expect(err.Error()).Should(ContainSubstring("plain domain"))
+		})
+	})
+
+	Describe("BuildRebindingConfig", func() {
+		It("should seed the singleton from YAML on first run", func() {
+			base := config.RebindingProtection{Enable: true, AllowedDomains: []string{"intranet.example.com"}}
+
+			got, err := store.BuildRebindingConfig(base)
+			Expect(err).Should(Succeed())
+			Expect(got.Enable).Should(BeTrue())
+			Expect(got.AllowedDomains).Should(Equal([]string{"intranet.example.com"}))
+
+			// the seed must land in the DB, or the UI would show an empty list
+			// while the resolver was enforcing the YAML one
+			rs, err := store.GetRebindingSettings()
+			Expect(err).Should(Succeed())
+			Expect([]string(rs.AllowedDomains)).Should(Equal([]string{"intranet.example.com"}))
+		})
+
+		It("should let DB state win once seeded", func() {
+			Expect(store.PutRebindingSettings(&RebindingSettings{
+				Enabled: true, AllowedDomains: StringList{"nas.example.com"},
+			})).Should(Succeed())
+
+			base := config.RebindingProtection{Enable: false, AllowedDomains: []string{"stale.example.com"}}
+
+			got, err := store.BuildRebindingConfig(base)
+			Expect(err).Should(Succeed())
+			Expect(got.Enable).Should(BeTrue())
+			Expect(got.AllowedDomains).Should(Equal([]string{"nas.example.com"}))
+		})
+
+		It("should hand the resolver the DB allowlist, normalized", func() {
+			Expect(store.PutRebindingSettings(&RebindingSettings{
+				Enabled: true, AllowedDomains: StringList{"NAS.Example.COM."},
+			})).Should(Succeed())
+
+			got, err := store.BuildRebindingConfig(config.RebindingProtection{})
+			Expect(err).Should(Succeed())
+			Expect(got.NormalizedAllowedDomains()).Should(Equal([]string{"nas.example.com"}))
 		})
 	})
 

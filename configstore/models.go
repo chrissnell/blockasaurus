@@ -79,6 +79,15 @@ type UpstreamSettings struct {
 // IsEnabled returns the Enabled value, defaulting to true if nil.
 func (u *UpstreamServer) IsEnabled() bool { return u.Enabled == nil || *u.Enabled }
 
+// RebindingSettings holds DNS rebinding protection configuration (singleton).
+// AllowedDomains are plain domains; each one also matches its subdomains.
+type RebindingSettings struct {
+	ID             uint       `gorm:"primaryKey"                      json:"id"`
+	Enabled        bool       `gorm:"not null;default:false"          json:"enabled"`
+	AllowedDomains StringList `gorm:"type:text;not null;default:'[]'" json:"allowed_domains"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+}
+
 type BlockSettings struct {
 	ID        uint      `gorm:"primaryKey"                json:"id"`
 	BlockType string    `gorm:"not null;default:'ZEROIP'" json:"block_type"`

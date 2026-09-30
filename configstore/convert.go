@@ -113,6 +113,30 @@ func (s *ConfigStore) BuildBlockingConfig(base config.Blocking) (config.Blocking
 	return base, nil
 }
 
+// BuildRebindingConfig replaces the enable flag and allowlist in base with DB state.
+// On first run the singleton row is seeded from base, so a pre-existing YAML
+// rebindingProtection block carries over instead of being silently discarded.
+func (s *ConfigStore) BuildRebindingConfig(base config.RebindingProtection) (config.RebindingProtection, error) {
+	if err := s.seedRebindingSettings(base); err != nil {
+		return base, err
+	}
+
+	settings, err := s.GetRebindingSettings()
+	if err != nil {
+		return base, fmt.Errorf("load rebinding settings: %w", err)
+	}
+
+	base.Enable = settings.Enabled
+
+	// SetAllowedDomains, not a direct assignment: the base carries a cached
+	// normalized allowlist from YAML validation, and the resolver reads that cache.
+	if err := base.SetAllowedDomains(settings.AllowedDomains); err != nil {
+		return base, fmt.Errorf("apply rebinding allowlist: %w", err)
+	}
+
+	return base, nil
+}
+
 // BuildCustomDNSConfig replaces the Mapping in base with DB state.
 func (s *ConfigStore) BuildCustomDNSConfig(base config.CustomDNS) (config.CustomDNS, error) {
 	entries, err := s.ListCustomDNSEntries()

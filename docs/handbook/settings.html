@@ -41,7 +41,7 @@
 
   <main class="content">
     <h1>Settings</h1>
-    <p class="subtitle">Global blocking behavior and miscellaneous options</p>
+    <p class="subtitle">Global blocking behavior and DNS rebinding protection</p>
 
     <p>
       The <strong>Settings</strong> tab contains global options that affect how
@@ -167,11 +167,60 @@
       </div>
     </div>
 
+    <h2>DNS Rebinding Protection</h2>
+
+    <p>
+      In a DNS rebinding attack, a site you visit resolves its own domain to an
+      address on your local network, so the page in your browser can reach your
+      router, your NAS, or anything else behind the firewall &mdash; from the
+      outside, wearing an origin your browser trusts. Turning on
+      <strong>Enable rebinding protection</strong> makes blockasaurus drop any
+      answer from the upstream resolvers that points at a private, loopback,
+      link-local or unspecified address.
+    </p>
+
+    <p>
+      Answers from Custom DNS, the hosts file and conditional upstreams are never
+      inspected, so internal zones you serve yourself keep working with no extra
+      configuration.
+    </p>
+
+    <h3>Allowed Domains</h3>
+
+    <p>
+      Some names legitimately resolve to a private address through the public
+      upstreams &mdash; a NAS, a router admin page, or any
+      <em>split-horizon</em> record whose public DNS entry points into your LAN.
+      Add those here. Each entry also matches its subdomains, so
+      <code>example.com</code> covers <code>nas.example.com</code>.
+    </p>
+
+    <p>
+      Entries must be plain domain names. Wildcards
+      (<code>*.example.com</code>), regexes and whitespace are rejected &mdash;
+      subdomain matching is automatic, so a wildcard would not buy anything.
+    </p>
+
+    <div class="callout warn">
+      <span class="callout-icon">&#9888;</span>
+      <div class="callout-body">
+        <p>
+          A missing entry fails quietly. The name does not error &mdash; it
+          resolves to nothing, for every client at once, and the only trace is a
+          <code>REBIND</code> row in the query log. Before turning this on, list
+          the internal names that resolve to a private address in public DNS and
+          add them first.
+        </p>
+      </div>
+    </div>
+
     <h2>Applying Settings</h2>
 
     <p>
-      Click <strong>Save Settings</strong> on the Settings page, then click
-      <strong>Apply</strong> in the header to put changes into effect.
+      Each section saves independently &mdash; <strong>Save Settings</strong> for
+      blocking behavior, <strong>Save Rebinding Settings</strong> for rebinding
+      protection. Then click <strong>Apply</strong> in the header to put changes
+      into effect. Neither one needs a restart.
     </p>
 
     <nav class="page-nav">

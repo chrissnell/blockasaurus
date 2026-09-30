@@ -140,6 +140,11 @@ func runServer(ctx context.Context) error {
 			return fmt.Errorf("build upstreams config from DB: %w", err)
 		}
 
+		cfg.RebindingProtection, err = store.BuildRebindingConfig(cfg.RebindingProtection)
+		if err != nil {
+			return fmt.Errorf("build rebinding config from DB: %w", err)
+		}
+
 		log.Log().Info("Using database-backed configuration from ", cfg.DatabasePath)
 	} else {
 		return errors.New("databasePath is required: upstream configuration now lives in SQLite, " +

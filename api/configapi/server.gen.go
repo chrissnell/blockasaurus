@@ -83,6 +83,12 @@ type ServerInterface interface {
 	// Update a domain entry
 	// (PUT /domain-entries/{id})
 	UpdateDomainEntry(w http.ResponseWriter, r *http.Request, id ResourceID)
+	// Get DNS rebinding protection settings
+	// (GET /rebinding-settings)
+	GetRebindingSettings(w http.ResponseWriter, r *http.Request)
+	// Update DNS rebinding protection settings
+	// (PUT /rebinding-settings)
+	PutRebindingSettings(w http.ResponseWriter, r *http.Request)
 	// List all upstream groups
 	// (GET /upstream-groups)
 	ListUpstreamGroups(w http.ResponseWriter, r *http.Request)
@@ -248,6 +254,18 @@ func (_ Unimplemented) GetDomainEntry(w http.ResponseWriter, r *http.Request, id
 // Update a domain entry
 // (PUT /domain-entries/{id})
 func (_ Unimplemented) UpdateDomainEntry(w http.ResponseWriter, r *http.Request, id ResourceID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Get DNS rebinding protection settings
+// (GET /rebinding-settings)
+func (_ Unimplemented) GetRebindingSettings(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Update DNS rebinding protection settings
+// (PUT /rebinding-settings)
+func (_ Unimplemented) PutRebindingSettings(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -823,6 +841,34 @@ func (siw *ServerInterfaceWrapper) UpdateDomainEntry(w http.ResponseWriter, r *h
 	handler.ServeHTTP(w, r)
 }
 
+// GetRebindingSettings operation middleware
+func (siw *ServerInterfaceWrapper) GetRebindingSettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRebindingSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutRebindingSettings operation middleware
+func (siw *ServerInterfaceWrapper) PutRebindingSettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutRebindingSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListUpstreamGroups operation middleware
 func (siw *ServerInterfaceWrapper) ListUpstreamGroups(w http.ResponseWriter, r *http.Request) {
 
@@ -1243,6 +1289,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Put(options.BaseURL+"/domain-entries/{id}", wrapper.UpdateDomainEntry)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/rebinding-settings", wrapper.GetRebindingSettings)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/rebinding-settings", wrapper.PutRebindingSettings)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/upstream-groups", wrapper.ListUpstreamGroups)
@@ -2022,6 +2074,63 @@ func (response UpdateDomainEntry404JSONResponse) VisitUpdateDomainEntryResponse(
 	return err
 }
 
+type GetRebindingSettingsRequestObject struct {
+}
+
+type GetRebindingSettingsResponseObject interface {
+	VisitGetRebindingSettingsResponse(w http.ResponseWriter) error
+}
+
+type GetRebindingSettings200JSONResponse RebindingSettings
+
+func (response GetRebindingSettings200JSONResponse) VisitGetRebindingSettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutRebindingSettingsRequestObject struct {
+	Body *PutRebindingSettingsJSONRequestBody
+}
+
+type PutRebindingSettingsResponseObject interface {
+	VisitPutRebindingSettingsResponse(w http.ResponseWriter) error
+}
+
+type PutRebindingSettings200JSONResponse RebindingSettings
+
+func (response PutRebindingSettings200JSONResponse) VisitPutRebindingSettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutRebindingSettings400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PutRebindingSettings400JSONResponse) VisitPutRebindingSettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListUpstreamGroupsRequestObject struct {
 }
 
@@ -2454,6 +2563,12 @@ type StrictServerInterface interface {
 	// Update a domain entry
 	// (PUT /domain-entries/{id})
 	UpdateDomainEntry(ctx context.Context, request UpdateDomainEntryRequestObject) (UpdateDomainEntryResponseObject, error)
+	// Get DNS rebinding protection settings
+	// (GET /rebinding-settings)
+	GetRebindingSettings(ctx context.Context, request GetRebindingSettingsRequestObject) (GetRebindingSettingsResponseObject, error)
+	// Update DNS rebinding protection settings
+	// (PUT /rebinding-settings)
+	PutRebindingSettings(ctx context.Context, request PutRebindingSettingsRequestObject) (PutRebindingSettingsResponseObject, error)
 	// List all upstream groups
 	// (GET /upstream-groups)
 	ListUpstreamGroups(ctx context.Context, request ListUpstreamGroupsRequestObject) (ListUpstreamGroupsResponseObject, error)
@@ -3120,6 +3235,61 @@ func (sh *strictHandler) UpdateDomainEntry(w http.ResponseWriter, r *http.Reques
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(UpdateDomainEntryResponseObject); ok {
 		if err := validResponse.VisitUpdateDomainEntryResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetRebindingSettings operation middleware
+func (sh *strictHandler) GetRebindingSettings(w http.ResponseWriter, r *http.Request) {
+	var request GetRebindingSettingsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetRebindingSettings(ctx, request.(GetRebindingSettingsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetRebindingSettings")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetRebindingSettingsResponseObject); ok {
+		if err := validResponse.VisitGetRebindingSettingsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutRebindingSettings operation middleware
+func (sh *strictHandler) PutRebindingSettings(w http.ResponseWriter, r *http.Request) {
+	var request PutRebindingSettingsRequestObject
+
+	var body PutRebindingSettingsJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutRebindingSettings(ctx, request.(PutRebindingSettingsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutRebindingSettings")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutRebindingSettingsResponseObject); ok {
+		if err := validResponse.VisitPutRebindingSettingsResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

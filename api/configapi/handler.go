@@ -19,6 +19,7 @@ import (
 
 	"github.com/0xERR0R/blocky/config"
 	"github.com/0xERR0R/blocky/configstore"
+	"github.com/0xERR0R/blocky/util"
 	"github.com/go-chi/chi/v5"
 	"gorm.io/gorm"
 )
@@ -439,6 +440,38 @@ func (h *ConfigHandler) PutBlockSettings(_ context.Context, req PutBlockSettings
 	return PutBlockSettings200JSONResponse(blockSettingsToAPI(*bs)), nil
 }
 
+// --- Rebinding Settings ---
+
+func (h *ConfigHandler) GetRebindingSettings(
+	_ context.Context, _ GetRebindingSettingsRequestObject,
+) (GetRebindingSettingsResponseObject, error) {
+	rs, err := h.store.GetRebindingSettings()
+	if err != nil {
+		return nil, err
+	}
+
+	return GetRebindingSettings200JSONResponse(rebindingSettingsToAPI(*rs)), nil
+}
+
+func (h *ConfigHandler) PutRebindingSettings(
+	_ context.Context, req PutRebindingSettingsRequestObject,
+) (PutRebindingSettingsResponseObject, error) {
+	if err := validateRebindingSettings(req.Body); err != nil {
+		return PutRebindingSettings400JSONResponse{BadRequestJSONResponse{Message: err.Error()}}, nil
+	}
+
+	rs := &configstore.RebindingSettings{
+		Enabled:        req.Body.Enabled,
+		AllowedDomains: configstore.StringList(req.Body.AllowedDomains),
+	}
+
+	if err := h.store.PutRebindingSettings(rs); err != nil {
+		return nil, err
+	}
+
+	return PutRebindingSettings200JSONResponse(rebindingSettingsToAPI(*rs)), nil
+}
+
 // --- Upstream Groups ---
 
 func (h *ConfigHandler) ListUpstreamGroups(_ context.Context, _ ListUpstreamGroupsRequestObject) (ListUpstreamGroupsResponseObject, error) {
@@ -761,6 +794,18 @@ func blockSettingsToAPI(bs configstore.BlockSettings) BlockSettings {
 	}
 }
 
+func rebindingSettingsToAPI(rs configstore.RebindingSettings) RebindingSettings {
+	domains := []string(rs.AllowedDomains)
+	if domains == nil {
+		domains = []string{}
+	}
+
+	return RebindingSettings{
+		Enabled:        rs.Enabled,
+		AllowedDomains: domains,
+	}
+}
+
 // --- Validation ---
 
 func validateClientGroup(input *ClientGroupInput) error {
@@ -867,6 +912,34 @@ func validateDomainEntry(input *DomainEntryInput) error {
 		if !hostnameChars.MatchString(strings.TrimSpace(input.Domain)) {
 			return errors.New("exact entries must be a plain hostname; use regex_deny/regex_allow for patterns")
 		}
+	}
+
+	return nil
+}
+
+func validateRebindingSettings(input *RebindingSettingsInput) error {
+	if input == nil {
+		return errors.New("request body is required")
+	}
+
+	seen := make(map[string]struct{}, len(input.AllowedDomains))
+
+	for _, domain := range input.AllowedDomains {
+		// same rules the YAML loader applies, so a config file and a UI edit
+		// accept exactly the same set of entries
+		if err := config.ValidateAllowedDomain(domain); err != nil {
+			return fmt.Errorf("allowed domain %q: %w", domain, err)
+		}
+
+		// entries match case-insensitively and ignore a trailing dot, so
+		// "Example.com." and "example.com" are the same rule — reject the
+		// duplicate instead of showing the user two rows that do one thing
+		key := util.ExtractDomainOnly(domain)
+		if _, dup := seen[key]; dup {
+			return fmt.Errorf("duplicate allowed domain %q", domain)
+		}
+
+		seen[key] = struct{}{}
 	}
 
 	return nil

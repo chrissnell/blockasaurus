@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/0xERR0R/blocky/config"
 	"github.com/0xERR0R/blocky/util"
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -94,6 +95,7 @@ func Open(path string) (*ConfigStore, error) {
 		&CustomDNSEntry{},
 		&DomainEntry{},
 		&BlockSettings{},
+		&RebindingSettings{},
 		&UpstreamGroup{},
 		&UpstreamServer{},
 		&UpstreamSettings{},
@@ -496,6 +498,78 @@ func (s *ConfigStore) DeleteDomainEntry(id uint) error {
 
 	if result.RowsAffected == 0 {
 		return gorm.ErrRecordNotFound
+	}
+
+	return nil
+}
+
+// --- RebindingSettings (singleton) ---
+
+func (s *ConfigStore) GetRebindingSettings() (*RebindingSettings, error) {
+	var rs RebindingSettings
+
+	if err := s.db.FirstOrCreate(&rs, RebindingSettings{ID: 1}).Error; err != nil {
+		return nil, fmt.Errorf("get rebinding settings: %w", err)
+	}
+
+	return &rs, nil
+}
+
+func (s *ConfigStore) PutRebindingSettings(rs *RebindingSettings) error {
+	for _, domain := range rs.AllowedDomains {
+		if err := config.ValidateAllowedDomain(domain); err != nil {
+			return fmt.Errorf("invalid allowed domain %q: %w", domain, err)
+		}
+	}
+
+	if rs.AllowedDomains == nil {
+		rs.AllowedDomains = StringList{}
+	}
+
+	rs.ID = 1
+
+	// Create the row if this is the first write — an UPDATE would match nothing
+	// and report success while persisting nothing.
+	if _, err := s.GetRebindingSettings(); err != nil {
+		return err
+	}
+
+	// A map update, not Save: gorm's Save skips zero-valued struct fields, so
+	// turning the protection back off (Enabled=false) would be silently dropped.
+	if err := s.db.Model(&RebindingSettings{ID: 1}).
+		Updates(map[string]any{
+			"enabled":         rs.Enabled,
+			"allowed_domains": rs.AllowedDomains,
+		}).Error; err != nil {
+		return fmt.Errorf("save rebinding settings: %w", err)
+	}
+
+	return nil
+}
+
+// seedRebindingSettings creates the singleton row on first run, adopting whatever
+// the YAML config carried. Without this, an operator who had rebindingProtection
+// configured in YAML before the allowlist moved into the DB would silently lose it
+// on upgrade — the worst possible failure for this feature, since the symptom is
+// one internal hostname quietly resolving to nothing.
+func (s *ConfigStore) seedRebindingSettings(base config.RebindingProtection) error {
+	var count int64
+	if err := s.db.Model(&RebindingSettings{}).Count(&count).Error; err != nil {
+		return fmt.Errorf("count rebinding settings: %w", err)
+	}
+
+	if count > 0 {
+		return nil
+	}
+
+	domains := StringList(base.AllowedDomains)
+	if domains == nil {
+		domains = StringList{}
+	}
+
+	rs := &RebindingSettings{ID: 1, Enabled: base.Enable, AllowedDomains: domains}
+	if err := s.db.Create(rs).Error; err != nil {
+		return fmt.Errorf("seed rebinding settings: %w", err)
 	}
 
 	return nil

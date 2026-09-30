@@ -145,6 +145,33 @@ var _ = Describe("Config API HTTP integration", func() {
 		Expect(bs.BlockType).Should(Equal("NXDOMAIN"))
 	})
 
+	// --- Rebinding Settings round-trip ---
+
+	It("gets and updates rebinding settings via HTTP", func() {
+		resp := httpDo("GET", srv.URL+"/api/config/rebinding-settings", "")
+		Expect(resp.StatusCode).Should(Equal(200))
+
+		var rs configapi.RebindingSettings
+		decodeBody(resp, &rs)
+		Expect(rs.Enabled).Should(BeFalse())
+		Expect(rs.AllowedDomains).Should(BeEmpty())
+
+		resp = httpDo("PUT", srv.URL+"/api/config/rebinding-settings",
+			`{"enabled":true,"allowed_domains":["nas.example.com"]}`)
+		Expect(resp.StatusCode).Should(Equal(200))
+
+		resp = httpDo("GET", srv.URL+"/api/config/rebinding-settings", "")
+		decodeBody(resp, &rs)
+		Expect(rs.Enabled).Should(BeTrue())
+		Expect(rs.AllowedDomains).Should(Equal([]string{"nas.example.com"}))
+	})
+
+	It("rejects a wildcard allowlist entry via HTTP", func() {
+		resp := httpDo("PUT", srv.URL+"/api/config/rebinding-settings",
+			`{"enabled":true,"allowed_domains":["*.example.com"]}`)
+		Expect(resp.StatusCode).Should(Equal(400))
+	})
+
 	// --- Apply round-trip ---
 
 	It("calls apply and succeeds via HTTP", func() {

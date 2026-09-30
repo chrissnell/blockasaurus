@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"unicode"
@@ -35,25 +36,53 @@ func (c *RebindingProtection) LogConfig(logger *logrus.Entry) {
 	}
 }
 
+// ValidateAllowedDomain returns an error if domain is not usable as an allowlist
+// entry. Exported because the config file is not the only writer: the allowlist is
+// also editable through the config API, which must reject exactly what a YAML load
+// would reject, or the two paths drift.
+func ValidateAllowedDomain(domain string) error {
+	if strings.TrimSpace(domain) == "" {
+		return errors.New("must not be empty")
+	}
+
+	// queryLog.ignore.domains supports wildcard/regex syntax; this list does not —
+	// reject such entries (and other never-matching forms like padded strings or
+	// degenerate dots) instead of silently ignoring them; whitespace is rejected
+	// via unicode.IsSpace so the rule covers everything trimming would touch
+	if strings.ContainsAny(domain, "*/") || strings.ContainsFunc(domain, unicode.IsSpace) ||
+		strings.HasPrefix(domain, ".") || strings.Contains(domain, "..") {
+		return errors.New("must be a plain domain (no wildcards, regexes or whitespace);" +
+			" subdomains match automatically")
+	}
+
+	return nil
+}
+
+// SetAllowedDomains validates and replaces the allowlist, refreshing the cached
+// normalized form. Assigning AllowedDomains directly would leave that cache holding
+// the previous entries — the resolver reads the cache, so the change would appear to
+// apply and silently not. Use this from anything that rewrites the list after load
+// (the config store rebuilding from DB state, tests).
+func (c *RebindingProtection) SetAllowedDomains(domains []string) error {
+	for i, domain := range domains {
+		if err := ValidateAllowedDomain(domain); err != nil {
+			return fmt.Errorf("allowedDomains[%d] (%q) %w", i, domain, err)
+		}
+	}
+
+	c.AllowedDomains = domains
+	c.normalizedAllowedDomains = normalizeDomains(domains)
+
+	return nil
+}
+
 // validate returns an error if the allowlist contains an empty or non-plain-domain
 // entry. It runs even when the protection is disabled, so config errors surface
 // before the user enables it.
 func (c *RebindingProtection) validate() error {
 	for i, domain := range c.AllowedDomains {
-		if strings.TrimSpace(domain) == "" {
-			return fmt.Errorf("rebindingProtection.allowedDomains[%d] must not be empty", i)
-		}
-
-		// queryLog.ignore.domains supports wildcard/regex syntax; this list does not —
-		// reject such entries (and other never-matching forms like padded strings or
-		// degenerate dots) instead of silently ignoring them; whitespace is rejected
-		// via unicode.IsSpace so the rule covers everything trimming would touch
-		if strings.ContainsAny(domain, "*/") || strings.ContainsFunc(domain, unicode.IsSpace) ||
-			strings.HasPrefix(domain, ".") || strings.Contains(domain, "..") {
-			return fmt.Errorf(
-				"rebindingProtection.allowedDomains[%d] (%q) must be a plain domain"+
-					" (no wildcards, regexes or whitespace); subdomains match automatically",
-				i, domain)
+		if err := ValidateAllowedDomain(domain); err != nil {
+			return fmt.Errorf("rebindingProtection.allowedDomains[%d] (%q) %w", i, domain, err)
 		}
 	}
 
