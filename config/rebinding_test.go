@@ -88,6 +88,14 @@ var _ = Describe("RebindingProtection", func() {
 			Expect(cfg.validate()).Should(MatchError(ContainSubstring(`allowedDomains[1] ("  ") must not be empty`)))
 		})
 
+		It("rejects entries that differ only by case or a trailing dot", func() {
+			// the API rejects these; if YAML accepted them the seeded list would
+			// be one the Settings page could never save
+			cfg.AllowedDomains = []string{"nas.example.com", "NAS.Example.com."}
+
+			Expect(cfg.validate()).Should(MatchError(ContainSubstring("duplicates an earlier entry")))
+		})
+
 		It("rejects wildcard entries", func() {
 			cfg.AllowedDomains = []string{"*.example.com"}
 

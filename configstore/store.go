@@ -4,6 +4,7 @@
 package configstore
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"sync/atomic"
@@ -13,6 +14,7 @@ import (
 	"github.com/0xERR0R/blocky/util"
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
 )
 
@@ -505,10 +507,20 @@ func (s *ConfigStore) DeleteDomainEntry(id uint) error {
 
 // --- RebindingSettings (singleton) ---
 
+// GetRebindingSettings is a pure read: a missing row reads as the disabled default
+// rather than being created here. Creating on read would make the seed order
+// load-bearing — any future caller that reads before seedRebindingSettings runs
+// would write an empty row and silently discard an upgrading operator's YAML
+// allowlist, which is the one failure this feature must not have.
 func (s *ConfigStore) GetRebindingSettings() (*RebindingSettings, error) {
 	var rs RebindingSettings
 
-	if err := s.db.FirstOrCreate(&rs, RebindingSettings{ID: 1}).Error; err != nil {
+	err := s.db.First(&rs, RebindingSettings{ID: 1}).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return &RebindingSettings{ID: 1, AllowedDomains: StringList{}}, nil
+	}
+
+	if err != nil {
 		return nil, fmt.Errorf("get rebinding settings: %w", err)
 	}
 
@@ -516,10 +528,8 @@ func (s *ConfigStore) GetRebindingSettings() (*RebindingSettings, error) {
 }
 
 func (s *ConfigStore) PutRebindingSettings(rs *RebindingSettings) error {
-	for _, domain := range rs.AllowedDomains {
-		if err := config.ValidateAllowedDomain(domain); err != nil {
-			return fmt.Errorf("invalid allowed domain %q: %w", domain, err)
-		}
+	if err := config.ValidateAllowedDomains(rs.AllowedDomains); err != nil {
+		return fmt.Errorf("invalid rebinding allowlist: %w", err)
 	}
 
 	if rs.AllowedDomains == nil {
@@ -528,19 +538,14 @@ func (s *ConfigStore) PutRebindingSettings(rs *RebindingSettings) error {
 
 	rs.ID = 1
 
-	// Create the row if this is the first write — an UPDATE would match nothing
-	// and report success while persisting nothing.
-	if _, err := s.GetRebindingSettings(); err != nil {
-		return err
-	}
-
 	// A map update, not Save: gorm's Save skips zero-valued struct fields, so
 	// turning the protection back off (Enabled=false) would be silently dropped.
-	if err := s.db.Model(&RebindingSettings{ID: 1}).
-		Updates(map[string]any{
-			"enabled":         rs.Enabled,
-			"allowed_domains": rs.AllowedDomains,
-		}).Error; err != nil {
+	// Upsert because an UPDATE against a database that has never been seeded
+	// would match nothing and still report success.
+	if err := s.db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"enabled", "allowed_domains"}),
+	}).Create(rs).Error; err != nil {
 		return fmt.Errorf("save rebinding settings: %w", err)
 	}
 
@@ -552,23 +557,18 @@ func (s *ConfigStore) PutRebindingSettings(rs *RebindingSettings) error {
 // configured in YAML before the allowlist moved into the DB would silently lose it
 // on upgrade — the worst possible failure for this feature, since the symptom is
 // one internal hostname quietly resolving to nothing.
+//
+// DoNothing on conflict rather than count-then-create: two Applies racing on a
+// fresh database would both see an empty table, and the loser would fail on the
+// primary key instead of simply finding the row already seeded.
 func (s *ConfigStore) seedRebindingSettings(base config.RebindingProtection) error {
-	var count int64
-	if err := s.db.Model(&RebindingSettings{}).Count(&count).Error; err != nil {
-		return fmt.Errorf("count rebinding settings: %w", err)
-	}
-
-	if count > 0 {
-		return nil
-	}
-
 	domains := StringList(base.AllowedDomains)
 	if domains == nil {
 		domains = StringList{}
 	}
 
 	rs := &RebindingSettings{ID: 1, Enabled: base.Enable, AllowedDomains: domains}
-	if err := s.db.Create(rs).Error; err != nil {
+	if err := s.db.Clauses(clause.OnConflict{DoNothing: true}).Create(rs).Error; err != nil {
 		return fmt.Errorf("seed rebinding settings: %w", err)
 	}
 

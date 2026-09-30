@@ -22,6 +22,8 @@
   let domainInput = $state('')
   let domainError = $state('')
   let rebindSaving = $state(false)
+  let rebindLoadFailed = $state(false)
+  let rebindDirty = $state(false)
 
   // The API also accepts a comma-separated list of block IP addresses, which no
   // named option can represent. Keep a stored value like that selectable so
@@ -39,11 +41,18 @@
       blockType = data.block_type || 'ZEROIP'
       blockTTL = data.block_ttl || '1m'
     } catch { /* use defaults */ }
+    // No silent fallback here, unlike block settings: defaulting to
+    // "off, empty allowlist" would render a security control as disabled when we
+    // simply failed to read it, and the next Save would make that true.
     try {
       const data = await rebindingSettings.get()
       rebindEnabled = data.enabled ?? false
       allowedDomains = data.allowed_domains ?? []
-    } catch { /* use defaults */ }
+      rebindLoadFailed = false
+      rebindDirty = false
+    } catch {
+      rebindLoadFailed = true
+    }
     loading = false
   }
 
@@ -72,10 +81,12 @@
     allowedDomains = [...allowedDomains, domain]
     domainInput = ''
     domainError = ''
+    rebindDirty = true
   }
 
-  function removeDomain(domain) {
-    allowedDomains = allowedDomains.filter((d) => d !== domain)
+  function removeDomain(index) {
+    allowedDomains = allowedDomains.filter((_, i) => i !== index)
+    rebindDirty = true
   }
 
   async function saveRebinding() {
@@ -83,6 +94,7 @@
     try {
       await rebindingSettings.update({ enabled: rebindEnabled, allowed_domains: allowedDomains })
       markDirty()
+      rebindDirty = false
       toast('Rebinding protection saved', 'success')
     } catch (e) {
       toast(e.message, 'danger')
@@ -135,8 +147,20 @@
         the hosts file and conditional upstreams are never inspected.
       </p>
 
-      <div class="form-layout">
-        <Toggle bind:checked={rebindEnabled} label="Enable rebinding protection" />
+      {#if rebindLoadFailed}
+        <p class="load-error" role="alert">
+          Could not load the current rebinding settings, so this section is not
+          showing what is actually in effect. Reload the page before changing
+          anything.
+        </p>
+      {/if}
+
+      <div class="form-layout" class:loading-state={rebindLoadFailed}>
+        <Toggle
+          bind:checked={rebindEnabled}
+          onCheckedChange={() => (rebindDirty = true)}
+          label="Enable rebinding protection"
+        />
 
         <div class="form-field">
           <Label for="allowed-domain">Allowed Domains</Label>
@@ -146,12 +170,13 @@
             here, such a name silently resolves to nothing for every client.
           </p>
           <div class="chip-list">
-            {#each allowedDomains as domain}
+            {#each allowedDomains as domain, i (i)}
               <span class="chip">
                 {domain}
                 <button
+                  type="button"
                   class="chip-remove"
-                  onclick={() => removeDomain(domain)}
+                  onclick={() => removeDomain(i)}
                   aria-label={`Remove ${domain}`}
                 >&times;</button>
               </span>
@@ -170,12 +195,15 @@
             <Button onclick={addDomain}>Add</Button>
           </div>
           {#if domainError}
-            <p class="field-error">{domainError}</p>
+            <p class="field-error" role="alert">{domainError}</p>
           {/if}
         </div>
 
         <div class="form-actions">
-          <Button onclick={saveRebinding} disabled={rebindSaving}>
+          {#if rebindDirty}
+            <span class="unsaved-hint">unsaved changes</span>
+          {/if}
+          <Button onclick={saveRebinding} disabled={rebindSaving || rebindLoadFailed}>
             {rebindSaving ? 'Saving...' : 'Save Rebinding Settings'}
           </Button>
         </div>
@@ -259,5 +287,17 @@
     color: var(--color-danger);
     font-size: var(--text-sm);
     margin: var(--space-2) 0 0;
+  }
+  .load-error {
+    color: var(--color-danger);
+    font-size: var(--text-sm);
+    line-height: 1.5;
+    margin: 0 0 var(--space-3);
+  }
+  .unsaved-hint {
+    color: var(--color-text-muted);
+    font-size: var(--text-sm);
+    margin-right: var(--space-3);
+    align-self: center;
   }
 </style>

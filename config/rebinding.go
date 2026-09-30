@@ -36,10 +36,35 @@ func (c *RebindingProtection) LogConfig(logger *logrus.Entry) {
 	}
 }
 
+// ValidateAllowedDomains returns an error if the allowlist is not usable: an entry
+// that is not a plain domain, or two entries that are the same rule written
+// differently. Exported because the config file is not the only writer — the
+// allowlist is also editable through the config API — and every writer has to
+// reject the same set, or a config a YAML load accepts becomes one the UI can
+// never save.
+func ValidateAllowedDomains(domains []string) error {
+	seen := make(map[string]struct{}, len(domains))
+
+	for i, domain := range domains {
+		if err := ValidateAllowedDomain(domain); err != nil {
+			return fmt.Errorf("allowedDomains[%d] (%q) %w", i, domain, err)
+		}
+
+		// entries match case-insensitively and ignore a trailing dot, so
+		// "Example.com." and "example.com" are one rule written twice
+		key := util.ExtractDomainOnly(domain)
+		if _, dup := seen[key]; dup {
+			return fmt.Errorf("allowedDomains[%d] (%q) duplicates an earlier entry", i, domain)
+		}
+
+		seen[key] = struct{}{}
+	}
+
+	return nil
+}
+
 // ValidateAllowedDomain returns an error if domain is not usable as an allowlist
-// entry. Exported because the config file is not the only writer: the allowlist is
-// also editable through the config API, which must reject exactly what a YAML load
-// would reject, or the two paths drift.
+// entry. Prefer ValidateAllowedDomains, which also catches duplicates.
 func ValidateAllowedDomain(domain string) error {
 	if strings.TrimSpace(domain) == "" {
 		return errors.New("must not be empty")
@@ -64,10 +89,8 @@ func ValidateAllowedDomain(domain string) error {
 // apply and silently not. Use this from anything that rewrites the list after load
 // (the config store rebuilding from DB state, tests).
 func (c *RebindingProtection) SetAllowedDomains(domains []string) error {
-	for i, domain := range domains {
-		if err := ValidateAllowedDomain(domain); err != nil {
-			return fmt.Errorf("allowedDomains[%d] (%q) %w", i, domain, err)
-		}
+	if err := ValidateAllowedDomains(domains); err != nil {
+		return err
 	}
 
 	c.AllowedDomains = domains
@@ -80,10 +103,8 @@ func (c *RebindingProtection) SetAllowedDomains(domains []string) error {
 // entry. It runs even when the protection is disabled, so config errors surface
 // before the user enables it.
 func (c *RebindingProtection) validate() error {
-	for i, domain := range c.AllowedDomains {
-		if err := ValidateAllowedDomain(domain); err != nil {
-			return fmt.Errorf("rebindingProtection.allowedDomains[%d] (%q) %w", i, domain, err)
-		}
+	if err := ValidateAllowedDomains(c.AllowedDomains); err != nil {
+		return fmt.Errorf("rebindingProtection.%w", err)
 	}
 
 	c.normalizedAllowedDomains = normalizeDomains(c.AllowedDomains)

@@ -19,7 +19,6 @@ import (
 
 	"github.com/0xERR0R/blocky/config"
 	"github.com/0xERR0R/blocky/configstore"
-	"github.com/0xERR0R/blocky/util"
 	"github.com/go-chi/chi/v5"
 	"gorm.io/gorm"
 )
@@ -922,27 +921,9 @@ func validateRebindingSettings(input *RebindingSettingsInput) error {
 		return errors.New("request body is required")
 	}
 
-	seen := make(map[string]struct{}, len(input.AllowedDomains))
-
-	for _, domain := range input.AllowedDomains {
-		// same rules the YAML loader applies, so a config file and a UI edit
-		// accept exactly the same set of entries
-		if err := config.ValidateAllowedDomain(domain); err != nil {
-			return fmt.Errorf("allowed domain %q: %w", domain, err)
-		}
-
-		// entries match case-insensitively and ignore a trailing dot, so
-		// "Example.com." and "example.com" are the same rule — reject the
-		// duplicate instead of showing the user two rows that do one thing
-		key := util.ExtractDomainOnly(domain)
-		if _, dup := seen[key]; dup {
-			return fmt.Errorf("duplicate allowed domain %q", domain)
-		}
-
-		seen[key] = struct{}{}
-	}
-
-	return nil
+	// the same check the YAML loader runs, so a config file and a UI edit accept
+	// exactly the same set of entries
+	return config.ValidateAllowedDomains(input.AllowedDomains)
 }
 
 func validateBlockSettings(input *BlockSettingsInput) error {
