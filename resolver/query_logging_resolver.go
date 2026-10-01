@@ -375,9 +375,15 @@ func (r *QueryLoggingResolver) writeLog(ctx context.Context) {
 // publish streams the entry to the admin UI's log viewer.
 //
 // The entry is published from here rather than from a writer so that it happens
-// for every queryLog.type. It also skips the logstream hook's copy of the fields
-// map: LogEntryFields already returns a fresh map nobody else holds, so it can be
-// handed to the broadcaster as-is. LoggerWriter's own log line is marked with
+// for every queryLog.type that logs at all -- type none never reaches writeLog,
+// because Resolve short-circuits before building an entry.
+//
+// LogEntryFields already returns a fresh map nobody else holds, so the broadcaster
+// takes it as-is: no copy, which is the property the old publish-from-LoggerWriter
+// path existed for. The tradeoff is that the console type now builds the fields map
+// twice, once here and once in LoggerWriter. That is accepted deliberately: it keeps
+// querylog.Writer ignorant of the log stream, and it runs on this goroutine, so it
+// costs the resolver's hot path nothing. LoggerWriter's own log line is marked with
 // logstream.SkipHook to keep the hook from publishing the same entry again.
 func (r *QueryLoggingResolver) publish(entry *querylog.LogEntry) {
 	if r.broadcaster == nil {

@@ -593,8 +593,7 @@ var _ = Describe("QueryLoggingResolver", func() {
 
 				// The console writer logs through the global logger, which in the real
 				// server also carries the logstream hook -- the double-publish risk.
-				originalHooks := log.Log().Hooks
-				log.Log().ReplaceHooks(logrus.LevelHooks{})
+				originalHooks := log.Log().ReplaceHooks(logrus.LevelHooks{})
 				log.Log().AddHook(logstream.NewHook(broadcaster))
 				DeferCleanup(func() { log.Log().ReplaceHooks(originalHooks) })
 			})
@@ -603,8 +602,17 @@ var _ = Describe("QueryLoggingResolver", func() {
 				_, err := sut.Resolve(ctx, newRequestWithClient("example.com.", A, "192.168.178.25", "client1"))
 				Expect(err).Should(Succeed())
 
-				Eventually(resolvedEntries).Should(Equal(1))
-				Consistently(resolvedEntries).Should(Equal(0))
+				// resolvedEntries drains, so count a running total: a double publish
+				// then fails as "2, want 1" rather than as a later poll seeing 0.
+				total := 0
+				countedSoFar := func() int {
+					total += resolvedEntries()
+
+					return total
+				}
+
+				Eventually(countedSoFar).Should(Equal(1))
+				Consistently(countedSoFar).Should(Equal(1))
 			})
 		})
 	})

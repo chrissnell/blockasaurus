@@ -22,7 +22,8 @@ type LoggerWriter struct {
 func NewLoggerWriter() *LoggerWriter {
 	// QueryLoggingResolver publishes every entry to the UI log stream itself, for
 	// all query log types. Mark these lines so the logstream hook doesn't publish
-	// them a second time.
+	// them a second time. That marking is only correct because the resolver always
+	// publishes: it is the one owner of the stream, this writer never is.
 	return &LoggerWriter{logger: logstream.SkipHook(log.PrefixedLog(loggerPrefixLoggerWriter))}
 }
 
