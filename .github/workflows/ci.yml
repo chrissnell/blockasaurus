@@ -45,6 +45,13 @@ jobs:
       - name: Build frontend
         run: cd web/ui && npm install && npx vite build
 
+      # Node's built-in test runner, so this adds no dependency to the SPA
+      # build. Covers the pure parts of the UI — log entry shaping, the bounded
+      # live-log buffer, the log search — which `vite build` only type-checks as
+      # far as "it parses".
+      - name: Test frontend
+        run: cd web/ui && npm test
+
       - name: Set up Go
         uses: actions/setup-go@v6
         with:

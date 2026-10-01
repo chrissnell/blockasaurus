@@ -2,11 +2,16 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
 <script>
-  import { LogViewer } from '@chrissnell/chonky-ui'
+  import { LogViewer, Input, Toggle } from '@chrissnell/chonky-ui'
   import { connectLogStream } from '../lib/ws.js'
+  import { MAX_ENTRIES, appendBounded, filterEntries, toLogEntry } from '../lib/logentries.js'
   import { onMount } from 'svelte'
 
-  let entries = $state([])
+  // Raw: the entries are display-only, so there is nothing to gain from
+  // proxying every row and every field the viewer reads.
+  let entries = $state.raw([])
+  let search = $state('')
+  let blockedOnly = $state(false)
   let connected = $state(false)
   let isMobile = $state(false)
 
@@ -19,39 +24,41 @@
   })
 
   onMount(() => {
+    // Queries arrive one WS message at a time, so rebuilding the list per
+    // message is a re-render per DNS query. Batching into animation frames
+    // bounds the render cost by the display rate rather than by traffic.
+    let pending = []
+    let frame = 0
+
+    function flush() {
+      frame = 0
+      entries = appendBounded(entries, pending)
+      pending = []
+    }
+
     const disconnect = connectLogStream(
       (raw) => {
-        const f = raw.fields || {}
-        const isBlocked = f.response_type === 'BLOCKED'
-        entries = [...entries, {
-          level: isBlocked ? 'error' : mapLevel(raw.level),
-          timestamp: raw.timestamp,
-          client_ip: f.client_ip,
-          client_group: f.client_group,
-          duration_ms: f.duration_ms,
-          question_type: f.question_type,
-          question_name: f.question_name || raw.message,
-          response_code: f.response_code,
-          response_reason: f.response_reason,
-        }]
+        pending.push(toLogEntry(raw))
+        // A backgrounded tab gets no animation frames, so the queue needs the
+        // same cap as the buffer it drains into.
+        if (pending.length > MAX_ENTRIES) {
+          pending.splice(0, pending.length - MAX_ENTRIES)
+        }
+        if (frame === 0) frame = requestAnimationFrame(flush)
       },
       (status) => { connected = status },
     )
-    return disconnect
+
+    return () => {
+      if (frame !== 0) cancelAnimationFrame(frame)
+      disconnect()
+    }
   })
 
   function formatTime(ts) {
     if (!ts) return ''
     const d = new Date(ts)
     return d.toLocaleTimeString('en-GB', { hour12: false })
-  }
-
-  function mapLevel(lvl) {
-    const l = (lvl || '').toLowerCase()
-    if (l === 'error') return 'error'
-    if (l === 'warn' || l === 'warning') return 'warn'
-    if (l === 'debug') return 'debug'
-    return 'info'
   }
 
   const allColumns = [
@@ -69,6 +76,17 @@
   const columns = $derived(
     isMobile ? allColumns.filter(c => c.mobile) : allColumns
   )
+
+  const query = $derived(search.trim().toLowerCase())
+  const filtering = $derived(query !== '' || blockedOnly)
+  const visible = $derived(filterEntries(entries, search, blockedOnly))
+
+  // LogViewer owns its scroll offset and an internal "is at bottom" latch that
+  // gates autoscroll, and exposes no way to reset either. Changing the filter
+  // replaces the list both refer to: a reader who had scrolled up stays latched
+  // off, and the view then silently stops following live traffic even after the
+  // filter is cleared. Remounting on filter change re-pins to the newest match.
+  const viewKey = $derived(`${blockedOnly} ${query}`)
 </script>
 
 {#snippet renderTime(value)}
@@ -81,14 +99,29 @@
 
 <div class="page">
   <h1 class="page-title">Live Logs</h1>
+  <div class="controls">
+    <div class="search">
+      <Input
+        bind:value={search}
+        placeholder="Filter by domain or client"
+        aria-label="Filter by domain or client"
+      />
+    </div>
+    <Toggle label="Blocked only" bind:checked={blockedOnly} />
+    {#if filtering}
+      <span class="match-count">{visible.length} of {entries.length}</span>
+    {/if}
+  </div>
   <div class="log-wrap">
-    <LogViewer
-      {entries}
-      {columns}
-      showHeader
-      live={connected}
-      height="100%"
-    />
+    {#key viewKey}
+      <LogViewer
+        entries={visible}
+        {columns}
+        showHeader
+        live={connected}
+        height="100%"
+      />
+    {/key}
   </div>
 </div>
 
@@ -104,6 +137,28 @@
     font-weight: 700;
     margin-bottom: var(--space-6);
     flex-shrink: 0;
+  }
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    margin-bottom: var(--space-4);
+    flex-shrink: 0;
+    flex-wrap: wrap;
+  }
+  .search {
+    flex: 1 1 260px;
+    max-width: 420px;
+  }
+  /* Inputs carry a global margin-bottom for stacked form fields, which throws
+     the toolbar row out of vertical alignment. */
+  .search :global(input) {
+    margin-bottom: 0;
+  }
+  .match-count {
+    font-size: var(--text-sm);
+    color: var(--color-text-dim);
+    white-space: nowrap;
   }
   .log-wrap {
     flex: 1;
