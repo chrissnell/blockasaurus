@@ -12,6 +12,7 @@ import (
 
 	. "github.com/0xERR0R/blocky/helpertest"
 	"github.com/0xERR0R/blocky/log"
+	"github.com/0xERR0R/blocky/logstream"
 	"github.com/0xERR0R/blocky/querylog"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/mock"
@@ -51,6 +52,9 @@ var _ = Describe("QueryLoggingResolver", func() {
 
 		ctx      context.Context
 		cancelFn context.CancelFunc
+
+		// nil unless a spec attaches a UI log stream
+		broadcaster *logstream.Broadcaster
 	)
 
 	Describe("Type", func() {
@@ -69,6 +73,7 @@ var _ = Describe("QueryLoggingResolver", func() {
 		mockRType = ResponseTypeRESOLVED
 		mockAnswer = new(dns.Msg)
 		tmpDir = NewTmpFolder("queryLoggingResolver")
+		broadcaster = nil
 	})
 
 	JustBeforeEach(func() {
@@ -76,7 +81,7 @@ var _ = Describe("QueryLoggingResolver", func() {
 			sutConfig.SetDefaults() // not called when using a struct literal
 		}
 
-		sut, err = NewQueryLoggingResolver(ctx, sutConfig, nil)
+		sut, err = NewQueryLoggingResolver(ctx, sutConfig, broadcaster)
 		Expect(err).Should(Succeed())
 
 		m = &mockResolver{
@@ -513,6 +518,93 @@ var _ = Describe("QueryLoggingResolver", func() {
 			})
 			It("should use fallback", func() {
 				Expect(sut.cfg.Type).Should(Equal(config.QueryLogTypeConsole))
+			})
+		})
+	})
+
+	Describe("UI log stream", func() {
+		var stream <-chan logstream.LogEntry
+
+		// attachBroadcaster gives the resolver a UI log stream and subscribes to it.
+		// Must run in a BeforeEach: the resolver is built in the JustBeforeEach.
+		attachBroadcaster := func() {
+			b := logstream.NewBroadcaster(ctx, 10)
+			broadcaster = b
+
+			var unsubscribe func()
+
+			stream, unsubscribe = b.Subscribe()
+			DeferCleanup(unsubscribe)
+		}
+
+		// resolvedEntries drains the stream and counts the query entries on it.
+		resolvedEntries := func() int {
+			count := 0
+
+			for {
+				select {
+				case entry := <-stream:
+					if entry.Message == querylog.ResolvedMessage {
+						count++
+					}
+				default:
+					return count
+				}
+			}
+		}
+
+		When("the target is not the console", func() {
+			BeforeEach(func() {
+				sutConfig = config.QueryLog{
+					Target:           config.Secret(tmpDir.Path),
+					Type:             config.QueryLogTypeCsv,
+					CreationAttempts: 1,
+					CreationCooldown: config.Duration(time.Millisecond),
+				}
+				mockAnswer, _ = util.NewMsgWithAnswer("example.com.", 300, A, "123.122.121.120")
+
+				attachBroadcaster()
+			})
+
+			It("still streams queries to the UI", func() {
+				_, err := sut.Resolve(ctx, newRequestWithClient("example.com.", A, "192.168.178.25", "client1"))
+				Expect(err).Should(Succeed())
+
+				var published logstream.LogEntry
+				Eventually(stream).Should(Receive(&published))
+
+				Expect(published.Message).Should(Equal(querylog.ResolvedMessage))
+				Expect(published.Level).Should(Equal("info"))
+				Expect(published.Fields).Should(HaveKeyWithValue("client_ip", "192.168.178.25"))
+				Expect(published.Fields).Should(HaveKeyWithValue("question_name", "example.com."))
+				Expect(published.Fields).Should(HaveKeyWithValue("response_type", "RESOLVED"))
+			})
+		})
+
+		When("the target is the console", func() {
+			BeforeEach(func() {
+				sutConfig = config.QueryLog{
+					Type:             config.QueryLogTypeConsole,
+					CreationAttempts: 1,
+					CreationCooldown: config.Duration(time.Millisecond),
+				}
+
+				attachBroadcaster()
+
+				// The console writer logs through the global logger, which in the real
+				// server also carries the logstream hook -- the double-publish risk.
+				originalHooks := log.Log().Hooks
+				log.Log().ReplaceHooks(logrus.LevelHooks{})
+				log.Log().AddHook(logstream.NewHook(broadcaster))
+				DeferCleanup(func() { log.Log().ReplaceHooks(originalHooks) })
+			})
+
+			It("publishes each query exactly once", func() {
+				_, err := sut.Resolve(ctx, newRequestWithClient("example.com.", A, "192.168.178.25", "client1"))
+				Expect(err).Should(Succeed())
+
+				Eventually(resolvedEntries).Should(Equal(1))
+				Consistently(resolvedEntries).Should(Equal(0))
 			})
 		})
 	})

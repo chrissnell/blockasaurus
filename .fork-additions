@@ -95,6 +95,7 @@ logstream/broadcaster_test.go
 logstream/handler.go
 logstream/handler_test.go
 logstream/hook.go
+logstream/hook_test.go
 logstream/logstream_suite_test.go
 packaging/config/config-windows.yml
 packaging/config/config.yml

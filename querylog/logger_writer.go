@@ -1,10 +1,8 @@
 package querylog
 
 import (
-	"maps"
 	"reflect"
 	"strings"
-	"time"
 
 	"github.com/0xERR0R/blocky/log"
 	"github.com/0xERR0R/blocky/logstream"
@@ -13,42 +11,23 @@ import (
 
 const loggerPrefixLoggerWriter = "queryLog"
 
+// ResolvedMessage is the log message for a resolved query. The console writer and
+// the UI log stream share it so an entry reads the same on both.
+const ResolvedMessage = "query resolved"
+
 type LoggerWriter struct {
-	logger      *logrus.Entry
-	broadcaster *logstream.Broadcaster
+	logger *logrus.Entry
 }
 
 func NewLoggerWriter() *LoggerWriter {
-	return &LoggerWriter{logger: log.PrefixedLog(loggerPrefixLoggerWriter)}
-}
-
-// SetBroadcaster sets the logstream broadcaster for direct WebSocket publishing.
-// When set, query log entries are published directly to the broadcaster,
-// bypassing the logrus hook's map copy to reduce allocation pressure.
-func (d *LoggerWriter) SetBroadcaster(b *logstream.Broadcaster) {
-	d.broadcaster = b
+	// QueryLoggingResolver publishes every entry to the UI log stream itself, for
+	// all query log types. Mark these lines so the logstream hook doesn't publish
+	// them a second time.
+	return &LoggerWriter{logger: logstream.SkipHook(log.PrefixedLog(loggerPrefixLoggerWriter))}
 }
 
 func (d *LoggerWriter) Write(entry *LogEntry) {
-	fields := LogEntryFields(entry)
-
-	// Publish directly to broadcaster (avoids logrus hook's fields map copy)
-	if d.broadcaster != nil {
-		anyFields := make(map[string]any, len(fields))
-		maps.Copy(anyFields, fields)
-
-		d.broadcaster.Publish(logstream.LogEntry{
-			Timestamp: entry.Start.UTC().Truncate(time.Millisecond),
-			Level:     "info",
-			Message:   "query resolved",
-			Fields:    anyFields,
-		})
-
-		// Mark so the logrus hook skips this entry (prevent double-broadcast)
-		fields[logstream.SkipHookField] = true
-	}
-
-	d.logger.WithFields(fields).Infof("query resolved")
+	d.logger.WithFields(LogEntryFields(entry)).Info(ResolvedMessage)
 }
 
 func (d *LoggerWriter) CleanUp() {

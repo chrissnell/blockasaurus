@@ -48,6 +48,11 @@ type QueryLoggingResolver struct {
 	instanceID    string
 	ignoreDomains stringcache.GroupedStringCache
 
+	// broadcaster streams entries to the admin UI's log viewer. It is held here,
+	// not in a writer, so every queryLog.type reaches the UI. nil when there is
+	// no UI attached.
+	broadcaster *logstream.Broadcaster
+
 	// writerDone is closed once the writeLog goroutine has returned. Cancelling
 	// the context only signals it; until it returns it is still a consumer of
 	// logChan, so anything that needs it gone has to wait for this.
@@ -163,11 +168,6 @@ func NewQueryLoggingResolver(ctx context.Context, cfg config.QueryLog, broadcast
 		cfg.Type = config.QueryLogTypeConsole
 	}
 
-	// Wire broadcaster to LoggerWriter for direct WebSocket publishing
-	if lw, ok := writer.(*querylog.LoggerWriter); ok && broadcaster != nil {
-		lw.SetBroadcaster(broadcaster)
-	}
-
 	logChan := make(chan *querylog.LogEntry, logChanCap)
 
 	ignoreDomains := newIgnoreDomainsMatcher(cfg.Ignore.Domains, logger)
@@ -180,6 +180,7 @@ func NewQueryLoggingResolver(ctx context.Context, cfg config.QueryLog, broadcast
 		writer:        writer,
 		instanceID:    instanceID,
 		ignoreDomains: ignoreDomains,
+		broadcaster:   broadcaster,
 		writerDone:    make(chan struct{}),
 	}
 
@@ -350,6 +351,9 @@ func (r *QueryLoggingResolver) writeLog(ctx context.Context) {
 		case logEntry := <-r.logChan:
 			start := time.Now()
 
+			// Publish first: the UI stream shouldn't wait on a slow writer.
+			r.publish(logEntry)
+
 			r.writer.Write(logEntry)
 
 			halfCap := cap(r.logChan) / 2
@@ -366,6 +370,26 @@ func (r *QueryLoggingResolver) writeLog(ctx context.Context) {
 			return
 		}
 	}
+}
+
+// publish streams the entry to the admin UI's log viewer.
+//
+// The entry is published from here rather than from a writer so that it happens
+// for every queryLog.type. It also skips the logstream hook's copy of the fields
+// map: LogEntryFields already returns a fresh map nobody else holds, so it can be
+// handed to the broadcaster as-is. LoggerWriter's own log line is marked with
+// logstream.SkipHook to keep the hook from publishing the same entry again.
+func (r *QueryLoggingResolver) publish(entry *querylog.LogEntry) {
+	if r.broadcaster == nil {
+		return
+	}
+
+	r.broadcaster.Publish(logstream.LogEntry{
+		Timestamp: entry.Start.UTC().Truncate(time.Millisecond),
+		Level:     "info",
+		Message:   querylog.ResolvedMessage,
+		Fields:    querylog.LogEntryFields(entry),
+	})
 }
 
 // closeWriter lets writers that hold external resources (e.g. the dnstap socket)

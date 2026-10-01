@@ -771,28 +771,31 @@ rediscovering it in a diff.
 
 ### 4b. Query logging as it stands
 
-Recorded because the answer is not obvious from the code and the constraint
-below will bite whoever changes `queryLog.type` first.
+Recorded because the answer is not obvious from the code.
 
 Today: `queryLog.type: console`. Query entries go to the pod's stdout **and**,
 separately, to the `logstream.Broadcaster` that feeds the UI's Logs page over
 `/api/ws/logs`. The broadcaster is a 1000-entry ring buffer — live tail only,
 no history, nothing survives a restart.
 
-**The constraint.** `NewQueryLoggingResolver` only attaches the broadcaster when
-the selected writer is a `*querylog.LoggerWriter`:
+**The UI stream is independent of the storage target.** `QueryLoggingResolver`
+publishes to the broadcaster itself, from `writeLog`, where the `LogEntry`
+already exists. Every `queryLog.type` — csv, mysql, postgresql, sqlite, dnstap —
+keeps the Logs page live; switching targets changes where entries are *stored*,
+nothing else. (Until GRA-644 the publish lived inside `querylog.LoggerWriter` and
+was wired in by type-asserting the writer, so any non-console target silently
+turned the UI's query log off with no error anywhere.)
 
-```go
-if lw, ok := writer.(*querylog.LoggerWriter); ok && broadcaster != nil {
-    lw.SetBroadcaster(broadcaster)
-}
-```
+Two properties hold that together, and anything that touches this path has to
+preserve both:
 
-`queryLog.type` is single-valued, so selecting any non-console target — csv,
-mysql, sqlite, dnstap — silently turns the UI's live query log off. Anyone
-adopting a new target should first move the broadcaster publish out of the
-console writer and into the query-logging resolver, so the UI stream is
-independent of the storage target.
+- The resolver hands the broadcaster the `logrus.Fields` map that
+  `querylog.LogEntryFields` just built. Nobody else holds it, so there is no
+  copy — which is why the publish does not simply go through the `logstream.Hook`.
+- `querylog.LoggerWriter` logs through an entry marked with `logstream.SkipHook`,
+  so the hook does not broadcast the console writer's line as a second copy of
+  the same query. The marker rides on the logrus entry's `Context`, not in its
+  fields, so it never reaches the log output.
 
 Upstream's new targets in this sync: `sqlite` (local file, queryable history),
 `dnstap` (Frame Streams over `unix:/path` or `tcp://host:port`), and

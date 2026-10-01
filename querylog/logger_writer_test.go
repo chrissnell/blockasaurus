@@ -1,8 +1,10 @@
 package querylog
 
 import (
+	"context"
 	"time"
 
+	"github.com/0xERR0R/blocky/logstream"
 	"github.com/sirupsen/logrus"
 	"github.com/sirupsen/logrus/hooks/test"
 
@@ -25,7 +27,40 @@ var _ = Describe("LoggerWriter", func() {
 				})
 
 				Expect(hook.Entries).Should(HaveLen(1))
-				Expect(hook.LastEntry().Message).Should(Equal("query resolved"))
+				Expect(hook.LastEntry().Message).Should(Equal(ResolvedMessage))
+			})
+
+			It("should not publish to the log stream itself", func() {
+				// QueryLoggingResolver publishes for every query log type, so this
+				// writer must leave the stream alone -- otherwise the console type
+				// would show every query twice.
+				ctx, cancel := context.WithCancel(context.Background())
+				DeferCleanup(cancel)
+
+				broadcaster := logstream.NewBroadcaster(ctx, 10)
+				stream, unsubscribe := broadcaster.Subscribe()
+				DeferCleanup(unsubscribe)
+
+				writer := NewLoggerWriter()
+
+				// Swap only the sink, keeping the marker the constructor attached.
+				logger, hook := test.NewNullLogger()
+				logger.AddHook(logstream.NewHook(broadcaster))
+				writer.logger.Logger = logger
+
+				writer.Write(&LogEntry{
+					Start:      time.Now(),
+					DurationMs: 20,
+				})
+
+				Expect(hook.Entries).Should(HaveLen(1))
+				Expect(stream).Should(BeEmpty())
+
+				// The marker must not leak into the log output either.
+				Expect(hook.LastEntry().Data).Should(Equal(logrus.Fields{
+					"prefix":      loggerPrefixLoggerWriter,
+					"duration_ms": int64(20),
+				}))
 			})
 		})
 		When("Cleanup is called", func() {
