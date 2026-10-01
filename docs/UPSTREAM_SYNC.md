@@ -756,7 +756,7 @@ rediscovering it in a diff.
 | Feature | What it does | Default | Disposition |
 | --- | --- | --- | --- |
 | Per-client rate limiting (#2063) | Token bucket per client IP, with configurable rate, burst, IPv4/IPv6 aggregation prefix and an allowlist. | `enable: false` | No issue filed — available if something on the LAN misbehaves. |
-| DNS rebinding protection (#2111) | Rejects upstream answers that map a public name to a private address, with a per-domain allowlist for the NAS-on-a-real-hostname case. | `enable: false` | **Wanted.** GRA-641. |
+| DNS rebinding protection (#2111) | Rejects upstream answers that map a public name to a private address, with a per-domain allowlist for the NAS-on-a-real-hostname case. | `enable: false` | **Ported and moved into the config DB** (GRA-641) — toggle and allowlist are edited on the Settings page; the YAML block only seeds a database that has none. |
 | PROXY protocol (#2094) | Accepts HAProxy PROXY headers on proxied DoT/DoH listeners so the real client IP survives a reverse proxy. Relevant behind k8s ingress, where client-group matching otherwise sees the proxy. | opt-in per listener | Declined for now — not needed. |
 | SQLite query log (#2080) | Query log to a local SQLite file — no external database. | existing `queryLog.type` | See §4b. |
 | dnstap query log (#2144) | Query log as a dnstap stream for external collectors. | existing `queryLog.type` | See §4b. |

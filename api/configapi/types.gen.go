@@ -437,6 +437,19 @@ type ErrorResponse struct {
 	Message string `json:"message"`
 }
 
+// RebindingSettings defines model for RebindingSettings.
+type RebindingSettings struct {
+	AllowedDomains []string `json:"allowed_domains"`
+	Enabled        bool     `json:"enabled"`
+}
+
+// RebindingSettingsInput defines model for RebindingSettingsInput.
+type RebindingSettingsInput struct {
+	// AllowedDomains Plain domain names that may resolve to non-public addresses. Each entry also matches its subdomains. Wildcards, regexes and whitespace are rejected.
+	AllowedDomains []string `json:"allowed_domains"`
+	Enabled        bool     `json:"enabled"`
+}
+
 // UpstreamGroup defines model for UpstreamGroup.
 type UpstreamGroup struct {
 	Id   int    `json:"id"`
@@ -547,6 +560,9 @@ type CreateDomainEntryJSONRequestBody = DomainEntryInput
 
 // UpdateDomainEntryJSONRequestBody defines body for UpdateDomainEntry for application/json ContentType.
 type UpdateDomainEntryJSONRequestBody = DomainEntryInput
+
+// PutRebindingSettingsJSONRequestBody defines body for PutRebindingSettings for application/json ContentType.
+type PutRebindingSettingsJSONRequestBody = RebindingSettingsInput
 
 // CreateUpstreamServerJSONRequestBody defines body for CreateUpstreamServer for application/json ContentType.
 type CreateUpstreamServerJSONRequestBody = UpstreamServerInput

@@ -5,6 +5,7 @@ package configapi_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"math"
 	"path/filepath"
@@ -312,6 +313,67 @@ var _ = Describe("ConfigAPI Handler", func() {
 			resp, err := h.DeleteCustomDNSEntry(ctx, configapi.DeleteCustomDNSEntryRequestObject{Id: id})
 			Expect(err).Should(Succeed())
 			Expect(resp).Should(BeAssignableToTypeOf(configapi.DeleteCustomDNSEntry204Response{}))
+		})
+	})
+
+	// --- Rebinding Settings ---
+
+	Describe("RebindingSettings", func() {
+		It("should get defaults", func() {
+			resp, err := h.GetRebindingSettings(ctx, configapi.GetRebindingSettingsRequestObject{})
+			Expect(err).Should(Succeed())
+			rs := resp.(configapi.GetRebindingSettings200JSONResponse)
+			Expect(rs.Enabled).Should(BeFalse())
+			Expect(rs.AllowedDomains).Should(BeEmpty())
+		})
+
+		It("should persist an update", func() {
+			_, err := h.PutRebindingSettings(ctx, configapi.PutRebindingSettingsRequestObject{
+				Body: &configapi.RebindingSettingsInput{
+					Enabled:        true,
+					AllowedDomains: []string{"nas.example.com"},
+				},
+			})
+			Expect(err).Should(Succeed())
+
+			// PUT echoes the body, so read it back: what matters is what stuck
+			resp, err := h.GetRebindingSettings(ctx, configapi.GetRebindingSettingsRequestObject{})
+			Expect(err).Should(Succeed())
+			rs := resp.(configapi.GetRebindingSettings200JSONResponse)
+			Expect(rs.Enabled).Should(BeTrue())
+			Expect(rs.AllowedDomains).Should(Equal([]string{"nas.example.com"}))
+		})
+
+		It("should serialize an empty allowlist as [] rather than null", func() {
+			resp, err := h.GetRebindingSettings(ctx, configapi.GetRebindingSettingsRequestObject{})
+			Expect(err).Should(Succeed())
+			rs := resp.(configapi.GetRebindingSettings200JSONResponse)
+
+			body, err := json.Marshal(rs)
+			Expect(err).Should(Succeed())
+			Expect(string(body)).Should(ContainSubstring(`"allowed_domains":[]`))
+		})
+
+		It("should reject a wildcard entry", func() {
+			resp, err := h.PutRebindingSettings(ctx, configapi.PutRebindingSettingsRequestObject{
+				Body: &configapi.RebindingSettingsInput{
+					Enabled:        true,
+					AllowedDomains: []string{"*.example.com"},
+				},
+			})
+			Expect(err).Should(Succeed())
+			Expect(resp).Should(BeAssignableToTypeOf(configapi.PutRebindingSettings400JSONResponse{}))
+		})
+
+		It("should reject an entry that differs only by case or trailing dot", func() {
+			resp, err := h.PutRebindingSettings(ctx, configapi.PutRebindingSettingsRequestObject{
+				Body: &configapi.RebindingSettingsInput{
+					Enabled:        true,
+					AllowedDomains: []string{"nas.example.com", "NAS.Example.com."},
+				},
+			})
+			Expect(err).Should(Succeed())
+			Expect(resp).Should(BeAssignableToTypeOf(configapi.PutRebindingSettings400JSONResponse{}))
 		})
 	})
 

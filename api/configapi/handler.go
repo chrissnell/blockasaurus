@@ -439,6 +439,38 @@ func (h *ConfigHandler) PutBlockSettings(_ context.Context, req PutBlockSettings
 	return PutBlockSettings200JSONResponse(blockSettingsToAPI(*bs)), nil
 }
 
+// --- Rebinding Settings ---
+
+func (h *ConfigHandler) GetRebindingSettings(
+	_ context.Context, _ GetRebindingSettingsRequestObject,
+) (GetRebindingSettingsResponseObject, error) {
+	rs, err := h.store.GetRebindingSettings()
+	if err != nil {
+		return nil, err
+	}
+
+	return GetRebindingSettings200JSONResponse(rebindingSettingsToAPI(*rs)), nil
+}
+
+func (h *ConfigHandler) PutRebindingSettings(
+	_ context.Context, req PutRebindingSettingsRequestObject,
+) (PutRebindingSettingsResponseObject, error) {
+	if err := validateRebindingSettings(req.Body); err != nil {
+		return PutRebindingSettings400JSONResponse{BadRequestJSONResponse{Message: err.Error()}}, nil
+	}
+
+	rs := &configstore.RebindingSettings{
+		Enabled:        req.Body.Enabled,
+		AllowedDomains: configstore.StringList(req.Body.AllowedDomains),
+	}
+
+	if err := h.store.PutRebindingSettings(rs); err != nil {
+		return nil, err
+	}
+
+	return PutRebindingSettings200JSONResponse(rebindingSettingsToAPI(*rs)), nil
+}
+
 // --- Upstream Groups ---
 
 func (h *ConfigHandler) ListUpstreamGroups(_ context.Context, _ ListUpstreamGroupsRequestObject) (ListUpstreamGroupsResponseObject, error) {
@@ -761,6 +793,18 @@ func blockSettingsToAPI(bs configstore.BlockSettings) BlockSettings {
 	}
 }
 
+func rebindingSettingsToAPI(rs configstore.RebindingSettings) RebindingSettings {
+	domains := []string(rs.AllowedDomains)
+	if domains == nil {
+		domains = []string{}
+	}
+
+	return RebindingSettings{
+		Enabled:        rs.Enabled,
+		AllowedDomains: domains,
+	}
+}
+
 // --- Validation ---
 
 func validateClientGroup(input *ClientGroupInput) error {
@@ -870,6 +914,16 @@ func validateDomainEntry(input *DomainEntryInput) error {
 	}
 
 	return nil
+}
+
+func validateRebindingSettings(input *RebindingSettingsInput) error {
+	if input == nil {
+		return errors.New("request body is required")
+	}
+
+	// the same check the YAML loader runs, so a config file and a UI edit accept
+	// exactly the same set of entries
+	return config.ValidateAllowedDomains(input.AllowedDomains)
 }
 
 func validateBlockSettings(input *BlockSettingsInput) error {

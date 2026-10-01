@@ -952,9 +952,15 @@ func (s *Server) Reconfigure(ctx context.Context) error {
 		return fmt.Errorf("building upstreams config: %w", err)
 	}
 
+	rebinding, err := s.configStore.BuildRebindingConfig(newCfg.RebindingProtection)
+	if err != nil {
+		return fmt.Errorf("building rebinding config: %w", err)
+	}
+
 	newCfg.Blocking = blocking
 	newCfg.CustomDNS = customDNS
 	newCfg.Upstreams = upstreams
+	newCfg.RebindingProtection = rebinding
 
 	// Re-inject auto-advertise DNS records for client group endpoint domains
 	cge := newCfg.ClientGroupEndpoints
@@ -995,6 +1001,7 @@ func (s *Server) Reconfigure(ctx context.Context) error {
 	s.cfg.Blocking = blocking
 	s.cfg.CustomDNS = customDNS
 	s.cfg.Upstreams = upstreams
+	s.cfg.RebindingProtection = rebinding
 	s.cfgMu.Unlock()
 
 	// Cancel old chain context (in-flight queries drain naturally)

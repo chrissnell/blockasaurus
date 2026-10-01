@@ -369,6 +369,38 @@ paths:
         '400':
           $ref: '#/components/responses/BadRequest'
 
+  /rebinding-settings:
+    get:
+      operationId: getRebindingSettings
+      tags: [rebinding-settings]
+      summary: Get DNS rebinding protection settings
+      responses:
+        '200':
+          description: Current rebinding protection settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RebindingSettings'
+    put:
+      operationId: putRebindingSettings
+      tags: [rebinding-settings]
+      summary: Update DNS rebinding protection settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RebindingSettingsInput'
+      responses:
+        '200':
+          description: Updated rebinding protection settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RebindingSettings'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
   /upstream-groups:
     get:
       operationId: listUpstreamGroups
@@ -750,6 +782,32 @@ components:
           type: string
         block_ttl:
           type: string
+
+    RebindingSettings:
+      type: object
+      required: [enabled, allowed_domains]
+      properties:
+        enabled:
+          type: boolean
+        allowed_domains:
+          type: array
+          items:
+            type: string
+
+    RebindingSettingsInput:
+      type: object
+      required: [enabled, allowed_domains]
+      properties:
+        enabled:
+          type: boolean
+        allowed_domains:
+          description: >-
+            Plain domain names that may resolve to non-public addresses. Each entry
+            also matches its subdomains. Wildcards, regexes and whitespace are
+            rejected.
+          type: array
+          items:
+            type: string
 
     UpstreamGroup:
       type: object

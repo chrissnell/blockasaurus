@@ -454,6 +454,15 @@ must be given in punycode (`xn--…`) form.
         - intranet.example.com
     ```
 
+!!! note "Managed in the web UI"
+
+    The enable flag and the allowlist live in the config database and are edited on
+    the **Settings** page; changes take effect on **Apply**, with no restart. The YAML
+    block above is a **first-run seed only**: on a database that has no rebinding row
+    yet, its values are copied in (so an existing YAML config carries over on upgrade),
+    and from then on the database wins and edits to the YAML are ignored. The API is
+    `GET`/`PUT /api/config/rebinding-settings`.
+
 !!! note
 
     The protection runs above the cache: the upstream answer is cached unchanged for its

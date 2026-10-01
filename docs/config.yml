@@ -286,6 +286,8 @@ filtering:
 # optional: DNS rebinding protection. When enabled, answers from the general
 # upstreams containing private, loopback, link-local or unspecified IPs are
 # dropped. allowedDomains exempts split-horizon domains (incl. subdomains).
+# Managed on the Settings page of the web UI; this block only seeds a database
+# that has no rebinding row yet, after which the UI is the source of truth.
 rebindingProtection:
   enable: true
   allowedDomains:

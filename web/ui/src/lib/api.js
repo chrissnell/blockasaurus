@@ -213,6 +213,12 @@ export const blockSettings = {
   update: (body) => request('PUT', '/block-settings', body),
 }
 
+// DNS Rebinding Protection
+export const rebindingSettings = {
+  get: () => request('GET', '/rebinding-settings'),
+  update: (body) => request('PUT', '/rebinding-settings', body),
+}
+
 // Raw GET helper with 401 handling for non-config "read" endpoints that don't
 // want an authAPI wrapper (stats/version/discovered-clients). Keeps the old
 // "return sentinel on failure" ergonomics while still redirecting on 401.

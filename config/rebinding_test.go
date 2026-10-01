@@ -39,6 +39,38 @@ var _ = Describe("RebindingProtection", func() {
 		})
 	})
 
+	Describe("SetAllowedDomains", func() {
+		It("replaces the cached normalized list", func() {
+			cfg.AllowedDomains = []string{"Stale.Example.COM."}
+			Expect(cfg.validate()).Should(Succeed())
+			Expect(cfg.NormalizedAllowedDomains()).Should(Equal([]string{"stale.example.com"}))
+
+			// the resolver reads the cache, not AllowedDomains — a plain field
+			// assignment here would keep enforcing the old entry while every
+			// surface reported the new one
+			Expect(cfg.SetAllowedDomains([]string{"NAS.Example.com"})).Should(Succeed())
+			Expect(cfg.AllowedDomains).Should(Equal([]string{"NAS.Example.com"}))
+			Expect(cfg.NormalizedAllowedDomains()).Should(Equal([]string{"nas.example.com"}))
+		})
+
+		It("rejects an invalid entry and leaves the list untouched", func() {
+			cfg.AllowedDomains = []string{"intranet.example.com"}
+			Expect(cfg.validate()).Should(Succeed())
+
+			Expect(cfg.SetAllowedDomains([]string{"*.example.com"})).ShouldNot(Succeed())
+			Expect(cfg.AllowedDomains).Should(Equal([]string{"intranet.example.com"}))
+			Expect(cfg.NormalizedAllowedDomains()).Should(Equal([]string{"intranet.example.com"}))
+		})
+
+		It("clears the cache when given an empty list", func() {
+			cfg.AllowedDomains = []string{"intranet.example.com"}
+			Expect(cfg.validate()).Should(Succeed())
+
+			Expect(cfg.SetAllowedDomains(nil)).Should(Succeed())
+			Expect(cfg.NormalizedAllowedDomains()).Should(BeEmpty())
+		})
+	})
+
 	Describe("validate", func() {
 		It("accepts a valid allowlist", func() {
 			Expect(cfg.validate()).Should(Succeed())
@@ -53,7 +85,15 @@ var _ = Describe("RebindingProtection", func() {
 		It("rejects empty entries", func() {
 			cfg.AllowedDomains = []string{"intranet.example.com", "  "}
 
-			Expect(cfg.validate()).Should(MatchError(ContainSubstring("allowedDomains[1] must not be empty")))
+			Expect(cfg.validate()).Should(MatchError(ContainSubstring(`allowedDomains[1] ("  ") must not be empty`)))
+		})
+
+		It("rejects entries that differ only by case or a trailing dot", func() {
+			// the API rejects these; if YAML accepted them the seeded list would
+			// be one the Settings page could never save
+			cfg.AllowedDomains = []string{"nas.example.com", "NAS.Example.com."}
+
+			Expect(cfg.validate()).Should(MatchError(ContainSubstring("duplicates an earlier entry")))
 		})
 
 		It("rejects wildcard entries", func() {

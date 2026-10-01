@@ -164,7 +164,6 @@ web/ui/src/lib/dirty.svelte.js
 web/ui/src/lib/theme.svelte.js
 web/ui/src/lib/ws.js
 web/ui/src/main.js
-web/ui/src/pages/BlockSettings.svelte
 web/ui/src/pages/Blocklists.svelte
 web/ui/src/pages/ClientGroups.svelte
 web/ui/src/pages/CustomDNS.svelte
@@ -173,6 +172,7 @@ web/ui/src/pages/DevComponents.svelte
 web/ui/src/pages/DomainEntries.svelte
 web/ui/src/pages/Login.svelte
 web/ui/src/pages/Logs.svelte
+web/ui/src/pages/Settings.svelte
 web/ui/src/pages/Setup.svelte
 web/ui/src/pages/UpstreamGroups.svelte
 web/ui/src/pages/Users.svelte

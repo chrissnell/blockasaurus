@@ -9,7 +9,7 @@
   import DomainEntries from './pages/DomainEntries.svelte'
   import CustomDNS from './pages/CustomDNS.svelte'
   import UpstreamGroups from './pages/UpstreamGroups.svelte'
-  import BlockSettings from './pages/BlockSettings.svelte'
+  import Settings from './pages/Settings.svelte'
   import Logs from './pages/Logs.svelte'
   import DevComponents from './pages/DevComponents.svelte'
   import Login from './pages/Login.svelte'
@@ -41,7 +41,7 @@
     '/domains': DomainEntries,
     '/custom-dns': CustomDNS,
     '/upstream-groups': UpstreamGroups,
-    '/settings': BlockSettings,
+    '/settings': Settings,
     '/logs': Logs,
     '/users': Users,
     '/dev': DevComponents,
