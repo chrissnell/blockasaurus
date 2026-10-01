@@ -1,4 +1,4 @@
-.PHONY: all clean generate generate-check build test fuzz check-fork-additions check-fork-additions-sync e2e-image e2e-test e2e-test-baseline e2e-test-coverage release-image-snapshot release-image-smoke lint run fmt docker-build docker-push bump-minor bump-point deploy helm-deploy version help check-tools check-goreleaser check-jq sync-handbook
+.PHONY: all clean generate generate-check build test test-ui fuzz check-fork-additions check-fork-additions-sync e2e-image e2e-test e2e-test-baseline e2e-test-coverage release-image-snapshot release-image-smoke lint run fmt docker-build docker-push bump-minor bump-point deploy helm-deploy version help check-tools check-goreleaser check-jq sync-handbook
 .DEFAULT_GOAL:=help
 
 VERSION:=$(shell cat VERSION)
@@ -151,6 +151,12 @@ test: check-go check-fork-additions ## run tests
 	go tool ginkgo --label-filter="!e2e" --timeout=$(GINKGO_TIMEOUT) $(GINKGO_PROGRESS) \
 		--coverprofile=coverage.txt --covermode=atomic --cover -r ${GINKGO_PROCS}
 	go tool cover -html coverage.txt -o coverage.html
+
+# Deliberately not a prerequisite of `test`: that target needs only Go, and
+# coupling it to node would break the Go suite for anyone without a toolchain.
+# CI runs both.
+test-ui: ## run the web UI unit tests (needs node)
+	cd web/ui && npm test
 
 fuzz: check-go ## run each fuzz target for FUZZ_TIME (default 30s); e.g. make fuzz FUZZ_TIME=2m
 	@set -e; \

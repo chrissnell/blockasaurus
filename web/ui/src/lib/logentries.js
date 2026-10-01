@@ -22,6 +22,10 @@ function mapLevel(lvl) {
 // Shape one raw log-stream message into a LogViewer row.
 export function toLogEntry(raw) {
   const f = raw.fields || {}
+  // Only RESPONSE_TYPE BLOCKED, deliberately: it is the same definition the
+  // dashboard's blocked-query count uses (server_stats.go), so the two agree.
+  // REBIND is also operator-policy blocking and is excluded here for that
+  // consistency, not by oversight.
   const blocked = f.response_type === 'BLOCKED'
 
   return {
@@ -50,17 +54,66 @@ export function appendBounded(entries, incoming, max = MAX_ENTRIES) {
   return next.length > max ? next.slice(next.length - max) : next
 }
 
+// Collect incoming rows and hand them to `onFlush` one batch per scheduled
+// frame. Queries arrive one WS message at a time, so applying them individually
+// is a re-render per DNS query; batching bounds the render cost by the display
+// rate instead of by traffic. `schedule`/`cancel` are injectable so the
+// batching can be driven by a test rather than by a browser clock.
+export function createEntryBatcher(onFlush, options = {}) {
+  const {
+    schedule = (cb) => requestAnimationFrame(cb),
+    cancel = (handle) => cancelAnimationFrame(handle),
+    max = MAX_ENTRIES,
+  } = options
+
+  let pending = []
+  let scheduled = false
+  let handle = null
+
+  function flush() {
+    scheduled = false
+    const batch = pending
+    pending = []
+    onFlush(batch)
+  }
+
+  return {
+    push(entry) {
+      pending.push(entry)
+      // A backgrounded tab gets no animation frames, so the queue needs the
+      // same cap as the buffer it drains into.
+      if (pending.length > max) {
+        pending.splice(0, pending.length - max)
+      }
+      if (!scheduled) {
+        scheduled = true
+        handle = schedule(flush)
+      }
+    },
+    stop() {
+      if (scheduled) cancel(handle)
+      scheduled = false
+      pending = []
+    },
+  }
+}
+
+// What counts as a search: trimmed and case-folded, so the component and the
+// filter agree on when the box is empty.
+export function normalizeQuery(search) {
+  return search.trim().toLowerCase()
+}
+
 function contains(value, needle) {
   return value != null && String(value).toLowerCase().includes(needle)
 }
 
 // Rows matching the search text and the blocked-only toggle. `search` is
-// matched case-insensitively as a substring of the queried domain or of the
-// client -- its IP, or its resolved name when the IP is not what you remember.
-// Returns `entries` itself when nothing is filtering, so the common case costs
-// no copy.
+// matched as a substring of the queried domain or of the client -- its IP, or
+// its resolved name when the IP is not what you remember. Returns `entries`
+// itself when nothing is filtering, so the common case costs no copy.
 export function filterEntries(entries, search, blockedOnly) {
-  const query = search.trim().toLowerCase()
+  const query = normalizeQuery(search)
   if (query === '' && !blockedOnly) return entries
 
   return entries.filter((e) => {

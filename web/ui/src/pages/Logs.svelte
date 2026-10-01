@@ -4,16 +4,35 @@
 <script>
   import { LogViewer, Input, Toggle } from '@chrissnell/chonky-ui'
   import { connectLogStream } from '../lib/ws.js'
-  import { MAX_ENTRIES, appendBounded, filterEntries, toLogEntry } from '../lib/logentries.js'
+  import {
+    MAX_ENTRIES,
+    appendBounded,
+    createEntryBatcher,
+    filterEntries,
+    normalizeQuery,
+    toLogEntry,
+  } from '../lib/logentries.js'
   import { onMount } from 'svelte'
 
-  // Raw: the entries are display-only, so there is nothing to gain from
-  // proxying every row and every field the viewer reads.
+  // Raw: the rows are write-once and display-only, so proxying every row and
+  // every field the viewer reads would be pure overhead.
   let entries = $state.raw([])
   let search = $state('')
+  // What the list is actually filtered by. Trails `search` so that holding a
+  // key down does not rebuild the grid once per character -- see `viewKey`.
+  let appliedSearch = $state('')
   let blockedOnly = $state(false)
   let connected = $state(false)
   let isMobile = $state(false)
+
+  const SEARCH_DEBOUNCE_MS = 150
+
+  $effect(() => {
+    const next = search
+    const timer = setTimeout(() => { appliedSearch = next }, SEARCH_DEBOUNCE_MS)
+
+    return () => clearTimeout(timer)
+  })
 
   onMount(() => {
     const mql = window.matchMedia('(max-width: 768px)')
@@ -24,33 +43,17 @@
   })
 
   onMount(() => {
-    // Queries arrive one WS message at a time, so rebuilding the list per
-    // message is a re-render per DNS query. Batching into animation frames
-    // bounds the render cost by the display rate rather than by traffic.
-    let pending = []
-    let frame = 0
-
-    function flush() {
-      frame = 0
-      entries = appendBounded(entries, pending)
-      pending = []
-    }
+    const batcher = createEntryBatcher((batch) => {
+      entries = appendBounded(entries, batch)
+    })
 
     const disconnect = connectLogStream(
-      (raw) => {
-        pending.push(toLogEntry(raw))
-        // A backgrounded tab gets no animation frames, so the queue needs the
-        // same cap as the buffer it drains into.
-        if (pending.length > MAX_ENTRIES) {
-          pending.splice(0, pending.length - MAX_ENTRIES)
-        }
-        if (frame === 0) frame = requestAnimationFrame(flush)
-      },
+      (raw) => batcher.push(toLogEntry(raw)),
       (status) => { connected = status },
     )
 
     return () => {
-      if (frame !== 0) cancelAnimationFrame(frame)
+      batcher.stop()
       disconnect()
     }
   })
@@ -63,7 +66,7 @@
 
   const allColumns = [
     { key: 'timestamp', label: 'Time', width: '90px', render: renderTime, mobile: true },
-    { key: 'client_ip', label: 'Client', width: '120px', mobile: true },
+    { key: 'client_ip', label: 'Client', width: '120px', render: renderClient, mobile: true },
     { key: 'client_group', label: 'Group', width: '120px', mobile: false },
     { key: 'duration_ms', label: 'Duration', width: '90px', render: renderDuration, mobile: false },
     { key: 'level', label: 'Level', width: '70px', mobile: true },
@@ -77,15 +80,23 @@
     isMobile ? allColumns.filter(c => c.mobile) : allColumns
   )
 
-  const query = $derived(search.trim().toLowerCase())
+  const query = $derived(normalizeQuery(appliedSearch))
   const filtering = $derived(query !== '' || blockedOnly)
-  const visible = $derived(filterEntries(entries, search, blockedOnly))
+  const visible = $derived(filterEntries(entries, appliedSearch, blockedOnly))
+  // The buffer is capped, so once it is full the total is a floor, not a count.
+  const totalLabel = $derived(
+    entries.length === MAX_ENTRIES ? `${MAX_ENTRIES}+` : `${entries.length}`
+  )
 
-  // LogViewer owns its scroll offset and an internal "is at bottom" latch that
-  // gates autoscroll, and exposes no way to reset either. Changing the filter
-  // replaces the list both refer to: a reader who had scrolled up stays latched
-  // off, and the view then silently stops following live traffic even after the
-  // filter is cleared. Remounting on filter change re-pins to the newest match.
+  // LogViewer keeps its own scroll offset and an internal "at bottom" latch
+  // that gates autoscroll, with no prop to reset either. A filter change
+  // replaces the list both refer to, so a reader who had scrolled up stays
+  // latched off -- and once the filtered list is short enough not to scroll, no
+  // scroll event fires to re-arm it, so the view stops following live traffic
+  // even after the filter is cleared. Its jump-to-bottom button is the manual
+  // way out; remounting on filter change is the only automatic one, which is
+  // what this key buys. Keyed off the debounced query so the remount costs one
+  // grid rebuild per typing pause rather than one per keystroke.
   const viewKey = $derived(`${blockedOnly} ${query}`)
 </script>
 
@@ -97,6 +108,12 @@
   {value != null ? `${value}ms` : ''}
 {/snippet}
 
+<!-- Resolved names are searchable, so show them: a row matched by name with
+     only its IP on screen looks like an arbitrary match. -->
+{#snippet renderClient(value, entry)}
+  <span title={entry.client_names || undefined}>{value || entry.client_names || ''}</span>
+{/snippet}
+
 <div class="page">
   <h1 class="page-title">Live Logs</h1>
   <div class="controls">
@@ -105,11 +122,12 @@
         bind:value={search}
         placeholder="Filter by domain or client"
         aria-label="Filter by domain or client"
+        onkeydown={(e) => { if (e.key === 'Escape') search = '' }}
       />
     </div>
     <Toggle label="Blocked only" bind:checked={blockedOnly} />
     {#if filtering}
-      <span class="match-count">{visible.length} of {entries.length}</span>
+      <span class="match-count">{visible.length} of {totalLabel}</span>
     {/if}
   </div>
   <div class="log-wrap">

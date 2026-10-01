@@ -4,7 +4,14 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { MAX_ENTRIES, appendBounded, filterEntries, toLogEntry } from './logentries.js'
+import {
+  MAX_ENTRIES,
+  appendBounded,
+  createEntryBatcher,
+  filterEntries,
+  normalizeQuery,
+  toLogEntry,
+} from './logentries.js'
 
 function query(fields) {
   return { timestamp: '2026-10-01T12:00:00Z', level: 'info', message: 'query resolved', fields }
@@ -53,6 +60,95 @@ test('appendBounded caps a single oversized batch', () => {
 test('appendBounded returns the same array when nothing arrived', () => {
   const entries = [entry({ question_name: 'example.com' })]
   assert.equal(appendBounded(entries, []), entries)
+})
+
+// Stands in for requestAnimationFrame: nothing runs until the test says so.
+function manualFrames() {
+  let queued = null
+  let cancels = 0
+
+  return {
+    schedule(cb) {
+      queued = cb
+      return { id: 1 }
+    },
+    cancel() {
+      queued = null
+      cancels++
+    },
+    run() {
+      const cb = queued
+      queued = null
+      if (cb) cb()
+    },
+    get scheduled() { return queued !== null },
+    get cancels() { return cancels },
+  }
+}
+
+test('createEntryBatcher collapses several messages into one flush', () => {
+  const frames = manualFrames()
+  const flushes = []
+  const batcher = createEntryBatcher((batch) => flushes.push(batch), frames)
+
+  batcher.push(entry({ question_name: 'a.example.com' }))
+  batcher.push(entry({ question_name: 'b.example.com' }))
+  batcher.push(entry({ question_name: 'c.example.com' }))
+
+  assert.deepEqual(flushes, [], 'nothing applied before the frame runs')
+
+  frames.run()
+
+  assert.equal(flushes.length, 1)
+  assert.deepEqual(flushes[0].map(e => e.question_name), ['a.example.com', 'b.example.com', 'c.example.com'])
+  assert.equal(frames.scheduled, false, 'no frame left outstanding')
+})
+
+test('createEntryBatcher schedules a fresh frame for messages after a flush', () => {
+  const frames = manualFrames()
+  const flushes = []
+  const batcher = createEntryBatcher((batch) => flushes.push(batch), frames)
+
+  batcher.push(entry({ question_name: 'a.example.com' }))
+  frames.run()
+  batcher.push(entry({ question_name: 'b.example.com' }))
+
+  assert.equal(frames.scheduled, true)
+  frames.run()
+
+  assert.deepEqual(flushes.map(b => b.map(e => e.question_name)), [['a.example.com'], ['b.example.com']])
+})
+
+test('createEntryBatcher caps the queue when no frame ever runs', () => {
+  const frames = manualFrames()
+  const flushes = []
+  const batcher = createEntryBatcher((batch) => flushes.push(batch), { ...frames, max: 3 })
+
+  // A backgrounded tab: messages keep arriving, animation frames do not.
+  for (let i = 0; i < 10; i++) {
+    batcher.push(entry({ question_name: `q${i}.example.com` }))
+  }
+  frames.run()
+
+  assert.deepEqual(flushes[0].map(e => e.question_name), ['q7.example.com', 'q8.example.com', 'q9.example.com'])
+})
+
+test('createEntryBatcher stop cancels the pending frame and drops the queue', () => {
+  const frames = manualFrames()
+  const flushes = []
+  const batcher = createEntryBatcher((batch) => flushes.push(batch), frames)
+
+  batcher.push(entry({ question_name: 'a.example.com' }))
+  batcher.stop()
+
+  assert.equal(frames.cancels, 1)
+  frames.run()
+  assert.deepEqual(flushes, [], 'a cancelled frame applies nothing')
+})
+
+test('normalizeQuery trims and case-folds', () => {
+  assert.equal(normalizeQuery('  Ads.DoubleClick.NET '), 'ads.doubleclick.net')
+  assert.equal(normalizeQuery('   '), '')
 })
 
 const sample = [

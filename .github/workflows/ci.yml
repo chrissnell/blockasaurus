@@ -47,8 +47,12 @@ jobs:
 
       # Node's built-in test runner, so this adds no dependency to the SPA
       # build. Covers the pure parts of the UI — log entry shaping, the bounded
-      # live-log buffer, the log search — which `vite build` only type-checks as
-      # far as "it parses".
+      # live-log buffer, the log search — which `vite build` only checks as far
+      # as "it parses".
+      #
+      # `node --test` exits 0 when its glob matches nothing, which would turn
+      # this gate into decoration the first time a test file is renamed or moved
+      # out of src/. The `pretest` script in package.json fails instead.
       - name: Test frontend
         run: cd web/ui && npm test
 
