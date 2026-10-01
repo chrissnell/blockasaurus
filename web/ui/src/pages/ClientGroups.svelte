@@ -580,6 +580,18 @@
               Follow the instructions below to set up blockasaurus on your device, browser, or router.
             </p>
 
+            <!-- DoH3 is a listener feature, not a per-client one: the URL is the
+                 same and capable clients upgrade via Alt-Svc, so this belongs
+                 here once rather than in every platform's steps. -->
+            {#if endpointInfo.hasDoH3 && endpointInfo.domains?.length > 0}
+              <p class="setup-intro">
+                This server also answers the DNS-over-HTTPS URLs below over
+                <strong>HTTP/3</strong> (QUIC). Clients that support it switch over on
+                their own &mdash; the URL does not change, so there is nothing extra to
+                configure here.
+              </p>
+            {/if}
+
             <div class="tab-bar">
               {#each tabs as tab}
                 <button class="tab" class:active={tab.id === currentTab}

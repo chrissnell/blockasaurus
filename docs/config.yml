@@ -416,7 +416,10 @@ ports:
   # default: empty
   proxyProtocol: []
 
-# optional: configuration for DOH  over HTTP/3
+# optional: configuration for DOH  over HTTP/3.
+# Managed on the Settings page of the web UI; this block only seeds a database
+# that has no http3 row yet, after which the UI is the source of truth. A change
+# here or there takes effect on restart - listeners are not rebound on Apply.
 http3:
   # optional: serve DNS-over-HTTPS over HTTP/3 (RFC 9114). Default: false
   enable: true

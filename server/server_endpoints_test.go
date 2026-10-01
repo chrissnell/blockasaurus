@@ -425,3 +425,59 @@ func TestSameOriginFunc(t *testing.T) {
 		})
 	}
 }
+
+// TestEndpointInfoDoH3 pins the hasDoH3 field the UI reads to decide whether to
+// tell operators the DoH endpoint also answers over HTTP/3. The listener binds
+// once at startup, so the flag is derived from the startup config — which means
+// "enabled but nowhere to bind" must not read as available.
+func TestEndpointInfoDoH3(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		cfg  config.Config
+		want bool
+	}{
+		{
+			name: "enabled with an https listener",
+			cfg: config.Config{
+				HTTP3: config.HTTP3{Enable: true},
+				Ports: config.Ports{HTTPS: config.ListenConfig{":443"}},
+			},
+			want: true,
+		},
+		{
+			name: "disabled",
+			cfg:  config.Config{Ports: config.Ports{HTTPS: config.ListenConfig{":443"}}},
+			want: false,
+		},
+		{
+			name: "enabled with no https listener",
+			cfg:  config.Config{HTTP3: config.HTTP3{Enable: true}},
+			want: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			rec := httptest.NewRecorder()
+			handleEndpointInfo(&tc.cfg)(rec, httptest.NewRequest(http.MethodGet, "/api/endpoint-info", nil))
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+
+			var body struct {
+				HasDoH3 bool `json:"hasDoH3"`
+			}
+
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+
+			if body.HasDoH3 != tc.want {
+				t.Errorf("hasDoH3 = %v, want %v", body.HasDoH3, tc.want)
+			}
+		})
+	}
+}

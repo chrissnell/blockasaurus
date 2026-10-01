@@ -37,7 +37,8 @@ var _ = Describe("Config API HTTP integration", func() {
 
 		reconf = &mockReconfigurer{}
 		router := chi.NewRouter()
-		configapi.RegisterEndpoints(router, configapi.NewConfigHandler(store, reconf))
+		configapi.RegisterEndpoints(router, configapi.NewConfigHandler(store, reconf,
+			configapi.DoH3Runtime{Active: true}))
 		srv = httptest.NewServer(router)
 		DeferCleanup(srv.Close)
 	})
@@ -169,6 +170,34 @@ var _ = Describe("Config API HTTP integration", func() {
 	It("rejects a wildcard allowlist entry via HTTP", func() {
 		resp := httpDo("PUT", srv.URL+"/api/config/rebinding-settings",
 			`{"enabled":true,"allowed_domains":["*.example.com"]}`)
+		Expect(resp.StatusCode).Should(Equal(400))
+	})
+
+	// --- HTTP/3 (DoH3) Settings round-trip ---
+
+	// The test server reports Active: true, standing in for a process that bound
+	// the HTTP/3 listener at startup.
+	It("gets and updates DoH3 settings via HTTP", func() {
+		resp := httpDo("GET", srv.URL+"/api/config/http3-settings", "")
+		Expect(resp.StatusCode).Should(Equal(200))
+
+		var hs configapi.HTTP3Settings
+		decodeBody(resp, &hs)
+		Expect(hs.Enabled).Should(BeFalse())
+		Expect(hs.Active).Should(BeTrue())
+		Expect(hs.RestartRequired).Should(BeTrue())
+
+		resp = httpDo("PUT", srv.URL+"/api/config/http3-settings", `{"enabled":true}`)
+		Expect(resp.StatusCode).Should(Equal(200))
+
+		resp = httpDo("GET", srv.URL+"/api/config/http3-settings", "")
+		decodeBody(resp, &hs)
+		Expect(hs.Enabled).Should(BeTrue())
+		Expect(hs.RestartRequired).Should(BeFalse())
+	})
+
+	It("rejects a malformed DoH3 update via HTTP", func() {
+		resp := httpDo("PUT", srv.URL+"/api/config/http3-settings", `not json`)
 		Expect(resp.StatusCode).Should(Equal(400))
 	})
 

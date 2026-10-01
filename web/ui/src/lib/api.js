@@ -219,6 +219,15 @@ export const rebindingSettings = {
   update: (body) => request('PUT', '/rebinding-settings', body),
 }
 
+// DoH3 (DNS-over-HTTP/3) listener toggle. Applied at restart, not by apply():
+// the HTTP/3 listener binds at startup and the resolver-chain rebuild cannot
+// rebind it. The GET response carries the running listener state alongside the
+// stored setting so the page can say which one it is showing.
+export const http3Settings = {
+  get: () => request('GET', '/http3-settings'),
+  update: (body) => request('PUT', '/http3-settings', body),
+}
+
 // Raw GET helper with 401 handling for non-config "read" endpoints that don't
 // want an authAPI wrapper (stats/version/discovered-clients). Keeps the old
 // "return sentinel on failure" ergonomics while still redirecting on 401.

@@ -17,10 +17,15 @@ import (
 )
 
 type mockReconfigurer struct {
-	err error
+	err   error
+	calls int
 }
 
-func (m *mockReconfigurer) Reconfigure(_ context.Context) error { return m.err }
+func (m *mockReconfigurer) Reconfigure(_ context.Context) error {
+	m.calls++
+
+	return m.err
+}
 
 var _ = Describe("ConfigAPI Handler", func() {
 	var (
@@ -39,7 +44,7 @@ var _ = Describe("ConfigAPI Handler", func() {
 		DeferCleanup(store.Close)
 
 		reconf = &mockReconfigurer{}
-		h = configapi.NewConfigHandler(store, reconf)
+		h = configapi.NewConfigHandler(store, reconf, configapi.DoH3Runtime{})
 	})
 
 	// --- Client Groups ---
@@ -374,6 +379,105 @@ var _ = Describe("ConfigAPI Handler", func() {
 			})
 			Expect(err).Should(Succeed())
 			Expect(resp).Should(BeAssignableToTypeOf(configapi.PutRebindingSettings400JSONResponse{}))
+		})
+	})
+
+	// --- HTTP/3 (DoH3) Settings ---
+
+	Describe("HTTP3Settings", func() {
+		// The handler reports the listener state of the running process, which it
+		// cannot change, so each case needs its own handler.
+		newHandler := func(rt configapi.DoH3Runtime) *configapi.ConfigHandler {
+			return configapi.NewConfigHandler(store, reconf, rt)
+		}
+
+		get := func(h *configapi.ConfigHandler) configapi.HTTP3Settings {
+			resp, err := h.GetHttp3Settings(ctx, configapi.GetHttp3SettingsRequestObject{})
+			Expect(err).Should(Succeed())
+
+			return configapi.HTTP3Settings(resp.(configapi.GetHttp3Settings200JSONResponse))
+		}
+
+		put := func(h *configapi.ConfigHandler, enabled bool) configapi.PutHttp3SettingsResponseObject {
+			resp, err := h.PutHttp3Settings(ctx, configapi.PutHttp3SettingsRequestObject{
+				Body: &configapi.HTTP3SettingsInput{Enabled: enabled},
+			})
+			Expect(err).Should(Succeed())
+
+			return resp
+		}
+
+		It("should get defaults on a database with no row", func() {
+			hs := get(newHandler(configapi.DoH3Runtime{}))
+			Expect(hs.Enabled).Should(BeFalse())
+			Expect(hs.Active).Should(BeFalse())
+			Expect(hs.RestartRequired).Should(BeFalse())
+			Expect(hs.UnavailableReason).Should(BeNil())
+		})
+
+		It("should persist an update", func() {
+			h3 := newHandler(configapi.DoH3Runtime{})
+			put(h3, true)
+
+			// PUT echoes the body, so read it back: what matters is what stuck
+			Expect(get(h3).Enabled).Should(BeTrue())
+		})
+
+		// gorm's Save skips zero-valued fields, which would make the toggle
+		// one-way: turning DoH3 off would report success and persist nothing.
+		It("should persist turning the toggle back off", func() {
+			h3 := newHandler(configapi.DoH3Runtime{})
+			put(h3, true)
+			put(h3, false)
+
+			Expect(get(h3).Enabled).Should(BeFalse())
+		})
+
+		It("should ask for a restart when the stored setting and the listener disagree", func() {
+			h3 := newHandler(configapi.DoH3Runtime{})
+
+			resp := put(h3, true)
+			hs := configapi.HTTP3Settings(resp.(configapi.PutHttp3Settings200JSONResponse))
+			Expect(hs.Enabled).Should(BeTrue())
+			Expect(hs.Active).Should(BeFalse())
+			Expect(hs.RestartRequired).Should(BeTrue())
+		})
+
+		It("should not ask for a restart when the listener already matches", func() {
+			h3 := newHandler(configapi.DoH3Runtime{Active: true})
+			put(h3, true)
+
+			hs := get(h3)
+			Expect(hs.Active).Should(BeTrue())
+			Expect(hs.RestartRequired).Should(BeFalse())
+		})
+
+		// A restart cannot bind a listener that has nowhere to bind, so promising
+		// one would send the operator to bounce the process for nothing.
+		It("should report the blocking reason instead of asking for a restart", func() {
+			h3 := newHandler(configapi.DoH3Runtime{UnavailableReason: "ports.https is empty"})
+			put(h3, true)
+
+			hs := get(h3)
+			Expect(hs.Enabled).Should(BeTrue())
+			Expect(hs.Active).Should(BeFalse())
+			Expect(hs.RestartRequired).Should(BeFalse())
+			Expect(hs.UnavailableReason).ShouldNot(BeNil())
+			Expect(*hs.UnavailableReason).Should(Equal("ports.https is empty"))
+		})
+
+		It("should reject a missing body", func() {
+			resp, err := newHandler(configapi.DoH3Runtime{}).
+				PutHttp3Settings(ctx, configapi.PutHttp3SettingsRequestObject{})
+			Expect(err).Should(Succeed())
+			Expect(resp).Should(BeAssignableToTypeOf(configapi.PutHttp3Settings400JSONResponse{}))
+		})
+
+		// Reconfigure rebuilds the resolver chain and cannot rebind a listener, so
+		// running it here would report success while changing nothing.
+		It("should not reconfigure", func() {
+			put(newHandler(configapi.DoH3Runtime{}), true)
+			Expect(reconf.calls).Should(BeZero())
 		})
 	})
 

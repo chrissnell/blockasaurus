@@ -437,6 +437,27 @@ type ErrorResponse struct {
 	Message string `json:"message"`
 }
 
+// HTTP3Settings defines model for HTTP3Settings.
+type HTTP3Settings struct {
+	// Active Server-reported, ignored on write: whether this process is serving DoH over HTTP/3 right now. The listener binds at startup, so it does not follow `enabled` until the process restarts.
+	Active bool `json:"active"`
+
+	// Enabled The stored setting — what the HTTP/3 listener will do after the next restart.
+	Enabled bool `json:"enabled"`
+
+	// RestartRequired Server-reported, ignored on write: true when `enabled` and `active` disagree and a restart would close the gap. False when the disagreement is caused by `unavailable_reason`, which a restart alone would not fix.
+	RestartRequired bool `json:"restart_required"`
+
+	// UnavailableReason Server-reported, ignored on write: why the HTTP/3 listener cannot bind in this process regardless of `enabled`. Absent when nothing stands in its way.
+	UnavailableReason *string `json:"unavailable_reason,omitempty"`
+}
+
+// HTTP3SettingsInput defines model for HTTP3SettingsInput.
+type HTTP3SettingsInput struct {
+	// Enabled Serve DNS-over-HTTPS over HTTP/3 (RFC 9114) on the UDP counterparts of `ports.https`. Applied at the next restart.
+	Enabled bool `json:"enabled"`
+}
+
 // RebindingSettings defines model for RebindingSettings.
 type RebindingSettings struct {
 	AllowedDomains []string `json:"allowed_domains"`
@@ -560,6 +581,9 @@ type CreateDomainEntryJSONRequestBody = DomainEntryInput
 
 // UpdateDomainEntryJSONRequestBody defines body for UpdateDomainEntry for application/json ContentType.
 type UpdateDomainEntryJSONRequestBody = DomainEntryInput
+
+// PutHttp3SettingsJSONRequestBody defines body for PutHttp3Settings for application/json ContentType.
+type PutHttp3SettingsJSONRequestBody = HTTP3SettingsInput
 
 // PutRebindingSettingsJSONRequestBody defines body for PutRebindingSettings for application/json ContentType.
 type PutRebindingSettingsJSONRequestBody = RebindingSettingsInput

@@ -88,6 +88,18 @@ type RebindingSettings struct {
 	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
+// HTTP3Settings holds the DoH3 (DNS-over-HTTP/3) listener toggle (singleton).
+//
+// Unlike every other row in this store, this one is not applied by
+// Server.Reconfigure: Reconfigure rebuilds the resolver chain and never rebinds
+// listeners, so the value is read once at startup and a change takes effect on
+// the next restart.
+type HTTP3Settings struct {
+	ID        uint      `gorm:"primaryKey"             json:"id"`
+	Enabled   bool      `gorm:"not null;default:false" json:"enabled"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type BlockSettings struct {
 	ID        uint      `gorm:"primaryKey"                json:"id"`
 	BlockType string    `gorm:"not null;default:'ZEROIP'" json:"block_type"`

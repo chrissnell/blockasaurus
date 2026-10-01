@@ -87,3 +87,34 @@ func newUDPPacketConns(ctx context.Context, addresses config.ListenConfig) ([]ne
 
 	return pcs, nil
 }
+
+// Reasons the HTTP/3 listener cannot bind. Shared by the startup warning and
+// the web UI, so an operator reading the Settings page sees the same
+// explanation the log gave.
+const (
+	doh3NoHTTPSReason       = "ports.https is empty"
+	doh3ProxyProtocolReason = "ports.proxyProtocol includes 'https', and HTTP/3 cannot carry " +
+		"PROXY protocol headers without making the client IP inconsistent"
+)
+
+// doh3Unavailable explains why the HTTP/3 listener cannot bind, or returns ""
+// when nothing stands in its way. It deliberately ignores http3.enable: the
+// answer describes the surrounding config, so the UI can warn that turning
+// DoH3 on would not achieve anything until that config changes.
+func doh3Unavailable(cfg *config.Config) string {
+	switch {
+	case len(cfg.Ports.HTTPS) == 0:
+		return doh3NoHTTPSReason
+	case cfg.Ports.ProxyProtocol.Has(config.ProxyProtocolTypeHttps):
+		return doh3ProxyProtocolReason
+	default:
+		return ""
+	}
+}
+
+// doh3Active reports whether this process is serving DoH over HTTP/3. Fixed for
+// the process lifetime: Server.Reconfigure rebuilds the resolver chain and never
+// rebinds listeners, so a later change to the stored setting does not move it.
+func doh3Active(cfg *config.Config) bool {
+	return cfg.HTTP3.IsEnabled() && doh3Unavailable(cfg) == ""
+}

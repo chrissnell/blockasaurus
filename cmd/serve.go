@@ -145,6 +145,13 @@ func runServer(ctx context.Context) error {
 			return fmt.Errorf("build rebinding config from DB: %w", err)
 		}
 
+		// Startup only, unlike the others: Server.Reconfigure cannot rebind the
+		// HTTP/3 listener, so this value is fixed for the process lifetime.
+		cfg.HTTP3, err = store.BuildHTTP3Config(cfg.HTTP3)
+		if err != nil {
+			return fmt.Errorf("build http3 config from DB: %w", err)
+		}
+
 		log.Log().Info("Using database-backed configuration from ", cfg.DatabasePath)
 	} else {
 		return errors.New("databasePath is required: upstream configuration now lives in SQLite, " +

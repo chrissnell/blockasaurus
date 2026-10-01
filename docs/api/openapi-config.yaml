@@ -401,6 +401,42 @@ paths:
         '400':
           $ref: '#/components/responses/BadRequest'
 
+  /http3-settings:
+    get:
+      operationId: getHttp3Settings
+      tags: [http3-settings]
+      summary: Get DoH3 (DNS-over-HTTP/3) settings and listener state
+      responses:
+        '200':
+          description: Stored DoH3 setting plus the state of the running listener
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTP3Settings'
+    put:
+      operationId: putHttp3Settings
+      tags: [http3-settings]
+      summary: Update the DoH3 (DNS-over-HTTP/3) setting
+      description: >-
+        Takes effect on the next restart. The HTTP/3 listener binds at startup and
+        is not rebound by POST /apply, so the response still reports the listener
+        state of the running process.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HTTP3SettingsInput'
+      responses:
+        '200':
+          description: Updated DoH3 setting plus the state of the running listener
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTP3Settings'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
   /upstream-groups:
     get:
       operationId: listUpstreamGroups
@@ -808,6 +844,42 @@ components:
           type: array
           items:
             type: string
+
+    HTTP3Settings:
+      type: object
+      required: [enabled, active, restart_required]
+      properties:
+        enabled:
+          description: The stored setting — what the HTTP/3 listener will do after the next restart.
+          type: boolean
+        active:
+          description: >-
+            Server-reported, ignored on write: whether this process is serving DoH
+            over HTTP/3 right now. The listener binds at startup, so it does not
+            follow `enabled` until the process restarts.
+          type: boolean
+        restart_required:
+          description: >-
+            Server-reported, ignored on write: true when `enabled` and `active`
+            disagree and a restart would close the gap. False when the disagreement
+            is caused by `unavailable_reason`, which a restart alone would not fix.
+          type: boolean
+        unavailable_reason:
+          description: >-
+            Server-reported, ignored on write: why the HTTP/3 listener cannot bind
+            in this process regardless of `enabled`. Absent when nothing stands in
+            its way.
+          type: string
+
+    HTTP3SettingsInput:
+      type: object
+      required: [enabled]
+      properties:
+        enabled:
+          description: >-
+            Serve DNS-over-HTTPS over HTTP/3 (RFC 9114) on the UDP counterparts of
+            `ports.https`. Applied at the next restart.
+          type: boolean
 
     UpstreamGroup:
       type: object

@@ -1103,6 +1103,21 @@ Prometheus metrics, web UI).
 | ------------ | ------- | --------- | ------------- | ------------------------------------------------------------- |
 | http3.enable | boolean | no        | false         | Enable the HTTP/3 listener. Requires `ports.https` to be set. |
 
+!!! note "Managed in the web UI"
+
+    The enable flag lives in the config database and is edited on the **Settings**
+    page. The YAML block below is a **first-run seed only**: on a database that has
+    no http3 row yet, its value is copied in (so an existing YAML config carries
+    over on upgrade), and from then on the database wins and edits to the YAML are
+    ignored. The API is `GET`/`PUT /api/config/http3-settings`.
+
+    Unlike every other setting in the UI, this one **takes effect on restart, not on
+    Apply**. `Server.Reconfigure` rebuilds the resolver chain and does not rebind
+    listeners, so a changed toggle cannot open or close the UDP sockets of a running
+    process. The Settings page says so, and the API reports it as
+    `restart_required`. `GET /api/endpoint-info` reports the listener state of the
+    running process as `hasDoH3`.
+
 **Notes:**
 
 - The HTTP/3 listener uses TLS 1.3 (mandated by RFC 9001). The

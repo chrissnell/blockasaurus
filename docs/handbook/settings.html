@@ -41,7 +41,7 @@
 
   <main class="content">
     <h1>Settings</h1>
-    <p class="subtitle">Global blocking behavior and DNS rebinding protection</p>
+    <p class="subtitle">Global blocking behavior, DNS rebinding protection and DoH3</p>
 
     <p>
       The <strong>Settings</strong> tab contains global options that affect how
@@ -214,13 +214,57 @@
       </div>
     </div>
 
+    <h2>DNS over HTTP/3 (DoH3)</h2>
+
+    <p>
+      blockasaurus serves DNS-over-HTTPS on the HTTPS port over TCP. Turning on
+      <strong>Serve DoH over HTTP/3</strong> adds a second transport for the same
+      endpoint: HTTP/3 over QUIC, on the UDP counterparts of that port. QUIC
+      recovers from packet loss per-stream rather than per-connection, so DoH over
+      a flaky mobile link stops head-of-line blocking on a single lost packet.
+    </p>
+
+    <p>
+      There is nothing to configure on the client. The DoH URL does not change,
+      and HTTPS responses carry an <code>Alt-Svc</code> header advertising HTTP/3,
+      so clients that support it switch transports on their own and the rest keep
+      using TCP. The line under the toggle tells you whether this server is
+      serving over HTTP/3 right now, and the <strong>Setup Guide</strong> on each
+      client group says so next to the DoH URLs.
+    </p>
+
+    <div class="callout warn">
+      <span class="callout-icon">&#9888;</span>
+      <div class="callout-body">
+        <p>
+          <strong>This setting needs a restart</strong> &mdash; it is the only one
+          on this page that does. <strong>Apply</strong> rebuilds the resolver
+          chain, which is enough for blocking, custom DNS and upstreams, but it
+          cannot open or close a network listener. After saving, the page tells you
+          the change is stored and not yet in effect; restart blockasaurus to pick
+          it up.
+        </p>
+      </div>
+    </div>
+
+    <p>
+      HTTP/3 needs somewhere to bind, so it requires an HTTPS port to be
+      configured, and it cannot be used together with PROXY protocol on that port
+      &mdash; QUIC carries no PROXY protocol header, so client IPs would stop
+      matching those seen over TCP. When either applies, the toggle says so
+      instead of claiming a restart would help; both are YAML-only settings
+      (<code>ports.https</code> and <code>ports.proxyProtocol</code>).
+    </p>
+
     <h2>Applying Settings</h2>
 
     <p>
       Each section saves independently &mdash; <strong>Save Settings</strong> for
       blocking behavior, <strong>Save Rebinding Settings</strong> for rebinding
-      protection. Then click <strong>Apply</strong> in the header to put changes
-      into effect. Neither one needs a restart.
+      protection, <strong>Save DoH3 Setting</strong> for HTTP/3. Then click
+      <strong>Apply</strong> in the header to put changes into effect. Blocking
+      behavior and rebinding protection need no restart; DoH3 does, and Apply does
+      not help it.
     </p>
 
     <nav class="page-nav">

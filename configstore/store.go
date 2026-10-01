@@ -98,6 +98,7 @@ func Open(path string) (*ConfigStore, error) {
 		&DomainEntry{},
 		&BlockSettings{},
 		&RebindingSettings{},
+		&HTTP3Settings{},
 		&UpstreamGroup{},
 		&UpstreamServer{},
 		&UpstreamSettings{},
@@ -570,6 +571,58 @@ func (s *ConfigStore) seedRebindingSettings(base config.RebindingProtection) err
 	rs := &RebindingSettings{ID: 1, Enabled: base.Enable, AllowedDomains: domains}
 	if err := s.db.Clauses(clause.OnConflict{DoNothing: true}).Create(rs).Error; err != nil {
 		return fmt.Errorf("seed rebinding settings: %w", err)
+	}
+
+	return nil
+}
+
+// --- HTTP3Settings (singleton) ---
+
+// GetHTTP3Settings is a pure read, for the same reason as GetRebindingSettings:
+// a missing row reads as the disabled default rather than being created here, so
+// a read that happens before the YAML seed cannot discard an operator's
+// http3.enable on upgrade.
+func (s *ConfigStore) GetHTTP3Settings() (*HTTP3Settings, error) {
+	var hs HTTP3Settings
+
+	err := s.db.First(&hs, HTTP3Settings{ID: 1}).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return &HTTP3Settings{ID: 1}, nil
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("get http3 settings: %w", err)
+	}
+
+	return &hs, nil
+}
+
+func (s *ConfigStore) PutHTTP3Settings(hs *HTTP3Settings) error {
+	hs.ID = 1
+
+	// Upsert with an explicit column list, not Save: gorm's Save skips
+	// zero-valued struct fields, which would make the toggle one-way — turning
+	// DoH3 back off would report success and persist nothing — and an UPDATE
+	// against a database that has never been seeded would match no rows and
+	// still report success.
+	if err := s.db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"enabled"}),
+	}).Create(hs).Error; err != nil {
+		return fmt.Errorf("save http3 settings: %w", err)
+	}
+
+	return nil
+}
+
+// seedHTTP3Settings creates the singleton row on first run from the YAML config,
+// so an operator who already had http3.enable set keeps DoH3 serving across the
+// upgrade that moved the toggle into the database. DoNothing on conflict so two
+// racing callers on a fresh database do not collide on the primary key.
+func (s *ConfigStore) seedHTTP3Settings(base config.HTTP3) error {
+	hs := &HTTP3Settings{ID: 1, Enabled: base.Enable}
+	if err := s.db.Clauses(clause.OnConflict{DoNothing: true}).Create(hs).Error; err != nil {
+		return fmt.Errorf("seed http3 settings: %w", err)
 	}
 
 	return nil

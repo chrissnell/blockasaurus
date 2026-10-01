@@ -317,7 +317,10 @@ func registerUIRoutes(router *chi.Mux, cfg *config.Config,
 			api.RegisterOpenAPIEndpoints(r, openAPIImpl)
 
 			if store != nil {
-				configapi.RegisterEndpoints(r, configapi.NewConfigHandler(store, reconfigurer))
+				configapi.RegisterEndpoints(r, configapi.NewConfigHandler(store, reconfigurer, configapi.DoH3Runtime{
+					Active:            doh3Active(cfg),
+					UnavailableReason: doh3Unavailable(cfg),
+				}))
 			}
 
 			r.Get("/api/discovered-clients", handleDiscoveredClients)
