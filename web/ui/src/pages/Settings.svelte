@@ -282,10 +282,19 @@
           </p>
         {/if}
 
-        {#if h3Unavailable}
+        <!-- An HTTP-only deployment is permanently unavailable for HTTP/3 and
+             never asked for it, so the reason is only an error for someone who
+             actually wants DoH3 on. Styling it red either way would cry wolf on
+             the Settings page of a default install. -->
+        {#if h3Unavailable && h3Enabled}
           <p class="field-error" role="alert">
-            HTTP/3 cannot start in this process: {h3Unavailable}. Turning this on
-            will not change that &mdash; fix it in the YAML config and restart.
+            DoH3 is on, but HTTP/3 cannot start in this process: {h3Unavailable}.
+            A restart will not change that &mdash; fix it in the YAML config first.
+          </p>
+        {:else if h3Unavailable}
+          <p class="restart-hint">
+            HTTP/3 is not available on this server: {h3Unavailable}. Turning this
+            on will not change that until the YAML config does.
           </p>
         {:else if h3RestartRequired && !h3Dirty}
           <p class="restart-hint" role="status">

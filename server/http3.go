@@ -93,8 +93,8 @@ func newUDPPacketConns(ctx context.Context, addresses config.ListenConfig) ([]ne
 // explanation the log gave.
 const (
 	doh3NoHTTPSReason       = "ports.https is empty"
-	doh3ProxyProtocolReason = "ports.proxyProtocol includes 'https', and HTTP/3 cannot carry " +
-		"PROXY protocol headers without making the client IP inconsistent"
+	doh3ProxyProtocolReason = "ports.proxyProtocol includes 'https'; QUIC carries no PROXY " +
+		"protocol header, so client IPs would not match those seen over TCP"
 )
 
 // doh3Unavailable explains why the HTTP/3 listener cannot bind, or returns ""
@@ -112,9 +112,28 @@ func doh3Unavailable(cfg *config.Config) string {
 	}
 }
 
-// doh3Active reports whether this process is serving DoH over HTTP/3. Fixed for
-// the process lifetime: Server.Reconfigure rebuilds the resolver chain and never
-// rebinds listeners, so a later change to the stored setting does not move it.
-func doh3Active(cfg *config.Config) bool {
-	return cfg.HTTP3.IsEnabled() && doh3Unavailable(cfg) == ""
+// doh3State is the HTTP/3 listener state this process reports to the web UI.
+type doh3State struct {
+	// active: this process is serving DoH over HTTP/3 right now.
+	active bool
+	// unavailableReason: why no HTTP/3 listener could bind, regardless of
+	// http3.enable. Empty when nothing is in the way.
+	unavailableReason string
+}
+
+// doh3State observes the listener rather than re-deriving it from the config.
+// The whole promise of the DoH3 section in the UI is that it does not lie about
+// the transport, so `active` comes from the packet conns NewServer actually
+// opened; a second copy of createHTTPListeners' predicate would hold only until
+// that predicate grew a condition. The reason stays config-derived because it
+// describes the surrounding config, not an outcome.
+//
+// Fixed for the process lifetime: Server.Reconfigure rebuilds the resolver
+// chain and never rebinds listeners, so a later change to the stored setting
+// does not move either field.
+func (s *Server) doh3State() doh3State {
+	return doh3State{
+		active:            len(s.http3PacketConns) > 0,
+		unavailableReason: doh3Unavailable(s.cfg),
+	}
 }

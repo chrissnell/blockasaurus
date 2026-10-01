@@ -14,11 +14,13 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/0xERR0R/blocky/config"
+	"github.com/0xERR0R/blocky/configstore"
 	"github.com/0xERR0R/blocky/docs"
 	. "github.com/0xERR0R/blocky/helpertest"
 	. "github.com/0xERR0R/blocky/log"
@@ -906,6 +908,35 @@ var _ = Describe("Running DNS server", func() {
 				Expect(err).Should(Succeed())
 				Expect(srv.http3Server).Should(BeNil())
 				Expect(srv.http3PacketConns).To(BeEmpty())
+				Expect(srv.doh3State().active).To(BeFalse())
+			})
+		})
+
+		// Guards the one invariant the DoH3 UI rests on. Reconfigure rebuilds the
+		// resolver chain and cannot open a listener, so "completing the pattern"
+		// by calling BuildHTTP3Config alongside BuildRebindingConfig would leave
+		// the running config — and /api/config/http3-settings with it — reporting
+		// DoH3 as active with no UDP socket open, and nothing else would fail.
+		When("the stored DoH3 setting is turned on under a running server", func() {
+			It("does not move the listener or the running config on Reconfigure", func() {
+				cfg.Ports.DNS = config.ListenConfig{}
+				cfg.Ports.HTTPS = config.ListenConfig{"127.0.0.1:0"}
+
+				store, err := configstore.Open(filepath.Join(GinkgoT().TempDir(), "doh3.db"))
+				Expect(err).Should(Succeed())
+				DeferCleanup(store.Close)
+
+				srv, err := NewServer(ctx, &cfg, store)
+				Expect(err).Should(Succeed())
+				DeferCleanup(func() { _ = srv.Stop(ctx) })
+				Expect(srv.http3PacketConns).To(BeEmpty())
+
+				Expect(store.PutHTTP3Settings(&configstore.HTTP3Settings{Enabled: true})).Should(Succeed())
+				Expect(srv.Reconfigure(ctx)).Should(Succeed())
+
+				Expect(srv.cfg.HTTP3.Enable).To(BeFalse())
+				Expect(srv.http3PacketConns).To(BeEmpty())
+				Expect(srv.doh3State().active).To(BeFalse())
 			})
 		})
 	})

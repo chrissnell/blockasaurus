@@ -219,9 +219,12 @@
     <p>
       blockasaurus serves DNS-over-HTTPS on the HTTPS port over TCP. Turning on
       <strong>Serve DoH over HTTP/3</strong> adds a second transport for the same
-      endpoint: HTTP/3 over QUIC, on the UDP counterparts of that port. QUIC
-      recovers from packet loss per-stream rather than per-connection, so DoH over
-      a flaky mobile link stops head-of-line blocking on a single lost packet.
+      endpoint: HTTP/3 over QUIC, on the UDP counterparts of that port. The win
+      for DNS is mostly in connection setup &mdash; QUIC folds the transport and
+      TLS handshakes together, and a returning client can resume at 0-RTT. QUIC
+      also recovers from loss per-stream, so on a lossy link concurrent queries
+      no longer wait behind each other's retransmits; a single query still waits
+      for its own.
     </p>
 
     <p>
@@ -230,7 +233,7 @@
       so clients that support it switch transports on their own and the rest keep
       using TCP. The line under the toggle tells you whether this server is
       serving over HTTP/3 right now, and the <strong>Setup Guide</strong> on each
-      client group says so next to the DoH URLs.
+      client group says so in its introduction.
     </p>
 
     <div class="callout warn">

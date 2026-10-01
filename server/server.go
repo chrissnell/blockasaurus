@@ -280,7 +280,7 @@ func NewServer(ctx context.Context, cfg *config.Config, store *configstore.Confi
 		// UI-only router for admin ports
 		uiRouter := chi.NewRouter()
 		registerUIRoutes(uiRouter, cfg, openAPIImpl, server.configStore, server, server.broadcaster,
-			server.statsCollector, server.wsRevoker)
+			server.statsCollector, server.wsRevoker, server.doh3State())
 
 		// Create admin listeners
 		adminHTTP, adminHTTPS, err := createAdminListeners(ctx, cfg, tlsCfg)
@@ -303,7 +303,7 @@ func NewServer(ctx context.Context, cfg *config.Config, store *configstore.Confi
 		}
 	} else {
 		httpRouter := createHTTPRouter(cfg, openAPIImpl, server.configStore, server, server.broadcaster,
-			server.statsCollector, server.wsRevoker)
+			server.statsCollector, server.wsRevoker, server.doh3State())
 		server.registerDoHEndpoints(httpRouter, cfg)
 		mainRouter = httpRouter
 	}

@@ -6,6 +6,7 @@ package configstore
 import (
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/0xERR0R/blocky/config"
 	. "github.com/onsi/ginkgo/v2"
@@ -392,6 +393,23 @@ var _ = Describe("ConfigStore", func() {
 			got, err := store.GetHTTP3Settings()
 			Expect(err).Should(Succeed())
 			Expect(got.Enabled).Should(BeTrue())
+		})
+
+		// gorm does not append updated_at to a hand-written OnConflict, so
+		// without it in the column list the timestamp freezes at the first write
+		// and the column is quietly useless.
+		It("should advance updated_at on a later write", func() {
+			Expect(store.PutHTTP3Settings(&HTTP3Settings{Enabled: true})).Should(Succeed())
+
+			first, err := store.GetHTTP3Settings()
+			Expect(err).Should(Succeed())
+
+			time.Sleep(time.Millisecond * 10)
+			Expect(store.PutHTTP3Settings(&HTTP3Settings{Enabled: false})).Should(Succeed())
+
+			second, err := store.GetHTTP3Settings()
+			Expect(err).Should(Succeed())
+			Expect(second.UpdatedAt).Should(BeTemporally(">", first.UpdatedAt))
 		})
 	})
 

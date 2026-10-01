@@ -5,6 +5,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -426,42 +427,21 @@ func TestSameOriginFunc(t *testing.T) {
 	}
 }
 
-// TestEndpointInfoDoH3 pins the hasDoH3 field the UI reads to decide whether to
-// tell operators the DoH endpoint also answers over HTTP/3. The listener binds
-// once at startup, so the flag is derived from the startup config — which means
-// "enabled but nowhere to bind" must not read as available.
+// TestEndpointInfoDoH3 pins the hasDoH3 key the UI reads to decide whether to
+// tell operators the DoH endpoint also answers over HTTP/3. Whether the
+// listener is up is Server.doh3State's answer (tested there, against the open
+// packet conns); what this guards is the wire name and that the value is not
+// dropped or inverted on the way out.
 func TestEndpointInfoDoH3(t *testing.T) {
 	t.Parallel()
 
-	for _, tc := range []struct {
-		name string
-		cfg  config.Config
-		want bool
-	}{
-		{
-			name: "enabled with an https listener",
-			cfg: config.Config{
-				HTTP3: config.HTTP3{Enable: true},
-				Ports: config.Ports{HTTPS: config.ListenConfig{":443"}},
-			},
-			want: true,
-		},
-		{
-			name: "disabled",
-			cfg:  config.Config{Ports: config.Ports{HTTPS: config.ListenConfig{":443"}}},
-			want: false,
-		},
-		{
-			name: "enabled with no https listener",
-			cfg:  config.Config{HTTP3: config.HTTP3{Enable: true}},
-			want: false,
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, hasDoH3 := range []bool{true, false} {
+		t.Run(fmt.Sprintf("hasDoH3=%v", hasDoH3), func(t *testing.T) {
 			t.Parallel()
 
 			rec := httptest.NewRecorder()
-			handleEndpointInfo(&tc.cfg)(rec, httptest.NewRequest(http.MethodGet, "/api/endpoint-info", nil))
+			handleEndpointInfo(&config.Config{}, hasDoH3)(
+				rec, httptest.NewRequest(http.MethodGet, "/api/endpoint-info", nil))
 
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d, want 200", rec.Code)
@@ -475,8 +455,8 @@ func TestEndpointInfoDoH3(t *testing.T) {
 				t.Fatalf("decode body: %v", err)
 			}
 
-			if body.HasDoH3 != tc.want {
-				t.Errorf("hasDoH3 = %v, want %v", body.HasDoH3, tc.want)
+			if body.HasDoH3 != hasDoH3 {
+				t.Errorf("hasDoH3 = %v, want %v", body.HasDoH3, hasDoH3)
 			}
 		})
 	}

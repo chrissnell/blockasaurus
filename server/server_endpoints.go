@@ -269,6 +269,7 @@ func registerUIRoutes(router *chi.Mux, cfg *config.Config,
 	broadcaster *logstream.Broadcaster,
 	statsCollector *statscollector.Collector,
 	revoker *auth.WSRevoker,
+	doh3 doh3State,
 ) {
 	// --- Public (no auth ever) ---
 
@@ -318,13 +319,13 @@ func registerUIRoutes(router *chi.Mux, cfg *config.Config,
 
 			if store != nil {
 				configapi.RegisterEndpoints(r, configapi.NewConfigHandler(store, reconfigurer, configapi.DoH3Runtime{
-					Active:            doh3Active(cfg),
-					UnavailableReason: doh3Unavailable(cfg),
+					Active:            doh3.active,
+					UnavailableReason: doh3.unavailableReason,
 				}))
 			}
 
 			r.Get("/api/discovered-clients", handleDiscoveredClients)
-			r.Get("/api/endpoint-info", handleEndpointInfo(cfg))
+			r.Get("/api/endpoint-info", handleEndpointInfo(cfg, doh3.active))
 			r.Get("/api/stats", handleStats)
 			r.Get("/api/stats/overtime", handleStatsOvertime(statsCollector))
 			r.Get("/api/stats/overtime/clients", handleStatsOvertimeClients(statsCollector))
@@ -353,10 +354,11 @@ func createHTTPRouter(cfg *config.Config, openAPIImpl api.StrictServerInterface,
 	broadcaster *logstream.Broadcaster,
 	statsCollector *statscollector.Collector,
 	revoker *auth.WSRevoker,
+	doh3 doh3State,
 ) *chi.Mux {
 	router := chi.NewRouter()
 
-	registerUIRoutes(router, cfg, openAPIImpl, store, reconfigurer, broadcaster, statsCollector, revoker)
+	registerUIRoutes(router, cfg, openAPIImpl, store, reconfigurer, broadcaster, statsCollector, revoker, doh3)
 
 	return router
 }

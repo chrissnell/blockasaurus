@@ -542,10 +542,12 @@ func (s *ConfigStore) PutRebindingSettings(rs *RebindingSettings) error {
 	// A map update, not Save: gorm's Save skips zero-valued struct fields, so
 	// turning the protection back off (Enabled=false) would be silently dropped.
 	// Upsert because an UPDATE against a database that has never been seeded
-	// would match nothing and still report success.
+	// would match nothing and still report success. updated_at has to be listed
+	// too: gorm does not add it to a hand-written OnConflict, so it would freeze
+	// at the first insert.
 	if err := s.db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"enabled", "allowed_domains"}),
+		DoUpdates: clause.AssignmentColumns([]string{"enabled", "allowed_domains", "updated_at"}),
 	}).Create(rs).Error; err != nil {
 		return fmt.Errorf("save rebinding settings: %w", err)
 	}
@@ -604,10 +606,11 @@ func (s *ConfigStore) PutHTTP3Settings(hs *HTTP3Settings) error {
 	// zero-valued struct fields, which would make the toggle one-way — turning
 	// DoH3 back off would report success and persist nothing — and an UPDATE
 	// against a database that has never been seeded would match no rows and
-	// still report success.
+	// still report success. updated_at has to be listed too: gorm does not add
+	// it to a hand-written OnConflict, so it would freeze at the first insert.
 	if err := s.db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"enabled"}),
+		DoUpdates: clause.AssignmentColumns([]string{"enabled", "updated_at"}),
 	}).Create(hs).Error; err != nil {
 		return fmt.Errorf("save http3 settings: %w", err)
 	}

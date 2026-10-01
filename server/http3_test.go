@@ -179,25 +179,45 @@ var _ = Describe("HTTP/3 helpers", func() {
 		})
 	})
 
-	Describe("doh3Active", func() {
-		It("is true only when enabled with somewhere to bind", func() {
-			cfg := &config.Config{
-				HTTP3: config.HTTP3{Enable: true},
-				Ports: config.Ports{HTTPS: config.ListenConfig{":443"}},
+	Describe("Server.doh3State", func() {
+		// active must come from the packet conns, not from a second copy of
+		// createHTTPListeners' predicate: the UI's claim is about the listener,
+		// and "enabled but nothing bound" must never read as serving.
+		It("reports active from the open packet conns", func(ctx context.Context) {
+			pcs, err := newUDPPacketConns(ctx, config.ListenConfig{"127.0.0.1:0"})
+			Expect(err).Should(Succeed())
+			DeferCleanup(func() {
+				for _, pc := range pcs {
+					_ = pc.Close()
+				}
+			})
+
+			srv := &Server{
+				cfg: &config.Config{
+					HTTP3: config.HTTP3{Enable: true},
+					Ports: config.Ports{HTTPS: config.ListenConfig{"127.0.0.1:0"}},
+				},
+				http3PacketConns: pcs,
 			}
-			Expect(doh3Active(cfg)).To(BeTrue())
+
+			Expect(srv.doh3State().active).To(BeTrue())
+			Expect(srv.doh3State().unavailableReason).To(BeEmpty())
 		})
 
-		It("is false when the listener is disabled", func() {
-			cfg := &config.Config{Ports: config.Ports{HTTPS: config.ListenConfig{":443"}}}
-			Expect(doh3Active(cfg)).To(BeFalse())
+		It("is inactive with no packet conns, however the config reads", func() {
+			srv := &Server{cfg: &config.Config{
+				HTTP3: config.HTTP3{Enable: true},
+				Ports: config.Ports{HTTPS: config.ListenConfig{"127.0.0.1:0"}},
+			}}
+
+			Expect(srv.doh3State().active).To(BeFalse())
 		})
 
-		// Enabled but blocked must not read as active, or the Settings page would
-		// claim DoH3 is serving when no UDP socket was ever opened.
-		It("is false when enabled but blocked", func() {
-			cfg := &config.Config{HTTP3: config.HTTP3{Enable: true}}
-			Expect(doh3Active(cfg)).To(BeFalse())
+		It("carries the blocking reason even when inactive", func() {
+			srv := &Server{cfg: &config.Config{HTTP3: config.HTTP3{Enable: true}}}
+
+			Expect(srv.doh3State().active).To(BeFalse())
+			Expect(srv.doh3State().unavailableReason).To(Equal(doh3NoHTTPSReason))
 		})
 	})
 })

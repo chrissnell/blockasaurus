@@ -15,21 +15,21 @@ type endpointInfo struct {
 	HasTLS  bool     `json:"hasTls"`
 	HasHTTP bool     `json:"hasHttp"`
 	// HasDoH3 reports that the DoH endpoint is also reachable over HTTP/3.
-	// The HTTP/3 listener binds once, at startup, so reading it from the
-	// startup config is reading the live state and not a stale copy.
+	// Observed from the listeners NewServer opened, not re-derived from the
+	// config; it binds once at startup, so the snapshot stays accurate.
 	HasDoH3           bool   `json:"hasDoH3"`
 	HasSelfSignedCert bool   `json:"hasSelfSignedCert"`
 	AdvertiseAddress  string `json:"advertiseAddress,omitempty"`
 }
 
-func handleEndpointInfo(cfg *config.Config) http.HandlerFunc {
+func handleEndpointInfo(cfg *config.Config, hasDoH3 bool) http.HandlerFunc {
 	info := endpointInfo{
 		Domains:           cfg.ClientGroupEndpoints.Domains,
 		CpeID:             cfg.ClientGroupEndpoints.CpeID,
 		DOHPath:           cfg.Ports.DOHPath,
 		HasTLS:            len(cfg.Ports.TLS) > 0 || len(cfg.Ports.HTTPS) > 0,
 		HasHTTP:           len(cfg.Ports.HTTP) > 0,
-		HasDoH3:           doh3Active(cfg),
+		HasDoH3:           hasDoH3,
 		HasSelfSignedCert: cfg.CertFile != "" && hasSelfSignedRoot(cfg.CertFile),
 	}
 
