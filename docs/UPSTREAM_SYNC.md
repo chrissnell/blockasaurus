@@ -10,9 +10,12 @@ specs failing from a cause that predates the sync (§3.4b) — and GRA-649 close
 now covers every section the config-store overlay owns, and `e2e/failing-baseline.txt` is empty.
 `VERSION` is deliberately still `0.34.38` — see §10.
 
-Last measured: 2026-09-23, against upstream `main` @ `2bb9b70` (2026-09-21). §1's table is that
-pre-merge measurement and is kept as the record of what the work was; **the merge base for the
-*next* sync is `2bb9b70`**, not `d459311`.
+Last measured: 2026-10-01, against upstream `main` @ `3b7faa8` (2026-09-28). §1's table is the
+2026-09-23 pre-merge measurement and is kept as the record of what the work was; **the merge base
+for the *next* sync is `3b7faa8`**, not `2bb9b70` and not `d459311`.
+
+The 2026-10-01 sync (§8a) merged the only two commits upstream had produced since `2bb9b70` — both
+dependency bumps.
 
 ## 1. Measured divergence
 
@@ -951,14 +954,27 @@ data instead (§4b). The rest of `createQueryResolver` is position-for-position 
 
 Keep this current — it is what makes the *next* sync cheap.
 
-`.fork-additions` is the machine-checked half of this register: 160 paths, every one of them a file
-that exists here and not in upstream `2bb9b70`, verified present and non-empty by
+`.fork-additions` is the machine-checked half of this register: 169 paths, every one of them a file
+that exists here and not in upstream `3b7faa8`, verified present and non-empty by
 `make check-fork-additions` on every CI run. This section is the human-readable half — the same set
 grouped by *why* it exists, plus the part a file list cannot express: the upstream files we hold
 patches in. When they disagree, `.fork-additions` is right; `make check-fork-additions-sync`
 regenerates it against a fetched `upstream/main`.
 
-**Manifest drift over the sync: 152 → 160.** Phase 0 locked 152 paths (`f3ed700`). Phases 1–8 added
+**Manifest count: 169 as of 2026-10-01**, and the chain is 152 → 160 → 166 → 169. The 2026-09 sync took
+it to 160 (below). Post-sync fork PRs took it to 166 without ever saying so here: `config/debug.go`
+(+test) and `server/server_debug.go` (+test) for the loopback diagnostics listener,
+`helpertest/port.go` for the test port allocator, and `scripts/smoke-release-image.sh` for the release
+image smoke — all six now in the tables above. The 2026-10-01 sync added the last three (§8a):
+`e2e/api_client.go`, `e2e/store_seed.go` and `e2e/store_seed_test.go`, all fork-only guardrail files
+this section already claimed were guarded, all three missing from the manifest because the PRs that
+added them did not update it.
+
+That is the failure mode `make check-fork-additions-sync` exists to catch, and it is worth running on
+every sync even when the merge itself is trivial — it is also the only half of this register that
+cannot silently rot, which is why its count is the number to trust when the prose disagrees.
+
+**Manifest drift over the 2026-09 sync: 152 → 160.** Phase 0 locked 152 paths (`f3ed700`). Phases 1–8 added
 four, all evidence and tooling: `tools/dnsreplay/main.go`,
 `docs/upstream-sync/behavioral-replay-2026-09.md`,
 `docs/upstream-sync/port-checklist-2026-09.md`, and `server/chain_wiring_test.go`. Phase 9 added four
@@ -981,9 +997,10 @@ upstream file was dropped at any point.
 | LAN/k8s address advertisement | `pkg/advertise/`, `pkg/arp/` | 7 |
 | Windows service wrapper | `pkg/winservice/` | 2 |
 | Branding assets | `assets/` | 2 |
+| Loopback diagnostics listener | `config/debug.go` (+test), `server/server_debug.go` (+test) — the `debug.enable`/`debug.port` pprof+expvar listener, loopback-gated by `requireLoopbackHost` | 4 |
 | Misc | `VERSION`, `util/slug.go` (+test), `docs/api/openapi-config.yaml`, `docs/client_group_endpoints.md` | 5 |
 
-140 files. The remaining 20 are the guardrails and evidence below.
+144 files. The remaining 25 are the guardrails and evidence below.
 
 **Guardrails and evidence (also fork-only, and the set most easily lost by accident).** These are
 listed separately because deleting one does not break a build — it silently removes a check or the
@@ -1006,6 +1023,11 @@ record a future sync reads:
   cover every section the overlay owns; a fixture section nobody bridges does not fail, it is
   silently ignored (§3.4b).
 - `tools/dnsreplay/main.go` — the DNS capture/replay tool §8 tells you to run *before* the merge.
+- `helpertest/port.go` — the test port allocator. `make test` runs 28 suites in parallel and this is
+  what keeps two of them off the same listener; the failure mode it removed was a suite that hung
+  rather than failed (§3a, Test ports).
+- `scripts/smoke-release-image.sh` — the `make release-image-smoke` body, which is what makes the
+  `release-image` CI job a gate rather than a compile check (§11).
 - `docs/UPSTREAM_SYNC.md` (this file) and `docs/upstream-sync/baseline-v0.34.38.md`,
   `behavioral-replay-2026-09.md`, `port-checklist-2026-09.md` — the Phase 0/7/8 evidence.
 
@@ -1059,8 +1081,8 @@ git merge upstream/main
 ```
 
 At that cadence each merge should be a handful of conflicts in the §7 patched-file list. After
-every sync, update §7 and the "Last measured" line at the top. The merge base for the next one is
-`2bb9b70`.
+every sync, update §7, §8a and the "Last measured" line at the top. The merge base for the next one
+is `3b7faa8`.
 
 **Wired, not just intended.** A scheduled Multica autopilot titled "Blockasaurus upstream sync"
 (`1bf22366-3c1c-47c1-9b3e-50f0e97637fb`) fires `0 15 1 * *` UTC — the 1st of each month, i.e. every
@@ -1079,8 +1101,10 @@ A month where upstream has not moved enough to be worth merging is a legitimate 
 issue and say so. That is cheaper than the alternative failure mode, which is the one this document
 exists because of.
 
-Capture the behavioral "before" *first*, with the old binary still running — this sync's Phase 0
-skipped it and Phase 7 had to rebuild the pre-merge tree to recover it:
+Capture the behavioral "before" *first*, with the old binary still running — the 2026-09 sync's Phase 0
+skipped it and Phase 7 had to rebuild the pre-merge tree to recover it. The one case that does not need
+a capture is a merge whose diff touches no `.go` file at all, because then both captures come from
+identical source; §8a's 2026-10-01 entry is the worked example, and it is the *only* exception:
 
 ```bash
 go run ./tools/dnsreplay 127.0.0.1:53 > before.txt   # then again after the merge, and diff
@@ -1096,6 +1120,86 @@ resolved ones.
 cannot pass as a clean diff. A partial failure is ambiguous on purpose — the pre-merge tree
 genuinely returned nothing for single-label queries, so read the `ERROR:` lines before deciding
 whether it is a finding or a broken run.
+
+### Opening the PR: pass `--repo` to `gh`
+
+Adding the `upstream` remote this procedure requires leaves `gh` with two candidate repositories in the
+checkout, and it resolves a bare `gh pr create` to `0xERR0R/blocky` — which opens the sync PR on
+upstream's tracker rather than ours. `--head chrissnell:<branch>` does not prevent it; only `--repo`
+does. This happened on 2026-10-01 (opened and closed as `0xERR0R/blocky#2285`).
+
+```bash
+gh repo set-default chrissnell/blockasaurus   # pins it for a long-lived checkout
+gh pr create --repo chrissnell/blockasaurus --base main --head <branch> ...
+```
+
+## 8a. Sync log
+
+One row per sync run, newest first. The point of the table is the merge base: it is the only
+number the *next* run needs, and it is the one most easily lost.
+
+| Date | Upstream head merged | Upstream commits taken | Conflicts | Outcome |
+| --- | --- | --- | --- | --- |
+| 2026-10-01 | `3b7faa8` (2026-09-28) | 2, both dependency bumps | 1 (`go.mod`) | merged as `0f141b2`; `git diff 27daf20..0f141b2` is `go.mod` + `go.sum` and nothing else |
+| 2026-09-23 | `2bb9b70` (2026-09-21) | 220 (113 dependency bumps) | 41 paths | the week of work this whole document describes; merge `9e12f21` |
+
+### 2026-10-01
+
+Upstream had moved exactly two commits in the week since `2bb9b70`, both dependabot:
+`quic-go` 0.62.0 → 0.63.0 (#2281) and `gomega` 1.43.1 → 1.44.0 (#2282). Between them they touch
+`go.mod` and `go.sum` and no other file, on either side. The `go.sum` delta is the four lines for those
+two modules and nothing more — **no transitive module moved**, which is what rules out the bump
+reaching a path outside DoQ/HTTP-3 in the first place.
+
+This sat right on the §8 "a no-op is a legitimate outcome" line and was merged anyway, for one
+reason: `quic-go` is on the DoQ upstream and HTTP/3 serving paths (`resolver/quic_upstream_client.go`,
+`server/http3.go`), so it is not a bump worth deferring, and taking it costs one conflict.
+
+The one conflict was `go.mod`, and it was adjacency rather than substance: our
+`prometheus/client_model` require sits on the line above `quic-go`, so upstream's one-line version
+change landed inside a hunk we had also edited. Resolved by keeping both lines; `go.sum` regenerated
+with `go mod tidy` per §3.5 rather than hand-merged.
+
+**Nothing in §7 needed walking.** `git diff <pre-merge tip>..<merge commit>` is `go.mod` and
+`go.sum`, so every patched upstream file, every guardrail and every `blockasaurus_*` metric name is
+byte-identical to pre-merge. The metric-rename step and the §2 "dangerous set" semantic audit are
+both vacuous this cycle for the same reason — upstream added no metric and changed no source file.
+`go generate` + `go tool mockery` produced no diff, so no generated artifact needed rebuilding
+either.
+
+**Behavioral replay: deliberately not run, and why.** §8 asks for a `dnsreplay` before/after. This
+cycle it would compare two binaries built from *identical Go source*, differing only in two
+dependency versions, over a probe matrix that is plain UDP/TCP DNS — i.e. not one byte of the
+changed code. The capture is identical by construction, and running it would have recorded
+confidence it did not earn. What actually covers the delta:
+
+- `resolver/upstream_resolver_test.go:591` — four DoQ specs doing a real QUIC handshake against
+  `resolver/mock_doq_upstream_server.go` (itself a real `quic.Transport` / `quic.Listener`, not a
+  stub), including connection reuse across queries, plus the two DoQ TLS session-cache specs at `:883`
+  and `:932`. Client side of the bump. Resolver suite, 726/726 green;
+- `server/http3_test.go` — the HTTP/3 listener path in `server/http3.go`. Server side of the bump, and
+  the strongest *local* citation of the three. Server suite, 123/123 green;
+- `e2e/doh3_test.go` in CI, for DoH3 end to end. Note that this is the only e2e spec `quic-go` is on
+  the path of — `grep -rn -i 'quic\|doq' e2e/` hits nothing else, so there is no end-to-end **DoQ**
+  coverage, only DoH3;
+- a live smoke of the merged binary: boots DNS/TCP/UDP/HTTP listeners against a fresh config store
+  and answers `example.com A` from the seeded `default` upstream group.
+
+Restore the full replay the next time upstream moves source, which is the case it was built for.
+
+**Three pieces of pre-existing drift fixed in passing**, none caused by the merge. All three were found
+by running the §3a guards on a merge that did not need them, which is the argument for running them
+every cycle regardless of how small the merge looks:
+
+- `.fork-additions` was stale — `make check-fork-additions-sync` wanted `e2e/api_client.go`,
+  `e2e/store_seed.go` and `e2e/store_seed_test.go`, all three fork-only files §7 already claims are
+  guarded. They were added by PRs that landed after the sync without touching the manifest. 166 → 169.
+- §7's human-readable half had rotted further than that: its `140 + 20` breakdown no longer summed to
+  the manifest, and six fork-only files appeared in neither table — `config/debug.go` (+test),
+  `server/server_debug.go` (+test), `helpertest/port.go` and `scripts/smoke-release-image.sh`. Now
+  `144 + 25 = 169`. Note which half was wrong: the machine-checked manifest was right the whole time.
+- the `modernize` finding in `tools/e2ebaseline/main.go` (`strings.SplitSeq`), and the two
+  composite-literal hunks `make fmt` rewrites in `tools/dnsreplay/main.go`. §9 is updated.
 
 ## 9. Lint baseline at golangci-lint v2.12.2
 
@@ -1130,15 +1234,15 @@ runtime, and the store field is a `uint32` — so `ttl: 4294967296` wrapped to 0
 `modernize` inlined `configstore.BoolPtr` into `new(v)` at every call site, which left the helper
 dead; it was removed.
 
-### Left, and why — 156 findings
+### Left, and why — 155 findings
 
 | Linter | N | Disposition |
 | --- | --- | --- |
-| `staticcheck` | 22 | All SA1019: `nhooyr.io/websocket` is deprecated in favour of `github.com/coder/websocket`. **Not** a drop-in version bump — the fork's latest tag is `v1.8.15` and we are on `nhooyr.io/websocket v1.8.17`, so migrating moves *backwards* in version. Four files: `logstream/handler.go`, `logstream/handler_test.go`, `auth/wsrevoke.go`, `server/server_endpoints.go`. Worth its own change with the websocket paths actually exercised; not a verification-phase edit. |
+| `staticcheck` | 21 | All SA1019: `nhooyr.io/websocket` is deprecated in favour of `github.com/coder/websocket`. **Not** a drop-in version bump — the fork's latest tag is `v1.8.15` and we are on `nhooyr.io/websocket v1.8.17`, so migrating moves *backwards* in version. Four files: `logstream/handler.go`, `logstream/handler_test.go`, `auth/wsrevoke.go`, `server/server_endpoints.go`. Worth its own change with the websocket paths actually exercised; not a verification-phase edit. |
 | `nilerr` | 19 | 18 are `api/configapi/handler.go` and structural: oapi-codegen's strict-handler pattern returns a typed `404`/`400` response value *and* a nil error, which is exactly what `nilerr` flags. The remaining one is `configstore/store.go:292`. |
 | `lll` | 29 | 13 in `api/configapi/handler.go`, the rest scattered. Generated-shaped handler signatures; wrapping them buys nothing. |
-| `funlen` / `gocognit` / `nestif` | 21 | `NewServer`, `runServer`, `Reconfigure`, `registerUIRoutes` and the configstore CRUD bodies. Splitting these is a refactor, not a lint fix, and `server.go` is the single worst file to churn between syncs. |
-| `goconst` | 20 | Mostly `"default"`, `"A"`, `"admin"` repeated across the configstore and API layers. A shared constant would be an improvement; it is a fork-wide rename, not sync work. |
+| `funlen` / `gocognit` / `nestif` | 22 | `NewServer`, `runServer`, `Reconfigure`, `registerUIRoutes` and the configstore CRUD bodies. Splitting these is a refactor, not a lint fix, and `server.go` is the single worst file to churn between syncs. |
+| `goconst` | 19 | Mostly `"default"`, `"A"`, `"admin"` repeated across the configstore and API layers. A shared constant would be an improvement; it is a fork-wide rename, not sync work. |
 | `mnd` | 13 | Timeouts, buffer sizes, HTTP ports. |
 | `gosec` | 6 | Triaged as safe: 3× G124 cookies — the session cookie sets `HttpOnly` and `SameSite` and sets `Secure` only when the request is TLS, because the admin UI is reachable over plain HTTP on a LAN; G101 on a Kubernetes service-account *path* constant; 2× G704 "SSRF" on the in-cluster API-server URL built from `KUBERNETES_SERVICE_HOST`. |
 | `errchkjson` | 5 | Response-body encoders written after the status line is already committed, using the file-local `_ = json.NewEncoder(w).Encode(...)` idiom. `errchkjson` rejects the blank assignment for `any`-typed payloads specifically; there is nothing useful to do with the error at that point. |
@@ -1155,6 +1259,13 @@ dead; it was removed.
 Reproduce with `make lint`. If the count moves without this table moving, something changed.
 (The table read 154 until 2026-09-28, when Phase 7 re-ran the pin and found the two
 `canonicalheader` findings had never been listed. The count was wrong, not the tree.)
+
+Re-run on 2026-10-01 (§8a) against the same pin. The total had stayed at 156 but three rows had moved
+underneath it — `staticcheck` 22 → 21, `goconst` 20 → 19, `funlen`/`gocognit`/`nestif` 21 → 22 — and a
+fourth linter, `modernize`, had appeared with no row at all. All of it from fork work that landed
+after the sync, none of it in a file shared with upstream. **A stable total is not evidence of a stable
+baseline; compare the rows.** The `modernize` one (`strings.Split` → `strings.SplitSeq` in
+`tools/e2ebaseline/main.go`) was fixed rather than given a row, which is where 155 comes from.
 
 ## 10. Release hold — `VERSION` stays at 0.34.38
 
