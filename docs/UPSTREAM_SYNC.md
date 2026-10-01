@@ -1088,6 +1088,13 @@ A month where upstream has not moved enough to be worth merging is a legitimate 
 issue and say so. That is cheaper than the alternative failure mode, which is the one this document
 exists because of.
 
+**Pass `--repo chrissnell/blockasaurus` to every `gh` command during a sync.** Adding the `upstream`
+remote the step above requires gives `gh` two candidate repositories in the checkout, and it resolves
+a bare `gh pr create` to `0xERR0R/blocky` — which opens the sync PR on upstream's tracker rather than
+ours. `--head chrissnell:<branch>` does not prevent it; only `--repo` does. This happened on
+2026-10-01 (closed as 0xERR0R/blocky#2285). `gh repo set-default chrissnell/blockasaurus` pins it for
+a long-lived checkout.
+
 Capture the behavioral "before" *first*, with the old binary still running — this sync's Phase 0
 skipped it and Phase 7 had to rebuild the pre-merge tree to recover it:
 
