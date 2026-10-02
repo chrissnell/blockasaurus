@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/0xERR0R/blocky/api/configapi"
 	"github.com/0xERR0R/blocky/auth"
 	"github.com/0xERR0R/blocky/cache"
 	"github.com/0xERR0R/blocky/config"
@@ -79,6 +80,11 @@ type Server struct {
 	broadcaster       *logstream.Broadcaster
 	statsCollector    *statscollector.Collector
 	wsRevoker         *auth.WSRevoker
+
+	// queryLogHistory is the read-only view of the persisted query log the
+	// History tab queries. Opened once, independently of the writer in the
+	// resolver chain, and carries its own "why not" reason when unavailable.
+	queryLogHistory configapi.QueryLogHistorySource
 
 	servers          map[net.Listener]*httpServer
 	http3Server      *http3Server     // nil when disabled
@@ -251,6 +257,15 @@ func NewServer(ctx context.Context, cfg *config.Config, store *configstore.Confi
 
 	server.activeChain.Store(&chainSnapshot{chain: queryResolver, cancel: chainCancel})
 
+	// After the chain, so the query log writer has already created and migrated
+	// the database the read handle opens.
+	historySource, historyCloser := newQueryLogHistorySource(cfg.QueryLog)
+	server.queryLogHistory = historySource
+
+	if historyCloser != nil {
+		server.closers = append(server.closers, historyCloser)
+	}
+
 	server.printConfiguration()
 
 	server.registerDNSHandlers(ctx)
@@ -280,7 +295,7 @@ func NewServer(ctx context.Context, cfg *config.Config, store *configstore.Confi
 		// UI-only router for admin ports
 		uiRouter := chi.NewRouter()
 		registerUIRoutes(uiRouter, cfg, openAPIImpl, server.configStore, server, server.broadcaster,
-			server.statsCollector, server.wsRevoker, server.doh3State())
+			server.statsCollector, server.wsRevoker, server.doh3State(), server.queryLogHistory)
 
 		// Create admin listeners
 		adminHTTP, adminHTTPS, err := createAdminListeners(ctx, cfg, tlsCfg)
@@ -303,7 +318,7 @@ func NewServer(ctx context.Context, cfg *config.Config, store *configstore.Confi
 		}
 	} else {
 		httpRouter := createHTTPRouter(cfg, openAPIImpl, server.configStore, server, server.broadcaster,
-			server.statsCollector, server.wsRevoker, server.doh3State())
+			server.statsCollector, server.wsRevoker, server.doh3State(), server.queryLogHistory)
 		server.registerDoHEndpoints(httpRouter, cfg)
 		mainRouter = httpRouter
 	}

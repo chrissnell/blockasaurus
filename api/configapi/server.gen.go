@@ -89,6 +89,9 @@ type ServerInterface interface {
 	// Update the DoH3 (DNS-over-HTTP/3) setting
 	// (PUT /http3-settings)
 	PutHttp3Settings(w http.ResponseWriter, r *http.Request)
+	// Search the persisted query log
+	// (GET /query-log/history)
+	GetQueryLogHistory(w http.ResponseWriter, r *http.Request, params GetQueryLogHistoryParams)
 	// Get DNS rebinding protection settings
 	// (GET /rebinding-settings)
 	GetRebindingSettings(w http.ResponseWriter, r *http.Request)
@@ -272,6 +275,12 @@ func (_ Unimplemented) GetHttp3Settings(w http.ResponseWriter, r *http.Request) 
 // Update the DoH3 (DNS-over-HTTP/3) setting
 // (PUT /http3-settings)
 func (_ Unimplemented) PutHttp3Settings(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Search the persisted query log
+// (GET /query-log/history)
+func (_ Unimplemented) GetQueryLogHistory(w http.ResponseWriter, r *http.Request, params GetQueryLogHistoryParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -887,6 +896,117 @@ func (siw *ServerInterfaceWrapper) PutHttp3Settings(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// GetQueryLogHistory operation middleware
+func (siw *ServerInterfaceWrapper) GetQueryLogHistory(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetQueryLogHistoryParams
+
+	// ------------- Optional query parameter "client" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "client", r.URL.Query(), &params.Client, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "client"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "client", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "domain" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "domain", r.URL.Query(), &params.Domain, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "domain"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "domain", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "from" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "from", r.URL.Query(), &params.From, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "from"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "to" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "to", r.URL.Query(), &params.To, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "to"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "blocked_only" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "blocked_only", r.URL.Query(), &params.BlockedOnly, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "blocked_only"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "blocked_only", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetQueryLogHistory(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetRebindingSettings operation middleware
 func (siw *ServerInterfaceWrapper) GetRebindingSettings(w http.ResponseWriter, r *http.Request) {
 
@@ -1343,6 +1463,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Put(options.BaseURL+"/http3-settings", wrapper.PutHttp3Settings)
 	})
 	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/query-log/history", wrapper.GetQueryLogHistory)
+	})
+	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/rebinding-settings", wrapper.GetRebindingSettings)
 	})
 	r.Group(func(r chi.Router) {
@@ -1385,6 +1508,8 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 type BadRequestJSONResponse ErrorResponse
 
 type NotFoundJSONResponse ErrorResponse
+
+type ServiceUnavailableJSONResponse ErrorResponse
 
 type ApplyConfigRequestObject struct {
 }
@@ -2183,6 +2308,56 @@ func (response PutHttp3Settings400JSONResponse) VisitPutHttp3SettingsResponse(w 
 	return err
 }
 
+type GetQueryLogHistoryRequestObject struct {
+	Params GetQueryLogHistoryParams
+}
+
+type GetQueryLogHistoryResponseObject interface {
+	VisitGetQueryLogHistoryResponse(w http.ResponseWriter) error
+}
+
+type GetQueryLogHistory200JSONResponse QueryLogHistoryPage
+
+func (response GetQueryLogHistory200JSONResponse) VisitGetQueryLogHistoryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetQueryLogHistory400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response GetQueryLogHistory400JSONResponse) VisitGetQueryLogHistoryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetQueryLogHistory503JSONResponse struct{ ServiceUnavailableJSONResponse }
+
+func (response GetQueryLogHistory503JSONResponse) VisitGetQueryLogHistoryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetRebindingSettingsRequestObject struct {
 }
 
@@ -2678,6 +2853,9 @@ type StrictServerInterface interface {
 	// Update the DoH3 (DNS-over-HTTP/3) setting
 	// (PUT /http3-settings)
 	PutHttp3Settings(ctx context.Context, request PutHttp3SettingsRequestObject) (PutHttp3SettingsResponseObject, error)
+	// Search the persisted query log
+	// (GET /query-log/history)
+	GetQueryLogHistory(ctx context.Context, request GetQueryLogHistoryRequestObject) (GetQueryLogHistoryResponseObject, error)
 	// Get DNS rebinding protection settings
 	// (GET /rebinding-settings)
 	GetRebindingSettings(ctx context.Context, request GetRebindingSettingsRequestObject) (GetRebindingSettingsResponseObject, error)
@@ -3405,6 +3583,32 @@ func (sh *strictHandler) PutHttp3Settings(w http.ResponseWriter, r *http.Request
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(PutHttp3SettingsResponseObject); ok {
 		if err := validResponse.VisitPutHttp3SettingsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetQueryLogHistory operation middleware
+func (sh *strictHandler) GetQueryLogHistory(w http.ResponseWriter, r *http.Request, params GetQueryLogHistoryParams) {
+	var request GetQueryLogHistoryRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetQueryLogHistory(ctx, request.(GetQueryLogHistoryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetQueryLogHistory")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetQueryLogHistoryResponseObject); ok {
+		if err := validResponse.VisitGetQueryLogHistoryResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

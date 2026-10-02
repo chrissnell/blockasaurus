@@ -63,3 +63,32 @@ func buildSQLiteDSN(path string) string {
 
 	return fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(%d)", encodedPath, sqliteBusyTimeoutMs)
 }
+
+// newSQLiteReadOnlyDialector returns a gorm dialector for reading an existing
+// query-log database. Unlike the writer it never creates the file or its parent
+// directory: a missing file means the query log has not been written yet, which
+// the caller reports rather than papering over with an empty database.
+//
+// The handle is opened mode=ro; callers additionally apply PRAGMA query_only=1
+// so the read path cannot write even if URI parsing ever regresses.
+func newSQLiteReadOnlyDialector(target string) (gorm.Dialector, error) {
+	if target == "" {
+		return nil, errors.New("sqlite query log requires a target file path")
+	}
+
+	if _, err := os.Stat(target); err != nil {
+		return nil, fmt.Errorf("can't open sqlite query log database %q for reading: %w", target, err)
+	}
+
+	return sqlite.Open(buildSQLiteReadOnlyDSN(target)), nil
+}
+
+// buildSQLiteReadOnlyDSN mirrors buildSQLiteDSN for the read side. journal_mode
+// is deliberately absent: WAL is a persistent property of the database file set
+// by the writer, and setting it needs write access the mode=ro handle does not
+// have.
+func buildSQLiteReadOnlyDSN(path string) string {
+	encodedPath := strings.NewReplacer("%", "%25", "?", "%3F", "#", "%23").Replace(path)
+
+	return fmt.Sprintf("file:%s?mode=ro&_pragma=busy_timeout(%d)", encodedPath, sqliteBusyTimeoutMs)
+}

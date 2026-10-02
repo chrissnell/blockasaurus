@@ -270,6 +270,7 @@ func registerUIRoutes(router *chi.Mux, cfg *config.Config,
 	statsCollector *statscollector.Collector,
 	revoker *auth.WSRevoker,
 	doh3 doh3State,
+	queryLogHistory configapi.QueryLogHistorySource,
 ) {
 	// --- Public (no auth ever) ---
 
@@ -321,7 +322,7 @@ func registerUIRoutes(router *chi.Mux, cfg *config.Config,
 				configapi.RegisterEndpoints(r, configapi.NewConfigHandler(store, reconfigurer, configapi.DoH3Runtime{
 					Active:            doh3.active,
 					UnavailableReason: doh3.unavailableReason,
-				}))
+				}, queryLogHistory))
 			}
 
 			r.Get("/api/discovered-clients", handleDiscoveredClients)
@@ -355,10 +356,12 @@ func createHTTPRouter(cfg *config.Config, openAPIImpl api.StrictServerInterface,
 	statsCollector *statscollector.Collector,
 	revoker *auth.WSRevoker,
 	doh3 doh3State,
+	queryLogHistory configapi.QueryLogHistorySource,
 ) *chi.Mux {
 	router := chi.NewRouter()
 
-	registerUIRoutes(router, cfg, openAPIImpl, store, reconfigurer, broadcaster, statsCollector, revoker, doh3)
+	registerUIRoutes(router, cfg, openAPIImpl, store, reconfigurer, broadcaster, statsCollector, revoker, doh3,
+		queryLogHistory)
 
 	return router
 }

@@ -607,6 +607,72 @@ paths:
         '400':
           $ref: '#/components/responses/BadRequest'
 
+  /query-log/history:
+    get:
+      operationId: getQueryLogHistory
+      tags: [query-log]
+      summary: Search the persisted query log
+      description: >
+        Returns persisted query log entries, newest first. Reads the database the
+        query log writer feeds, so it covers the full retention window rather
+        than the live in-memory buffer. Only available when queryLog.type is a
+        local database (sqlite); any other target answers 503 so the caller can
+        say why history is empty instead of showing no results.
+      parameters:
+        - name: client
+          in: query
+          description: Substring match on the client IP or the resolved client name
+          schema:
+            type: string
+        - name: domain
+          in: query
+          description: Substring match on the queried domain
+          schema:
+            type: string
+        - name: from
+          in: query
+          description: Inclusive lower bound on the request timestamp
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          description: Exclusive upper bound on the request timestamp
+          schema:
+            type: string
+            format: date-time
+        - name: blocked_only
+          in: query
+          description: Keep only entries blocked by policy (response type BLOCKED)
+          schema:
+            type: boolean
+        - name: limit
+          in: query
+          description: Page size
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+        - name: cursor
+          in: query
+          description: >
+            Opaque continuation token taken verbatim from a previous response's
+            next_cursor. Its contents are not part of this contract.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: One page of query log entries, newest first
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueryLogHistoryPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
   /apply:
     post:
       operationId: applyConfig
@@ -658,6 +724,12 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
     NotFound:
       description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ServiceUnavailable:
+      description: The feature is not available in the current configuration
       content:
         application/json:
           schema:
@@ -973,6 +1045,67 @@ components:
           type: string
         error:
           type: string
+
+    QueryLogHistoryPage:
+      type: object
+      required: [entries]
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/QueryLogHistoryEntry'
+        next_cursor:
+          type: string
+          description: >
+            Pass back as `cursor` to fetch the next page. Absent on the last
+            page.
+
+    QueryLogHistoryEntry:
+      type: object
+      description: >
+        One persisted query. Field names match the live log stream's entry
+        fields so both views of the log render through the same columns.
+      required:
+        - timestamp
+        - client_ip
+        - client_names
+        - client_group
+        - duration_ms
+        - question_type
+        - question_name
+        - response_code
+        - response_reason
+        - response_type
+        - blocked
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        client_ip:
+          type: string
+        client_names:
+          type: string
+          description: Resolved client names, "; "-joined as stored
+        client_group:
+          type: string
+        duration_ms:
+          type: integer
+          format: int64
+        question_type:
+          type: string
+        question_name:
+          type: string
+        response_code:
+          type: string
+        response_reason:
+          type: string
+        response_type:
+          type: string
+        answer:
+          type: string
+        blocked:
+          type: boolean
+          description: Blocked by policy; true exactly when response_type is BLOCKED
 
     ErrorResponse:
       type: object

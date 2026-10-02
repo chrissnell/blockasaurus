@@ -17,6 +17,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/0xERR0R/blocky/api/configapi"
 	"github.com/0xERR0R/blocky/auth"
 	"github.com/0xERR0R/blocky/config"
 	"github.com/0xERR0R/blocky/configstore"
@@ -126,7 +127,11 @@ func buildContractRouter(t *testing.T) *chi.Mux {
 	// server_endpoints_test.go deliberately avoids. We accept that here
 	// because the metrics route cannot be captured without calling it, and
 	// because Start ignores duplicate-registration errors.
-	router := createHTTPRouter(cfg, nil, store, nil, broadcaster, collector, auth.NewWSRevoker(), doh3State{})
+	// The query-log history route is registered unconditionally -- a missing
+	// reader answers 503 rather than dropping the route -- so a zero source does
+	// not weaken the golden.
+	router := createHTTPRouter(cfg, nil, store, nil, broadcaster, collector, auth.NewWSRevoker(), doh3State{},
+		configapi.QueryLogHistorySource{})
 
 	// DoH lands on this same mux whenever the admin UI is not on separate
 	// listeners (see NewServer). Registration reads only cfg, so a zero

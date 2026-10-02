@@ -23,16 +23,31 @@ import (
 	"gorm.io/gorm"
 )
 
+// logEntry is one row of the query log.
+//
+// request_ts carries the history endpoint: every page is bounded by it and
+// ordered by it, so it is both the range scan and the sort order (see
+// querylog/history.go).
+//
+// client_ip and question_name are indexed for exact and prefix lookups -- the
+// `sqlite3`-from-the-shell and Grafana cases, and any future anchored filter.
+// They do NOT serve the UI's substring search: `LIKE '%foo%'` is unanchored, so
+// SQLite cannot seek either index and the match is a filter applied during the
+// request_ts scan. That is deliberate: bounding by time is what keeps the scan
+// small, and FTS5 is the answer if substring search ever has to scale past it.
+//
+// AutoMigrate creates any missing index on the next start, so adding a tag here
+// is enough to index an existing database.
 type logEntry struct {
 	RequestTS     time.Time `gorm:"not null;index"`
-	ClientIP      string
-	ClientName    string `gorm:"index"`
-	ClientGroup   string `gorm:"index"`
+	ClientIP      string    `gorm:"index"`
+	ClientName    string    `gorm:"index"`
+	ClientGroup   string    `gorm:"index"`
 	DurationMs    int64
 	Reason        string
 	ResponseType  string `gorm:"index"`
 	QuestionType  string
-	QuestionName  string
+	QuestionName  string `gorm:"index"`
 	EffectiveTLDP string
 	Answer        string
 	ResponseCode  string
