@@ -23,16 +23,21 @@ import (
 	"gorm.io/gorm"
 )
 
+// logEntry is one row of the query log. The indexed columns are the ones the
+// history endpoint filters on: request_ts bounds every query, and client_ip /
+// client_name / question_name are the "who asked for what" lookups. AutoMigrate
+// creates any missing index on the next start, so adding a tag is enough to
+// index an existing database.
 type logEntry struct {
 	RequestTS     time.Time `gorm:"not null;index"`
-	ClientIP      string
-	ClientName    string `gorm:"index"`
-	ClientGroup   string `gorm:"index"`
+	ClientIP      string    `gorm:"index"`
+	ClientName    string    `gorm:"index"`
+	ClientGroup   string    `gorm:"index"`
 	DurationMs    int64
 	Reason        string
 	ResponseType  string `gorm:"index"`
 	QuestionType  string
-	QuestionName  string
+	QuestionName  string `gorm:"index"`
 	EffectiveTLDP string
 	Answer        string
 	ResponseCode  string

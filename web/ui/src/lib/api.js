@@ -246,6 +246,14 @@ export async function getDiscoveredClients() {
   return rawGet('/api/discovered-clients', [])
 }
 
+// Query log history. Reads the persisted query log, which only exists when
+// queryLog.type is a local database -- the endpoint answers 503 otherwise, and
+// request() surfaces that as err.status so the History tab can say "not
+// configured" rather than "no results".
+export const queryLogHistory = {
+  search: (params) => request('GET', `/query-log/history?${new URLSearchParams(params)}`),
+}
+
 // Apply
 export const apply = () => request('POST', '/apply')
 

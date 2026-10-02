@@ -38,7 +38,7 @@ var _ = Describe("Config API HTTP integration", func() {
 		reconf = &mockReconfigurer{}
 		router := chi.NewRouter()
 		configapi.RegisterEndpoints(router, configapi.NewConfigHandler(store, reconf,
-			configapi.DoH3Runtime{Active: true}))
+			configapi.DoH3Runtime{Active: true}, configapi.QueryLogHistorySource{}))
 		srv = httptest.NewServer(router)
 		DeferCleanup(srv.Close)
 	})

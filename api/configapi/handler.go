@@ -46,10 +46,13 @@ type ConfigHandler struct {
 	store        *configstore.ConfigStore
 	reconfigurer Reconfigurer
 	doh3         DoH3Runtime
+	history      QueryLogHistorySource
 }
 
-func NewConfigHandler(store *configstore.ConfigStore, reconfigurer Reconfigurer, doh3 DoH3Runtime) *ConfigHandler {
-	return &ConfigHandler{store: store, reconfigurer: reconfigurer, doh3: doh3}
+func NewConfigHandler(store *configstore.ConfigStore, reconfigurer Reconfigurer, doh3 DoH3Runtime,
+	history QueryLogHistorySource,
+) *ConfigHandler {
+	return &ConfigHandler{store: store, reconfigurer: reconfigurer, doh3: doh3, history: history}
 }
 
 func RegisterEndpoints(router chi.Router, h *ConfigHandler) {

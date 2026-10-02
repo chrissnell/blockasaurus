@@ -241,6 +241,18 @@ var _ = Describe("DatabaseWriter", func() {
 		})
 	})
 
+	Describe("buildSQLiteReadOnlyDSN", func() {
+		It("builds a read-only file URI without touching journal_mode", func() {
+			Expect(buildSQLiteReadOnlyDSN("/var/lib/blocky/querylog.db")).Should(Equal(
+				"file:/var/lib/blocky/querylog.db?mode=ro&_pragma=busy_timeout(5000)"))
+		})
+
+		It("percent-encodes URI metacharacters in the path", func() {
+			Expect(buildSQLiteReadOnlyDSN("/data/odd?name#1.db")).Should(Equal(
+				"file:/data/odd%3Fname%231.db?mode=ro&_pragma=busy_timeout(5000)"))
+		})
+	})
+
 	Describe("Database initialization and migration", func() {
 		var (
 			db   *sql.DB
@@ -274,6 +286,8 @@ var _ = Describe("DatabaseWriter", func() {
 					mock.ExpectExec(`CREATE INDEX IF NOT EXISTS "idx_log_entries_response_type"`).WillReturnResult(sqlmock.NewResult(0, 0))
 					mock.ExpectExec(`CREATE INDEX IF NOT EXISTS "idx_log_entries_client_name"`).WillReturnResult(sqlmock.NewResult(0, 0))
 					mock.ExpectExec(`CREATE INDEX IF NOT EXISTS "idx_log_entries_client_group"`).WillReturnResult(sqlmock.NewResult(0, 0))
+					mock.ExpectExec(`CREATE INDEX IF NOT EXISTS "idx_log_entries_client_ip"`).WillReturnResult(sqlmock.NewResult(0, 0))
+					mock.ExpectExec(`CREATE INDEX IF NOT EXISTS "idx_log_entries_question_name"`).WillReturnResult(sqlmock.NewResult(0, 0))
 					mock.ExpectExec(`CREATE INDEX IF NOT EXISTS "idx_log_entries_request_ts"`).WillReturnResult(sqlmock.NewResult(0, 0))
 				})
 

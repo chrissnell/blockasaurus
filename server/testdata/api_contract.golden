@@ -44,6 +44,7 @@ GET     /api/config/domain-entries/{id}               [RequireAuth RequireCSRFHe
 PUT     /api/config/domain-entries/{id}               [RequireAuth RequireCSRFHeader RequireAdminForMutations]
 GET     /api/config/http3-settings                    [RequireAuth RequireCSRFHeader RequireAdminForMutations]
 PUT     /api/config/http3-settings                    [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+GET     /api/config/query-log/history                 [RequireAuth RequireCSRFHeader RequireAdminForMutations]
 GET     /api/config/rebinding-settings                [RequireAuth RequireCSRFHeader RequireAdminForMutations]
 PUT     /api/config/rebinding-settings                [RequireAuth RequireCSRFHeader RequireAdminForMutations]
 GET     /api/config/upstream-groups                   [RequireAuth RequireCSRFHeader RequireAdminForMutations]

@@ -44,7 +44,7 @@ var _ = Describe("ConfigAPI Handler", func() {
 		DeferCleanup(store.Close)
 
 		reconf = &mockReconfigurer{}
-		h = configapi.NewConfigHandler(store, reconf, configapi.DoH3Runtime{})
+		h = configapi.NewConfigHandler(store, reconf, configapi.DoH3Runtime{}, configapi.QueryLogHistorySource{})
 	})
 
 	// --- Client Groups ---
@@ -388,7 +388,7 @@ var _ = Describe("ConfigAPI Handler", func() {
 		// The handler reports the listener state of the running process, which it
 		// cannot change, so each case needs its own handler.
 		newHandler := func(rt configapi.DoH3Runtime) *configapi.ConfigHandler {
-			return configapi.NewConfigHandler(store, reconf, rt)
+			return configapi.NewConfigHandler(store, reconf, rt, configapi.QueryLogHistorySource{})
 		}
 
 		get := func(h *configapi.ConfigHandler) configapi.HTTP3Settings {

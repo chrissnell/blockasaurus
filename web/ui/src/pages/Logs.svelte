@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
 <script>
-  import { LogViewer, Input, Toggle } from '@chrissnell/chonky-ui'
+  import { Button, EmptyState, Input, LogViewer, Select, Spinner, Toggle } from '@chrissnell/chonky-ui'
   import { connectLogStream } from '../lib/ws.js'
   import {
     MAX_ENTRIES,
@@ -12,6 +12,15 @@
     normalizeQuery,
     toLogEntry,
   } from '../lib/logentries.js'
+  import {
+    DEFAULT_RANGE,
+    RANGE_OPTIONS,
+    historyParams,
+    rangeLabel,
+    rangeStart,
+    toHistoryRows,
+  } from '../lib/loghistory.js'
+  import { queryLogHistory } from '../lib/api.js'
   import { onMount } from 'svelte'
 
   // Raw: the rows are write-once and display-only, so proxying every row and
@@ -26,6 +35,13 @@
   let isMobile = $state(false)
 
   const SEARCH_DEBOUNCE_MS = 150
+
+  const TABS = [
+    { id: 'live', label: 'Live' },
+    { id: 'history', label: 'History' },
+  ]
+
+  let currentTab = $state('live')
 
   $effect(() => {
     const next = search
@@ -42,6 +58,11 @@
     return () => mql.removeEventListener('change', onMqlChange)
   })
 
+  // The stream and the ring buffer live at page level and are never gated on
+  // the active tab: the History panel's markup unmounts when it is not shown,
+  // and if the live view owned the socket the same would happen to it --
+  // switching tabs would drop the connection and discard every entry collected
+  // so far, so coming back would show an empty log slowly refilling.
   onMount(() => {
     const batcher = createEntryBatcher((batch) => {
       entries = appendBounded(entries, batch)
@@ -64,6 +85,13 @@
     return d.toLocaleTimeString('en-GB', { hour12: false })
   }
 
+  function formatDateTime(ts) {
+    if (!ts) return ''
+    const d = new Date(ts)
+    return `${d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })} `
+      + d.toLocaleTimeString('en-GB', { hour12: false })
+  }
+
   const allColumns = [
     { key: 'timestamp', label: 'Time', width: '90px', render: renderTime, mobile: true },
     { key: 'client_ip', label: 'Client', width: '120px', render: renderClient, mobile: true },
@@ -78,6 +106,16 @@
 
   const columns = $derived(
     isMobile ? allColumns.filter(c => c.mobile) : allColumns
+  )
+
+  // Both tabs read through the same column set, including the mobile subset.
+  // The one exception is the Time cell: the live buffer never spans more than
+  // the last few thousand queries, but a history window can be 30 days wide,
+  // where a bare clock time says nothing about which day a row is from.
+  const historyColumns = $derived(
+    columns.map(c => (
+      c.key === 'timestamp' ? { ...c, width: '150px', render: renderDateTime } : c
+    ))
   )
 
   const query = $derived(normalizeQuery(appliedSearch))
@@ -98,10 +136,151 @@
   // what this key buys. Keyed off the debounced query so the remount costs one
   // grid rebuild per typing pause rather than one per keystroke.
   const viewKey = $derived(`${blockedOnly} ${query}`)
+
+  // --- History tab ---
+  //
+  // Deliberately shares no filter state with the Live tab. The live field is a
+  // substring filter over whatever is in the ring buffer; these run a query
+  // against the database. Carrying a string from one to the other would silently
+  // change what it means.
+
+  let historyClient = $state('')
+  let historyDomain = $state('')
+  let historyRange = $state(DEFAULT_RANGE)
+  let historyBlockedOnly = $state(false)
+
+  // Debounced copies, so typing fires one request per pause rather than one per
+  // keystroke -- the same 150ms the live filter uses.
+  let appliedHistoryClient = $state('')
+  let appliedHistoryDomain = $state('')
+
+  let historyRows = $state.raw([])
+  let historyCursor = $state(null)
+  let historyWindowStart = $state(null)
+  let historyLoading = $state(false)
+  let historyLoadingMore = $state(false)
+  let historyError = $state('')
+  // Set when the server reports that the query log is not a searchable target.
+  // Kept apart from historyError and from an empty result: "no rows matched" and
+  // "there is no database to match against" are different answers.
+  let historyUnavailable = $state('')
+  let historyViewKey = $state(0)
+
+  // Guards against an out-of-order response overwriting a newer one: a slow
+  // request for a wide window can land after the narrow one that superseded it.
+  let historyRequestSeq = 0
+
+  // The search the controls currently describe. `from` is pinned here so the
+  // window reported next to the results is the window that produced them, not
+  // the one that would be produced by asking again now.
+  const historyRequest = $derived.by(() => {
+    const from = rangeStart(historyRange)
+
+    return {
+      from,
+      params: historyParams({
+        client: appliedHistoryClient,
+        domain: appliedHistoryDomain,
+        blockedOnly: historyBlockedOnly,
+        from,
+      }),
+    }
+  })
+
+  $effect(() => {
+    const client = historyClient
+    const domain = historyDomain
+    const timer = setTimeout(() => {
+      appliedHistoryClient = client
+      appliedHistoryDomain = domain
+    }, SEARCH_DEBOUNCE_MS)
+
+    return () => clearTimeout(timer)
+  })
+
+  // Runs on entering the tab and on every filter change while it is open. The
+  // early return keeps the Live tab from issuing queries, and makes a tab switch
+  // itself a refresh.
+  $effect(() => {
+    if (currentTab !== 'history') return
+
+    runHistorySearch(historyRequest)
+  })
+
+  function applyHistoryFailure(err) {
+    historyRows = []
+    historyCursor = null
+
+    if (err.status === 503) {
+      historyUnavailable = err.message
+    } else if (err.message !== 'unauthorized') {
+      historyError = err.message
+    }
+  }
+
+  async function runHistorySearch(request) {
+    const seq = ++historyRequestSeq
+
+    historyLoading = true
+    historyError = ''
+    historyUnavailable = ''
+
+    try {
+      const page = await queryLogHistory.search(request.params)
+      if (seq !== historyRequestSeq) return
+
+      historyRows = toHistoryRows(page.entries)
+      historyCursor = page.next_cursor || null
+      historyWindowStart = request.from
+      // Remount the viewer so a fresh result set starts at the top rather than
+      // wherever the previous one was scrolled to. Not keyed on appended pages:
+      // "Load more" should not throw away the reader's position.
+      historyViewKey += 1
+    } catch (err) {
+      if (seq !== historyRequestSeq) return
+
+      applyHistoryFailure(err)
+    } finally {
+      if (seq === historyRequestSeq) historyLoading = false
+    }
+  }
+
+  async function loadMoreHistory() {
+    if (!historyCursor || historyLoading || historyLoadingMore) return
+
+    const seq = historyRequestSeq
+    const cursor = historyCursor
+
+    historyLoadingMore = true
+
+    try {
+      const page = await queryLogHistory.search({ ...historyRequest.params, cursor })
+      if (seq !== historyRequestSeq) return
+
+      historyRows = historyRows.concat(toHistoryRows(page.entries))
+      historyCursor = page.next_cursor || null
+    } catch (err) {
+      if (seq !== historyRequestSeq) return
+
+      historyError = err.message === 'unauthorized' ? '' : err.message
+    } finally {
+      if (seq === historyRequestSeq) historyLoadingMore = false
+    }
+  }
+
+  const historyWindowLabel = $derived(
+    historyWindowStart
+      ? `${rangeLabel(historyRange)} — since ${formatDateTime(historyWindowStart)}`
+      : rangeLabel(historyRange)
+  )
 </script>
 
 {#snippet renderTime(value)}
   {formatTime(value)}
+{/snippet}
+
+{#snippet renderDateTime(value)}
+  {formatDateTime(value)}
 {/snippet}
 
 {#snippet renderDuration(value)}
@@ -115,32 +294,114 @@
 {/snippet}
 
 <div class="page">
-  <h1 class="page-title">Live Logs</h1>
-  <div class="controls">
-    <div class="search">
-      <Input
-        bind:value={search}
-        placeholder="Filter by domain or client"
-        aria-label="Filter by domain or client"
-        onkeydown={(e) => { if (e.key === 'Escape') search = '' }}
-      />
+  <h1 class="page-title">Logs</h1>
+
+  <!-- A plain button bar, not a nested Tabs.Root: Shell.svelte already wraps the
+       whole app in one for the top nav, and a second root inside it would have
+       its triggers register against the outer context. ClientGroups.svelte uses
+       the same pattern for the same reason. -->
+  <div class="tab-bar">
+    {#each TABS as tab}
+      <button class="tab" class:active={tab.id === currentTab}
+        onclick={() => currentTab = tab.id}
+      >{tab.label}</button>
+    {/each}
+  </div>
+
+  {#if currentTab === 'live'}
+    <div class="controls">
+      <div class="search">
+        <Input
+          bind:value={search}
+          placeholder="Filter visible entries"
+          aria-label="Filter visible entries by domain or client"
+          onkeydown={(e) => { if (e.key === 'Escape') search = '' }}
+        />
+      </div>
+      <Toggle label="Blocked only" bind:checked={blockedOnly} />
+      {#if filtering}
+        <span class="match-count">{visible.length} of {totalLabel}</span>
+      {/if}
     </div>
-    <Toggle label="Blocked only" bind:checked={blockedOnly} />
-    {#if filtering}
-      <span class="match-count">{visible.length} of {totalLabel}</span>
+    <div class="log-wrap">
+      {#key viewKey}
+        <LogViewer
+          entries={visible}
+          {columns}
+          showHeader
+          live={connected}
+          height="100%"
+        />
+      {/key}
+    </div>
+  {:else}
+    <div class="controls">
+      <div class="search">
+        <Input
+          bind:value={historyDomain}
+          placeholder="Domain"
+          aria-label="Search history by domain"
+          onkeydown={(e) => { if (e.key === 'Escape') historyDomain = '' }}
+        />
+      </div>
+      <div class="search">
+        <Input
+          bind:value={historyClient}
+          placeholder="Client IP or name"
+          aria-label="Search history by client IP or name"
+          onkeydown={(e) => { if (e.key === 'Escape') historyClient = '' }}
+        />
+      </div>
+      <div class="range">
+        <Select options={RANGE_OPTIONS} bind:value={historyRange} aria-label="Time range" />
+      </div>
+      <Toggle label="Blocked only" bind:checked={historyBlockedOnly} />
+      {#if historyLoading}
+        <Spinner size={16} />
+      {/if}
+    </div>
+
+    <p class="window">
+      {historyWindowLabel}
+      {#if !historyLoading && !historyUnavailable && !historyError}
+        <span class="match-count">
+          · {historyRows.length}{historyCursor ? '+' : ''} {historyRows.length === 1 ? 'query' : 'queries'}
+        </span>
+      {/if}
+    </p>
+
+    {#if historyUnavailable}
+      <EmptyState>
+        Query log history is unavailable: {historyUnavailable}.
+        Set <code>queryLog.type</code> to <code>sqlite</code> to search past queries.
+      </EmptyState>
+    {:else if historyError}
+      <EmptyState>Could not search the query log: {historyError}</EmptyState>
+    {:else if historyRows.length === 0}
+      <EmptyState>
+        {historyLoading ? 'Searching…' : `No queries recorded in this window (${rangeLabel(historyRange)}).`}
+      </EmptyState>
+    {:else}
+      <div class="log-wrap">
+        {#key historyViewKey}
+          <LogViewer
+            entries={historyRows}
+            columns={historyColumns}
+            showHeader
+            autoscroll={false}
+            height="100%"
+          />
+        {/key}
+      </div>
+      {#if historyCursor}
+        <div class="more">
+          <Button variant="secondary" onclick={loadMoreHistory} disabled={historyLoadingMore}>
+            {historyLoadingMore ? 'Loading…' : 'Load more'}
+          </Button>
+        </div>
+      {/if}
     {/if}
-  </div>
-  <div class="log-wrap">
-    {#key viewKey}
-      <LogViewer
-        entries={visible}
-        {columns}
-        showHeader
-        live={connected}
-        height="100%"
-      />
-    {/key}
-  </div>
+  {/if}
 </div>
 
 <style>
@@ -156,6 +417,34 @@
     margin-bottom: var(--space-6);
     flex-shrink: 0;
   }
+  .tab-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    border-bottom: 1px solid var(--color-border);
+    margin-bottom: var(--space-4);
+    padding-bottom: 0.5rem;
+    flex-shrink: 0;
+  }
+  .tab {
+    background: none;
+    border: 1px solid var(--color-btn-border);
+    border-radius: var(--radius);
+    color: var(--color-text-muted);
+    font-size: var(--text-xs);
+    padding: 0.3rem 0.75rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .tab:hover {
+    color: var(--color-text);
+    border-color: var(--color-text-dim);
+  }
+  .tab.active {
+    background: var(--color-primary);
+    color: var(--color-primary-fg, #fff);
+    border-color: var(--color-primary);
+  }
   .controls {
     display: flex;
     align-items: center;
@@ -165,7 +454,7 @@
     flex-wrap: wrap;
   }
   .search {
-    flex: 1 1 260px;
+    flex: 1 1 200px;
     max-width: 420px;
   }
   /* Inputs carry a global margin-bottom for stacked form fields, which throws
@@ -173,10 +462,29 @@
   .search :global(input) {
     margin-bottom: 0;
   }
+  .range {
+    flex: 0 0 auto;
+    min-width: 160px;
+  }
+  .range :global(button) {
+    margin-bottom: 0;
+  }
   .match-count {
     font-size: var(--text-sm);
     color: var(--color-text-dim);
     white-space: nowrap;
+  }
+  /* The active window is part of the result: a row list means nothing without
+     the range that produced it. */
+  .window {
+    font-size: var(--text-sm);
+    color: var(--color-text-dim);
+    margin: 0 0 var(--space-3);
+    flex-shrink: 0;
+  }
+  .more {
+    margin-top: var(--space-3);
+    flex-shrink: 0;
   }
   .log-wrap {
     flex: 1;

@@ -1236,6 +1236,25 @@ You can read the database with the `sqlite3` CLI, DB Browser for SQLite, a Grafa
 - **Do not copy only `querylog.db`** for offline reading — you would miss un-checkpointed rows. Instead copy all three files together, run `PRAGMA wal_checkpoint(TRUNCATE);` first, or use `sqlite3 querylog.db ".backup backup.db"` (or `VACUUM INTO`).
 - Use a tool with WAL support (a modern `sqlite3` CLI does).
 
+##### Searching the query log from the web UI
+
+With `queryLog.type: sqlite`, the admin UI's **Logs** page gains a **History** tab
+that searches the stored entries by client (IP or resolved name), domain, time
+window and blocked-only — over the whole retention window, not just the queries
+this process has seen since it started. The **Live** tab is unchanged: its filter
+field still narrows the in-memory stream of the last 1000 queries and nothing
+else.
+
+History reads through a second, read-only connection to the same database file
+(`mode=ro` plus `PRAGMA query_only=1`), so searching can never interfere with the
+writer. WAL means those reads also never block on a flush.
+
+Behind the tab is `GET /api/config/query-log/history`, which is part of the
+authenticated config API. Results come back newest first and are paged with an
+opaque `cursor` rather than an offset, so paging stays cheap on a table with a
+full retention window in it. Any other `queryLog.type` answers `503` with the
+reason, which the tab shows instead of an empty table.
+
 #### dnstap query log
 
 The `dnstap` target streams structured DNS events to an external collector (e.g. `dnstap-read`, SIEM pipelines). Each resolved client query is sent as a dnstap `CLIENT_RESPONSE` frame containing wire-format query and response messages.
