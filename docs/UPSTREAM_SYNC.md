@@ -771,28 +771,33 @@ rediscovering it in a diff.
 
 ### 4b. Query logging as it stands
 
-Recorded because the answer is not obvious from the code and the constraint
-below will bite whoever changes `queryLog.type` first.
+Recorded because the answer is not obvious from the code.
 
 Today: `queryLog.type: console`. Query entries go to the pod's stdout **and**,
 separately, to the `logstream.Broadcaster` that feeds the UI's Logs page over
 `/api/ws/logs`. The broadcaster is a 1000-entry ring buffer — live tail only,
 no history, nothing survives a restart.
 
-**The constraint.** `NewQueryLoggingResolver` only attaches the broadcaster when
-the selected writer is a `*querylog.LoggerWriter`:
+**The UI stream is independent of the storage target.** `QueryLoggingResolver`
+publishes to the broadcaster itself, from `writeLog`, where the `LogEntry`
+already exists. Every type that logs at all — csv, csv-client, mysql, postgresql,
+timescale, sqlite, dnstap — keeps the Logs page live; switching targets changes
+where entries are *stored*, nothing else. (`none` is the exception, and not a bug:
+it disables the stream along with the query log, because `Resolve` short-circuits
+before an entry is built.) (Until GRA-644 the publish lived inside `querylog.LoggerWriter` and
+was wired in by type-asserting the writer, so any non-console target silently
+turned the UI's query log off with no error anywhere.)
 
-```go
-if lw, ok := writer.(*querylog.LoggerWriter); ok && broadcaster != nil {
-    lw.SetBroadcaster(broadcaster)
-}
-```
+Two properties hold that together, and anything that touches this path has to
+preserve both:
 
-`queryLog.type` is single-valued, so selecting any non-console target — csv,
-mysql, sqlite, dnstap — silently turns the UI's live query log off. Anyone
-adopting a new target should first move the broadcaster publish out of the
-console writer and into the query-logging resolver, so the UI stream is
-independent of the storage target.
+- The resolver hands the broadcaster the `logrus.Fields` map that
+  `querylog.LogEntryFields` just built. Nobody else holds it, so there is no
+  copy — which is why the publish does not simply go through the `logstream.Hook`.
+- `querylog.LoggerWriter` logs through an entry marked with `logstream.SkipHook`,
+  so the hook does not broadcast the console writer's line as a second copy of
+  the same query. The marker rides on the logrus entry's `Context`, not in its
+  fields, so it never reaches the log output.
 
 Upstream's new targets in this sync: `sqlite` (local file, queryable history),
 `dnstap` (Frame Streams over `unix:/path` or `tcp://host:port`), and
@@ -954,21 +959,21 @@ data instead (§4b). The rest of `createQueryResolver` is position-for-position 
 
 Keep this current — it is what makes the *next* sync cheap.
 
-`.fork-additions` is the machine-checked half of this register: 169 paths, every one of them a file
+`.fork-additions` is the machine-checked half of this register: 170 paths, every one of them a file
 that exists here and not in upstream `3b7faa8`, verified present and non-empty by
 `make check-fork-additions` on every CI run. This section is the human-readable half — the same set
 grouped by *why* it exists, plus the part a file list cannot express: the upstream files we hold
 patches in. When they disagree, `.fork-additions` is right; `make check-fork-additions-sync`
 regenerates it against a fetched `upstream/main`.
 
-**Manifest count: 169 as of 2026-10-01**, and the chain is 152 → 160 → 166 → 169. The 2026-09 sync took
+**Manifest count: 170 as of 2026-10-01**, and the chain is 152 → 160 → 166 → 169 → 170. The 2026-09 sync took
 it to 160 (below). Post-sync fork PRs took it to 166 without ever saying so here: `config/debug.go`
 (+test) and `server/server_debug.go` (+test) for the loopback diagnostics listener,
 `helpertest/port.go` for the test port allocator, and `scripts/smoke-release-image.sh` for the release
 image smoke — all six now in the tables above. The 2026-10-01 sync added the last three (§8a):
 `e2e/api_client.go`, `e2e/store_seed.go` and `e2e/store_seed_test.go`, all fork-only guardrail files
 this section already claimed were guarded, all three missing from the manifest because the PRs that
-added them did not update it.
+added them did not update it. GRA-644 added the 170th, `logstream/hook_test.go`.
 
 That is the failure mode `make check-fork-additions-sync` exists to catch, and it is worth running on
 every sync even when the merge itself is trivial — it is also the only half of this register that
@@ -993,14 +998,14 @@ upstream file was dropped at any point.
 | SQLite config store | `configstore/` | 10 |
 | Config/stats/log HTTP surface | `api/configapi/`, `config/client_group_endpoints.go`, `server/server_auth.go`, `server/server_stats.go`, `server/server_endpoint_info.go`, `server/server_mobileconfig.go`, `server/server_version.go` | 14 |
 | Persisted statistics | `pkg/statscollector/` | 2 |
-| Live log streaming | `logstream/` | 6 |
+| Live log streaming | `logstream/` | 7 |
 | LAN/k8s address advertisement | `pkg/advertise/`, `pkg/arp/` | 7 |
 | Windows service wrapper | `pkg/winservice/` | 2 |
 | Branding assets | `assets/` | 2 |
 | Loopback diagnostics listener | `config/debug.go` (+test), `server/server_debug.go` (+test) — the `debug.enable`/`debug.port` pprof+expvar listener, loopback-gated by `requireLoopbackHost` | 4 |
 | Misc | `VERSION`, `util/slug.go` (+test), `docs/api/openapi-config.yaml`, `docs/client_group_endpoints.md` | 5 |
 
-144 files. The remaining 25 are the guardrails and evidence below.
+145 files. The remaining 25 are the guardrails and evidence below.
 
 **Guardrails and evidence (also fork-only, and the set most easily lost by accident).** These are
 listed separately because deleting one does not break a build — it silently removes a check or the
@@ -1039,6 +1044,7 @@ the one to walk with `git diff` after the next merge.
 `server/http.go`, `server/server_endpoints.go`, `api/api_interface_impl.go`,
 `resolver/blocking_resolver.go`, `resolver/query_logging_resolver.go`,
 `resolver/metrics_resolver.go`, `querylog/writer.go`, `querylog/database_writer.go`,
+`querylog/logger_writer.go`,
 `model/models.go`, `util/edns0.go`, `e2e/containers.go`, `web/index.html`, `Makefile`,
 `.goreleaser.yml`, `.github/workflows/release.yml`.
 
