@@ -15,11 +15,14 @@
   import {
     DEFAULT_RANGE,
     RANGE_OPTIONS,
+    clientSuggestions,
+    domainSuggestions,
     historyParams,
     rangeLabel,
     rangeStart,
     toHistoryRows,
   } from '../lib/loghistory.js'
+  import SuggestInput from '../components/SuggestInput.svelte'
   import { queryLogHistory } from '../lib/api.js'
   import { onMount } from 'svelte'
 
@@ -35,6 +38,8 @@
   let isMobile = $state(false)
 
   const SEARCH_DEBOUNCE_MS = 150
+  // Mirrored by .busy, which reserves the cell this draws into.
+  const SPINNER_PX = 16
 
   const TABS = [
     { id: 'live', label: 'Live' },
@@ -287,6 +292,17 @@
       ? `${rangeLabel(historyRange)} — since ${formatDateTime(historyWindowStart)}`
       : rangeLabel(historyRange)
   )
+
+  // Autocomplete candidates for the two filter boxes. Both sources are already
+  // in memory: the live ring buffer, which fills with whatever is querying the
+  // server right now, and the history page on screen.
+  //
+  // Plain functions rather than $derived on purpose. The ring buffer is rebuilt
+  // every animation frame while traffic is arriving, and tallying a thousand
+  // rows at that rate for a list nobody has opened is pure cost; SuggestInput
+  // calls these only when its list opens.
+  const clientOptions = () => clientSuggestions(historyRows, entries)
+  const domainOptions = () => domainSuggestions(historyRows, entries)
 </script>
 
 {#snippet renderTime(value)}
@@ -349,72 +365,86 @@
       {/key}
     </div>
   {:else}
+    <!-- Every cell holds its width whatever the state of the search, including
+         the spinner's: a control row that reshuffles itself on each keystroke
+         is unreadable to type into. -->
     <div class="controls history">
       <div class="search">
-        <Input
+        <SuggestInput
           bind:value={historyDomain}
+          loadOptions={domainOptions}
           placeholder="Domain"
-          aria-label="Search history by domain"
-          onkeydown={(e) => { if (e.key === 'Escape') historyDomain = '' }}
+          label="Search history by domain"
+          onEscape={() => { historyDomain = '' }}
         />
       </div>
       <div class="search">
-        <Input
+        <SuggestInput
           bind:value={historyClient}
+          loadOptions={clientOptions}
           placeholder="Client IP or name"
-          aria-label="Search history by client IP or name"
-          onkeydown={(e) => { if (e.key === 'Escape') historyClient = '' }}
+          label="Search history by client IP or name"
+          onEscape={() => { historyClient = '' }}
         />
       </div>
       <div class="range">
         <Select options={RANGE_OPTIONS} bind:value={historyRange} aria-label="Time range" />
       </div>
       <Toggle label="Blocked only" bind:checked={historyBlockedOnly} />
-      {#if historyLoading}
-        <Spinner size={16} />
-      {/if}
+      <div class="busy" aria-hidden="true">
+        {#if historyLoading}
+          <Spinner size={SPINNER_PX} />
+        {/if}
+      </div>
     </div>
 
     <p class="window">
       {historyWindowLabel} · newest first
-      {#if !historyLoading && !historyUnavailable && !historyError}
+      <!-- Counts the rows on screen, so it stays put while the next search is in
+           flight instead of blinking out and back. Held back until the first
+           result lands, when "0 queries" would be a claim about nothing. -->
+      {#if historyWindowStart && !historyUnavailable && !historyError}
         <span class="match-count">
           · {historyRows.length}{historyCursor ? '+' : ''} {historyRows.length === 1 ? 'query' : 'queries'}
         </span>
       {/if}
     </p>
 
-    {#if historyUnavailable}
-      <EmptyState>
-        Query log history is unavailable: {historyUnavailable}.
-        Set <code>queryLog.type</code> to <code>sqlite</code> to search past queries.
-      </EmptyState>
-    {:else if historyError}
-      <EmptyState>Could not search the query log: {historyError}</EmptyState>
-    {:else if historyRows.length === 0}
-      <EmptyState>
-        {historyLoading ? 'Searching…' : `No queries recorded in this window (${rangeLabel(historyRange)}).`}
-      </EmptyState>
-    {:else}
-      <div class="log-wrap">
-        {#key historyViewKey}
-          <LogViewer
-            entries={historyRows}
-            columns={historyColumns}
-            showHeader
-            autoscroll={false}
-            height="100%"
-          />
-        {/key}
-      </div>
-      {#if historyCursor}
-        <div class="more">
-          <Button variant="secondary" onclick={loadMoreHistory} disabled={historyLoadingMore}>
-            {historyLoadingMore ? 'Loading…' : 'Load more'}
-          </Button>
+    <!-- One sized region for every outcome. Without it an empty result collapses
+         the page around the table and the controls jump up to meet it. -->
+    <div class="results" aria-busy={historyLoading}>
+      {#if historyUnavailable}
+        <EmptyState>
+          Query log history is unavailable: {historyUnavailable}.
+          Set <code>queryLog.type</code> to <code>sqlite</code> to search past queries.
+        </EmptyState>
+      {:else if historyError}
+        <EmptyState>Could not search the query log: {historyError}</EmptyState>
+      {:else if historyRows.length === 0}
+        <EmptyState>
+          {historyLoading ? 'Searching…' : `No queries recorded in this window (${rangeLabel(historyRange)}).`}
+        </EmptyState>
+      {:else}
+        <div class="log-wrap">
+          {#key historyViewKey}
+            <LogViewer
+              entries={historyRows}
+              columns={historyColumns}
+              showHeader
+              autoscroll={false}
+              height="100%"
+            />
+          {/key}
         </div>
+        {#if historyCursor}
+          <div class="more">
+            <Button variant="secondary" onclick={loadMoreHistory} disabled={historyLoadingMore}>
+              {historyLoadingMore ? 'Loading…' : 'Load more'}
+            </Button>
+          </div>
+        {/if}
       {/if}
-    {/if}
+    </div>
   {/if}
 </div>
 
@@ -445,7 +475,10 @@
     border: 1px solid var(--color-btn-border);
     border-radius: var(--radius);
     color: var(--color-text-muted);
-    font-size: var(--text-xs);
+    /* A bare <button> does not inherit the page font: without this the tabs
+       render in the UA's sans default next to an all-monospace page. */
+    font-family: inherit;
+    font-size: var(--text-sm);
     padding: 0.3rem 0.75rem;
     cursor: pointer;
     transition: all 0.15s ease;
@@ -481,6 +514,16 @@
   .search :global(input) {
     margin-bottom: 0;
   }
+  /* Reserved whether or not a search is running. Letting the spinner come and
+     go as a flex item re-divides the row across the two filter boxes on every
+     request, which is the cursor jumping sideways as you type. The size has to
+     track SPINNER_PX, or the cell stops being the size it reserves. */
+  .busy {
+    flex: 0 0 16px;
+    height: 16px;
+    display: flex;
+    align-items: center;
+  }
   .range {
     flex: 0 0 auto;
     min-width: 160px;
@@ -504,6 +547,12 @@
   .more {
     margin-top: var(--space-3);
     flex-shrink: 0;
+  }
+  .results {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
   }
   .log-wrap {
     flex: 1;

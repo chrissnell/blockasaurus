@@ -919,7 +919,10 @@
     border: 1px solid var(--color-btn-border);
     border-radius: var(--radius);
     color: var(--color-text-muted);
-    font-size: var(--text-xs);
+    /* A bare <button> does not inherit the page font: without this the tabs
+       render in the UA's sans default next to an all-monospace page. */
+    font-family: inherit;
+    font-size: var(--text-sm);
     padding: 0.3rem 0.75rem;
     cursor: pointer;
     transition: all 0.15s ease;
