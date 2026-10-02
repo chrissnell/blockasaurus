@@ -38,6 +38,8 @@
   let isMobile = $state(false)
 
   const SEARCH_DEBOUNCE_MS = 150
+  // Mirrored by .busy, which reserves the cell this draws into.
+  const SPINNER_PX = 16
 
   const TABS = [
     { id: 'live', label: 'Live' },
@@ -294,8 +296,13 @@
   // Autocomplete candidates for the two filter boxes. Both sources are already
   // in memory: the live ring buffer, which fills with whatever is querying the
   // server right now, and the history page on screen.
-  const clientOptions = $derived(clientSuggestions(historyRows, entries))
-  const domainOptions = $derived(domainSuggestions(historyRows, entries))
+  //
+  // Plain functions rather than $derived on purpose. The ring buffer is rebuilt
+  // every animation frame while traffic is arriving, and tallying a thousand
+  // rows at that rate for a list nobody has opened is pure cost; SuggestInput
+  // calls these only when its list opens.
+  const clientOptions = () => clientSuggestions(historyRows, entries)
+  const domainOptions = () => domainSuggestions(historyRows, entries)
 </script>
 
 {#snippet renderTime(value)}
@@ -365,7 +372,7 @@
       <div class="search">
         <SuggestInput
           bind:value={historyDomain}
-          options={domainOptions}
+          loadOptions={domainOptions}
           placeholder="Domain"
           label="Search history by domain"
           onEscape={() => { historyDomain = '' }}
@@ -374,7 +381,7 @@
       <div class="search">
         <SuggestInput
           bind:value={historyClient}
-          options={clientOptions}
+          loadOptions={clientOptions}
           placeholder="Client IP or name"
           label="Search history by client IP or name"
           onEscape={() => { historyClient = '' }}
@@ -384,9 +391,9 @@
         <Select options={RANGE_OPTIONS} bind:value={historyRange} aria-label="Time range" />
       </div>
       <Toggle label="Blocked only" bind:checked={historyBlockedOnly} />
-      <div class="busy" role="status" aria-label={historyLoading ? 'Searching' : ''}>
+      <div class="busy" aria-hidden="true">
         {#if historyLoading}
-          <Spinner size={16} />
+          <Spinner size={SPINNER_PX} />
         {/if}
       </div>
     </div>
@@ -405,7 +412,7 @@
 
     <!-- One sized region for every outcome. Without it an empty result collapses
          the page around the table and the controls jump up to meet it. -->
-    <div class="results">
+    <div class="results" aria-busy={historyLoading}>
       {#if historyUnavailable}
         <EmptyState>
           Query log history is unavailable: {historyUnavailable}.
@@ -509,7 +516,8 @@
   }
   /* Reserved whether or not a search is running. Letting the spinner come and
      go as a flex item re-divides the row across the two filter boxes on every
-     request, which is the cursor jumping sideways as you type. */
+     request, which is the cursor jumping sideways as you type. The size has to
+     track SPINNER_PX, or the cell stops being the size it reserves. */
   .busy {
     flex: 0 0 16px;
     height: 16px;

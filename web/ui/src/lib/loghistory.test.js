@@ -11,6 +11,7 @@ import {
   clientSuggestions,
   domainSuggestions,
   historyParams,
+  matchSuggestions,
   rangeLabel,
   rangeStart,
   toHistoryRow,
@@ -151,4 +152,57 @@ test('domainSuggestions ranks by hit count', () => {
   ]
 
   assert.deepEqual(domainSuggestions(rows).map((o) => o.value), ['a.example.com', 'b.example.com'])
+})
+
+// The live stream carries the wire form off the question section; the query log
+// stores it through util.ExtractDomainOnly. Offering the wire form would be a
+// suggestion the server-side LIKE cannot match.
+test('domainSuggestions normalizes the live wire form onto the stored shape', () => {
+  const live = [{ question_name: 'Example.COM.' }]
+  const history = [{ question_name: 'example.com' }]
+
+  assert.deepEqual(domainSuggestions(history, live), [{ value: 'example.com', hint: '' }])
+})
+
+test('suggestions are not capped before the query is known', () => {
+  const rows = []
+  // One hit each for 300 domains, plus a hot one that outranks every one of them.
+  for (let i = 0; i < 300; i++) rows.push({ question_name: `d${i}.example.com` })
+  for (let i = 0; i < 50; i++) rows.push({ question_name: 'hot.example.com' })
+
+  const options = domainSuggestions(rows)
+  assert.equal(options.length, 301)
+  assert.deepEqual(matchSuggestions(options, 'd299.', 8).map((o) => o.value), ['d299.example.com'])
+})
+
+test('matchSuggestions puts prefix matches ahead of substring ones', () => {
+  const options = [
+    { value: 'lab.example.com', hint: '' },
+    { value: 'example.com', hint: '' },
+  ]
+
+  assert.deepEqual(
+    matchSuggestions(options, 'exam', 8).map((o) => o.value),
+    ['example.com', 'lab.example.com'],
+  )
+})
+
+test('matchSuggestions matches the hint, so a client is findable by either half', () => {
+  const options = [{ value: '192.168.1.5', hint: 'laptop.lan' }]
+
+  assert.deepEqual(matchSuggestions(options, 'laptop', 8).map((o) => o.value), ['192.168.1.5'])
+  assert.deepEqual(matchSuggestions(options, 'nope', 8), [])
+})
+
+test('matchSuggestions is case-insensitive and ignores surrounding space', () => {
+  const options = [{ value: 'NAS.example.com', hint: '' }]
+
+  assert.deepEqual(matchSuggestions(options, '  nas  ', 8).map((o) => o.value), ['NAS.example.com'])
+})
+
+test('matchSuggestions caps at max and offers everything for an empty query', () => {
+  const options = Array.from({ length: 20 }, (_, i) => ({ value: `d${i}`, hint: '' }))
+
+  assert.equal(matchSuggestions(options, '', 8).length, 8)
+  assert.equal(matchSuggestions(options, 'd1', 8).length, 8)
 })

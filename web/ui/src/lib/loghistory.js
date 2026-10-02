@@ -95,18 +95,25 @@ export function toHistoryRows(entries) {
 // already holds -- the live ring buffer and the pages fetched into the tab --
 // so typing costs no request, and every suggestion is a value the search will
 // actually match. The flip side is coverage: a client that has been quiet for
-// the whole session and is not in the loaded page will not be offered, so the
-// boxes stay free-text and a suggestion is only ever a shortcut.
-
-// Ranked lists are capped so a full ring buffer cannot hand the filter boxes
-// more candidates than a reader would ever scroll.
-const MAX_SUGGESTIONS = 200
+// the whole session and is not in a loaded page will not be offered, so the
+// boxes stay free text and a suggestion is only ever a shortcut.
 
 // client_names arrives as the resolver's "; "-joined list. Each name is a
 // filter on its own, so they are offered separately rather than as one string
 // that would match nothing.
 function splitNames(names) {
   return (names || '').split(';').map((n) => n.trim()).filter(Boolean)
+}
+
+// The two sources disagree on the shape of a question name. The live stream
+// carries the wire form straight off the question section ("Example.COM."),
+// while the query log writer stores it through util.ExtractDomainOnly
+// ("example.com"). The history filter is a plain LIKE over the stored column,
+// so offering the wire form would hand the reader a suggestion that matches
+// nothing. Normalising to the stored shape is also what collapses the two
+// sources into one candidate per domain instead of two.
+function normalizeDomain(name) {
+  return (name || '').trim().toLowerCase().replace(/\.$/, '')
 }
 
 function tally(map, value, hint) {
@@ -126,11 +133,13 @@ function tally(map, value, hint) {
 }
 
 // Most-seen first, ties broken alphabetically so the order is stable between
-// renders rather than dependent on insertion.
+// calls rather than dependent on insertion. Deliberately uncapped: a cap here
+// would decide which values are offered before knowing what was typed, which
+// on a busy network hides most of the buffer from a search that would have
+// matched it. matchSuggestions caps what is actually shown.
 function ranked(map) {
   return [...map.entries()]
     .sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]))
-    .slice(0, MAX_SUGGESTIONS)
     .map(([value, meta]) => ({ value, hint: meta.hint }))
 }
 
@@ -159,9 +168,36 @@ export function domainSuggestions(...rowLists) {
 
   for (const rows of rowLists) {
     for (const row of rows || []) {
-      tally(map, row.question_name)
+      tally(map, normalizeDomain(row.question_name))
     }
   }
 
   return ranked(map)
+}
+
+// The `max` best candidates for what has been typed so far. Prefix matches come
+// first: typing "192.168.1.1" should offer that address ahead of a name that
+// merely contains the digits. Hints are matched too, so the candidate carrying
+// an IP as its value is still findable by the name beside it.
+export function matchSuggestions(options, query, max) {
+  const needle = (query || '').trim().toLowerCase()
+  const prefix = []
+  const substring = []
+
+  for (const option of options) {
+    if (!needle) {
+      prefix.push(option)
+    } else {
+      const at = `${option.value} ${option.hint || ''}`.toLowerCase().indexOf(needle)
+
+      if (at === 0) prefix.push(option)
+      else if (at > 0) substring.push(option)
+    }
+
+    // Prefix matches alone already fill the list, and nothing ranked below them
+    // could reach it.
+    if (prefix.length >= max) return prefix.slice(0, max)
+  }
+
+  return [...prefix, ...substring].slice(0, max)
 }

@@ -12,8 +12,11 @@
     { value: 'REFUSED', label: 'REFUSED' },
   ]
 
-  let blockType = $state('ZEROIP')
-  let blockTTL = $state('1m')
+  const DEFAULT_BLOCK_TYPE = 'ZEROIP'
+  const DEFAULT_BLOCK_TTL = '1m'
+
+  let blockType = $state(DEFAULT_BLOCK_TYPE)
+  let blockTTL = $state(DEFAULT_BLOCK_TTL)
   let loading = $state(true)
   let saving = $state(false)
 
@@ -34,8 +37,8 @@
   // "does this differ from what is stored" -- which is also what keeps an
   // untouched section out of the save entirely.
   let saved = $state({
-    blockType: 'ZEROIP',
-    blockTTL: '1m',
+    blockType: DEFAULT_BLOCK_TYPE,
+    blockTTL: DEFAULT_BLOCK_TTL,
     rebindEnabled: false,
     allowedDomains: [],
     h3Enabled: false,
@@ -50,23 +53,31 @@
       || allowedDomains.some((d, i) => d !== saved.allowedDomains[i]),
   )
   const h3Changed = $derived(h3Enabled !== saved.h3Enabled)
-  const dirty = $derived(blockChanged || rebindChanged || h3Changed)
+  // A section whose read failed is excluded outright. Its fields show defaults
+  // we never confirmed, so "changed" there means changed from a guess, and
+  // saving it would write that guess over whatever is really in effect.
+  const rebindSavable = $derived(rebindChanged && !rebindLoadFailed)
+  const h3Savable = $derived(h3Changed && !h3LoadFailed)
+  const dirty = $derived(blockChanged || rebindSavable || h3Savable)
 
   // The API also accepts a comma-separated list of block IP addresses, which no
   // named option can represent. Keep a stored value like that selectable so
-  // saving an unrelated change doesn't silently rewrite the block type.
+  // saving an unrelated change doesn't silently rewrite the block type. Keyed
+  // off what is stored rather than what is selected: reading it off the
+  // selection would drop the custom entry the moment a named option was tried,
+  // leaving no way back to it.
   let blockTypeOptions = $derived(
-    namedBlockTypes.some((o) => o.value === blockType)
+    namedBlockTypes.some((o) => o.value === saved.blockType)
       ? namedBlockTypes
-      : [...namedBlockTypes, { value: blockType, label: `${blockType} (custom)` }],
+      : [...namedBlockTypes, { value: saved.blockType, label: `${saved.blockType} (custom)` }],
   )
 
   async function load() {
     loading = true
     try {
       const data = await blockSettings.get()
-      blockType = data.block_type || 'ZEROIP'
-      blockTTL = data.block_ttl || '1m'
+      blockType = data.block_type || DEFAULT_BLOCK_TYPE
+      blockTTL = data.block_ttl || DEFAULT_BLOCK_TTL
       saved.blockType = blockType
       saved.blockTTL = blockTTL
     } catch { /* use defaults */ }
@@ -134,9 +145,10 @@
     allowedDomains = allowedDomains.filter((_, i) => i !== index)
   }
 
-  // One save for the page. Only sections that actually changed are sent, which
-  // is also what keeps a section whose read failed out of the request: its
-  // fields are frozen at the values we never managed to load.
+  // One save for the page. Only sections that actually changed are sent, and
+  // never a section whose read failed -- see `rebindSavable`. The controls in
+  // such a section are disabled too, but that is the courtesy; this is the
+  // guarantee.
   async function save() {
     saving = true
 
@@ -158,7 +170,7 @@
       }
     }
 
-    if (rebindChanged) {
+    if (rebindSavable) {
       try {
         await rebindingSettings.update({
           enabled: rebindEnabled,
@@ -172,7 +184,7 @@
       }
     }
 
-    if (h3Changed) {
+    if (h3Savable) {
       try {
         applyH3(await http3Settings.update({ enabled: h3Enabled }))
       } catch (e) {
@@ -231,7 +243,11 @@
         {/if}
 
         <div class="form-layout" class:loading-state={rebindLoadFailed}>
-          <Toggle bind:checked={rebindEnabled} label="Enable rebinding protection" />
+          <Toggle
+            bind:checked={rebindEnabled}
+            disabled={rebindLoadFailed}
+            label="Enable rebinding protection"
+          />
 
           <div class="form-field">
             <Label for="allowed-domain">Allowed Domains</Label>
@@ -247,6 +263,7 @@
                   <button
                     type="button"
                     class="chip-remove"
+                    disabled={rebindLoadFailed}
                     onclick={() => removeDomain(i)}
                     aria-label={`Remove ${domain}`}
                   >&times;</button>
@@ -259,11 +276,12 @@
               <Input
                 id="allowed-domain"
                 bind:value={domainInput}
+                disabled={rebindLoadFailed}
                 placeholder="nas.example.com"
                 oninput={() => (domainError = '')}
                 onkeydown={(e) => e.key === 'Enter' && addDomain()}
               />
-              <Button onclick={addDomain}>Add</Button>
+              <Button onclick={addDomain} disabled={rebindLoadFailed}>Add</Button>
             </div>
             {#if domainError}
               <p class="field-error" role="alert">{domainError}</p>
@@ -289,7 +307,11 @@
         {/if}
 
         <div class="form-layout" class:loading-state={h3LoadFailed}>
-          <Toggle bind:checked={h3Enabled} label="Serve DoH over HTTP/3" />
+          <Toggle
+            bind:checked={h3Enabled}
+            disabled={h3LoadFailed}
+            label="Serve DoH over HTTP/3"
+          />
 
           <!-- Suppressed on a failed read: "not serving" is a claim about the
                running process, and we would not have grounds for it. -->

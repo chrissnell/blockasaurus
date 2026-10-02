@@ -262,12 +262,19 @@
     <h2>Applying Settings</h2>
 
     <p>
-      Each section saves independently &mdash; <strong>Save Settings</strong> for
-      blocking behavior, <strong>Save Rebinding Settings</strong> for rebinding
-      protection, <strong>Save DoH3 Setting</strong> for HTTP/3. Then click
+      One <strong>Save Settings</strong> button at the foot of the page saves
+      every section. It stays greyed out until something differs from what is
+      stored, and it sends only the sections you actually changed. Then click
       <strong>Apply</strong> in the header to put changes into effect. Blocking
       behavior and rebinding protection need no restart; DoH3 does, and Apply does
       not help it.
+    </p>
+
+    <p>
+      If a section could not be read &mdash; it will say so in red &mdash; its
+      controls are disabled and Save skips it entirely, so a failed read can
+      never write a guess over what is really in effect. Reload the page before
+      changing anything there.
     </p>
 
     <nav class="page-nav">

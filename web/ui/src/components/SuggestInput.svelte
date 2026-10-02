@@ -11,15 +11,17 @@
 
 <script>
   import { Input } from '@chrissnell/chonky-ui'
+  import { matchSuggestions } from '../lib/loghistory.js'
 
   let {
     value = $bindable(''),
-    // [{ value, hint }]. `hint` is secondary text shown greyed to the right and
-    // is matched on too, so a client can be found by its IP or by its name.
-    options = [],
+    // () => [{ value, hint }], called when the list opens rather than read on
+    // every render -- see `openList`. `hint` is secondary text shown greyed to
+    // the right, and is matched on too, so a client can be found by its IP or
+    // by its name whichever of the two the candidate carries as its value.
+    loadOptions,
     placeholder = '',
     label = '',
-    id = undefined,
     // Enough to recognise the one you meant without turning into a list to read.
     max = 8,
     // Escape with the list closed belongs to the caller -- in the log filters it
@@ -29,51 +31,57 @@
 
   const listId = $props.id()
 
+  let options = $state.raw([])
   let open = $state(false)
-  let active = $state(-1)
+  // The highlight is held as a value, not an index. Callers build their
+  // candidates from live data, so a list that is rebuilt while open would
+  // otherwise move a different row under the reader's cursor.
+  let activeValue = $state(null)
 
-  const query = $derived(value.trim().toLowerCase())
-
-  // Prefix matches first: typing "192.168.1.1" should offer that address before
-  // a name that merely contains the digits.
-  const matches = $derived.by(() => {
-    const prefix = []
-    const substring = []
-
-    for (const option of options) {
-      if (!query) {
-        prefix.push(option)
-      } else {
-        const at = `${option.value} ${option.hint || ''}`.toLowerCase().indexOf(query)
-        if (at === 0) prefix.push(option)
-        else if (at > 0) substring.push(option)
-      }
-
-      if (prefix.length >= max) break
-    }
-
-    return [...prefix, ...substring].slice(0, max)
-  })
-
+  const matches = $derived(matchSuggestions(options, value, max))
+  const activeIndex = $derived(matches.findIndex((m) => m.value === activeValue))
   // A single suggestion identical to what is already typed is noise, not help.
-  const exhausted = $derived(matches.length === 1 && matches[0].value === value.trim())
+  const exhausted = $derived(
+    matches.length === 1
+      && matches[0].value.toLowerCase() === value.trim().toLowerCase(),
+  )
   const showList = $derived(open && matches.length > 0 && !exhausted)
 
-  function choose(option) {
-    value = option.value
+  // Pulled once per opening, not derived. These candidates are tallied from the
+  // live log buffer, which the stream rebuilds every animation frame: a derived
+  // would re-tally a thousand rows per frame for a list nobody has opened.
+  // Holding the snapshot while the list is open also keeps the rows from
+  // reordering as traffic arrives.
+  function openList() {
+    options = loadOptions?.() ?? []
+    open = true
+  }
+
+  function close() {
     open = false
-    active = -1
+    activeValue = null
+  }
+
+  function choose(option) {
+    if (!option) return
+
+    value = option.value
+    close()
   }
 
   function move(delta) {
     if (!showList) {
-      open = true
+      openList()
 
       return
     }
 
     const n = matches.length
-    active = active < 0 && delta < 0 ? n - 1 : (active + delta + n) % n
+    const next = activeIndex < 0
+      ? (delta > 0 ? 0 : n - 1)
+      : (activeIndex + delta + n) % n
+
+    activeValue = matches[next].value
   }
 
   function onKeydown(e) {
@@ -87,9 +95,9 @@
         move(-1)
         break
       case 'Enter':
-        if (showList && active >= 0) {
+        if (showList && activeIndex >= 0) {
           e.preventDefault()
-          choose(matches[active])
+          choose(matches[activeIndex])
         }
         break
       case 'Escape':
@@ -98,44 +106,41 @@
         // dismiss without losing what was typed.
         if (showList) {
           e.preventDefault()
-          open = false
-          active = -1
+          close()
         } else {
           onEscape?.()
         }
         break
       case 'Tab':
-        open = false
+        close()
         break
     }
   }
 
-  // focusout rather than blur: clicking a suggestion moves focus within the
-  // wrapper, and closing on the way there would unmount the click target.
+  // focusout, not blur: blur does not bubble, so a handler on this wrapper would
+  // never see the inner <input> lose focus at all.
   function onFocusOut(e) {
     if (e.currentTarget.contains(e.relatedTarget)) return
 
-    open = false
-    active = -1
+    close()
   }
 </script>
 
 <div class="suggest" onfocusout={onFocusOut}>
   <Input
-    {id}
     bind:value
     {placeholder}
     aria-label={label}
     role="combobox"
     aria-expanded={showList}
-    aria-controls={listId}
+    aria-controls={showList ? listId : undefined}
     aria-autocomplete="list"
-    aria-activedescendant={showList && active >= 0 ? `${listId}-${active}` : undefined}
+    aria-activedescendant={showList && activeIndex >= 0 ? `${listId}-${activeIndex}` : undefined}
     autocomplete="off"
     spellcheck="false"
     autocapitalize="off"
-    onfocus={() => (open = true)}
-    oninput={() => { open = true; active = -1 }}
+    onfocus={openList}
+    oninput={() => { if (!open) openList(); activeValue = null }}
     onkeydown={onKeydown}
   />
 
@@ -145,10 +150,10 @@
         <li
           id={`${listId}-${i}`}
           role="option"
-          aria-selected={i === active}
-          class:active={i === active}
+          aria-selected={i === activeIndex}
+          class:active={i === activeIndex}
           onmousedown={(e) => { e.preventDefault(); choose(option) }}
-          onmousemove={() => (active = i)}
+          onmousemove={() => (activeValue = option.value)}
         >
           <span class="value">{option.value}</span>
           {#if option.hint}<span class="hint">{option.hint}</span>{/if}
