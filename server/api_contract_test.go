@@ -126,7 +126,7 @@ func buildContractRouter(t *testing.T) *chi.Mux {
 	// server_endpoints_test.go deliberately avoids. We accept that here
 	// because the metrics route cannot be captured without calling it, and
 	// because Start ignores duplicate-registration errors.
-	router := createHTTPRouter(cfg, nil, store, nil, broadcaster, collector, auth.NewWSRevoker())
+	router := createHTTPRouter(cfg, nil, store, nil, broadcaster, collector, auth.NewWSRevoker(), doh3State{})
 
 	// DoH lands on this same mux whenever the admin UI is not on separate
 	// listeners (see NewServer). Registration reads only cfg, so a zero

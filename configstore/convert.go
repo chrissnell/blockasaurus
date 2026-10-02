@@ -137,6 +137,29 @@ func (s *ConfigStore) BuildRebindingConfig(base config.RebindingProtection) (con
 	return base, nil
 }
 
+// BuildHTTP3Config replaces the DoH3 enable flag in base with DB state. On first
+// run the singleton row is seeded from base, so a pre-existing YAML http3 block
+// carries over instead of being silently discarded.
+//
+// Call this at startup only. Server.Reconfigure never rebinds listeners, so
+// feeding it a changed value there would move the running config out of step
+// with the sockets that are actually open — which is exactly the lie the
+// Settings page's "restart required" notice exists to avoid.
+func (s *ConfigStore) BuildHTTP3Config(base config.HTTP3) (config.HTTP3, error) {
+	if err := s.seedHTTP3Settings(base); err != nil {
+		return base, err
+	}
+
+	settings, err := s.GetHTTP3Settings()
+	if err != nil {
+		return base, fmt.Errorf("load http3 settings: %w", err)
+	}
+
+	base.Enable = settings.Enabled
+
+	return base, nil
+}
+
 // BuildCustomDNSConfig replaces the Mapping in base with DB state.
 func (s *ConfigStore) BuildCustomDNSConfig(base config.CustomDNS) (config.CustomDNS, error) {
 	entries, err := s.ListCustomDNSEntries()

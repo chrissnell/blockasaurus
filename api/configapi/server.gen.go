@@ -83,6 +83,12 @@ type ServerInterface interface {
 	// Update a domain entry
 	// (PUT /domain-entries/{id})
 	UpdateDomainEntry(w http.ResponseWriter, r *http.Request, id ResourceID)
+	// Get DoH3 (DNS-over-HTTP/3) settings and listener state
+	// (GET /http3-settings)
+	GetHttp3Settings(w http.ResponseWriter, r *http.Request)
+	// Update the DoH3 (DNS-over-HTTP/3) setting
+	// (PUT /http3-settings)
+	PutHttp3Settings(w http.ResponseWriter, r *http.Request)
 	// Get DNS rebinding protection settings
 	// (GET /rebinding-settings)
 	GetRebindingSettings(w http.ResponseWriter, r *http.Request)
@@ -254,6 +260,18 @@ func (_ Unimplemented) GetDomainEntry(w http.ResponseWriter, r *http.Request, id
 // Update a domain entry
 // (PUT /domain-entries/{id})
 func (_ Unimplemented) UpdateDomainEntry(w http.ResponseWriter, r *http.Request, id ResourceID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Get DoH3 (DNS-over-HTTP/3) settings and listener state
+// (GET /http3-settings)
+func (_ Unimplemented) GetHttp3Settings(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Update the DoH3 (DNS-over-HTTP/3) setting
+// (PUT /http3-settings)
+func (_ Unimplemented) PutHttp3Settings(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -841,6 +859,34 @@ func (siw *ServerInterfaceWrapper) UpdateDomainEntry(w http.ResponseWriter, r *h
 	handler.ServeHTTP(w, r)
 }
 
+// GetHttp3Settings operation middleware
+func (siw *ServerInterfaceWrapper) GetHttp3Settings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetHttp3Settings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutHttp3Settings operation middleware
+func (siw *ServerInterfaceWrapper) PutHttp3Settings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutHttp3Settings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetRebindingSettings operation middleware
 func (siw *ServerInterfaceWrapper) GetRebindingSettings(w http.ResponseWriter, r *http.Request) {
 
@@ -1289,6 +1335,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Put(options.BaseURL+"/domain-entries/{id}", wrapper.UpdateDomainEntry)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/http3-settings", wrapper.GetHttp3Settings)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/http3-settings", wrapper.PutHttp3Settings)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/rebinding-settings", wrapper.GetRebindingSettings)
@@ -2074,6 +2126,63 @@ func (response UpdateDomainEntry404JSONResponse) VisitUpdateDomainEntryResponse(
 	return err
 }
 
+type GetHttp3SettingsRequestObject struct {
+}
+
+type GetHttp3SettingsResponseObject interface {
+	VisitGetHttp3SettingsResponse(w http.ResponseWriter) error
+}
+
+type GetHttp3Settings200JSONResponse HTTP3Settings
+
+func (response GetHttp3Settings200JSONResponse) VisitGetHttp3SettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutHttp3SettingsRequestObject struct {
+	Body *PutHttp3SettingsJSONRequestBody
+}
+
+type PutHttp3SettingsResponseObject interface {
+	VisitPutHttp3SettingsResponse(w http.ResponseWriter) error
+}
+
+type PutHttp3Settings200JSONResponse HTTP3Settings
+
+func (response PutHttp3Settings200JSONResponse) VisitPutHttp3SettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutHttp3Settings400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PutHttp3Settings400JSONResponse) VisitPutHttp3SettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetRebindingSettingsRequestObject struct {
 }
 
@@ -2563,6 +2672,12 @@ type StrictServerInterface interface {
 	// Update a domain entry
 	// (PUT /domain-entries/{id})
 	UpdateDomainEntry(ctx context.Context, request UpdateDomainEntryRequestObject) (UpdateDomainEntryResponseObject, error)
+	// Get DoH3 (DNS-over-HTTP/3) settings and listener state
+	// (GET /http3-settings)
+	GetHttp3Settings(ctx context.Context, request GetHttp3SettingsRequestObject) (GetHttp3SettingsResponseObject, error)
+	// Update the DoH3 (DNS-over-HTTP/3) setting
+	// (PUT /http3-settings)
+	PutHttp3Settings(ctx context.Context, request PutHttp3SettingsRequestObject) (PutHttp3SettingsResponseObject, error)
 	// Get DNS rebinding protection settings
 	// (GET /rebinding-settings)
 	GetRebindingSettings(ctx context.Context, request GetRebindingSettingsRequestObject) (GetRebindingSettingsResponseObject, error)
@@ -3235,6 +3350,61 @@ func (sh *strictHandler) UpdateDomainEntry(w http.ResponseWriter, r *http.Reques
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(UpdateDomainEntryResponseObject); ok {
 		if err := validResponse.VisitUpdateDomainEntryResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetHttp3Settings operation middleware
+func (sh *strictHandler) GetHttp3Settings(w http.ResponseWriter, r *http.Request) {
+	var request GetHttp3SettingsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetHttp3Settings(ctx, request.(GetHttp3SettingsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetHttp3Settings")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetHttp3SettingsResponseObject); ok {
+		if err := validResponse.VisitGetHttp3SettingsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutHttp3Settings operation middleware
+func (sh *strictHandler) PutHttp3Settings(w http.ResponseWriter, r *http.Request) {
+	var request PutHttp3SettingsRequestObject
+
+	var body PutHttp3SettingsJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutHttp3Settings(ctx, request.(PutHttp3SettingsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutHttp3Settings")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutHttp3SettingsResponseObject); ok {
+		if err := validResponse.VisitPutHttp3SettingsResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

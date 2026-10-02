@@ -152,4 +152,72 @@ var _ = Describe("HTTP/3 helpers", func() {
 			Expect(err.Error()).To(ContainSubstring("udp"))
 		})
 	})
+
+	Describe("doh3Unavailable", func() {
+		It("is silent when an HTTPS listener is configured", func() {
+			cfg := &config.Config{Ports: config.Ports{HTTPS: config.ListenConfig{":443"}}}
+			Expect(doh3Unavailable(cfg)).To(BeEmpty())
+		})
+
+		It("names the missing HTTPS listener", func() {
+			Expect(doh3Unavailable(&config.Config{})).To(Equal(doh3NoHTTPSReason))
+		})
+
+		It("names PROXY protocol on https", func() {
+			cfg := &config.Config{Ports: config.Ports{
+				HTTPS:         config.ListenConfig{":443"},
+				ProxyProtocol: config.ProxyProtocolListeners{config.ProxyProtocolTypeHttps},
+			}}
+			Expect(doh3Unavailable(cfg)).To(Equal(doh3ProxyProtocolReason))
+		})
+
+		// The reason describes the surrounding config, not the toggle, so the UI
+		// can warn that enabling DoH3 would not achieve anything yet.
+		It("answers the same whether or not http3 is enabled", func() {
+			cfg := &config.Config{HTTP3: config.HTTP3{Enable: true}}
+			Expect(doh3Unavailable(cfg)).To(Equal(doh3NoHTTPSReason))
+		})
+	})
+
+	Describe("Server.doh3State", func() {
+		// active must come from the packet conns, not from a second copy of
+		// createHTTPListeners' predicate: the UI's claim is about the listener,
+		// and "enabled but nothing bound" must never read as serving.
+		It("reports active from the open packet conns", func(ctx context.Context) {
+			pcs, err := newUDPPacketConns(ctx, config.ListenConfig{"127.0.0.1:0"})
+			Expect(err).Should(Succeed())
+			DeferCleanup(func() {
+				for _, pc := range pcs {
+					_ = pc.Close()
+				}
+			})
+
+			srv := &Server{
+				cfg: &config.Config{
+					HTTP3: config.HTTP3{Enable: true},
+					Ports: config.Ports{HTTPS: config.ListenConfig{"127.0.0.1:0"}},
+				},
+				http3PacketConns: pcs,
+			}
+
+			Expect(srv.doh3State().active).To(BeTrue())
+			Expect(srv.doh3State().unavailableReason).To(BeEmpty())
+		})
+
+		It("is inactive with no packet conns, however the config reads", func() {
+			srv := &Server{cfg: &config.Config{
+				HTTP3: config.HTTP3{Enable: true},
+				Ports: config.Ports{HTTPS: config.ListenConfig{"127.0.0.1:0"}},
+			}}
+
+			Expect(srv.doh3State().active).To(BeFalse())
+		})
+
+		It("carries the blocking reason even when inactive", func() {
+			srv := &Server{cfg: &config.Config{HTTP3: config.HTTP3{Enable: true}}}
+
+			Expect(srv.doh3State().active).To(BeFalse())
+			Expect(srv.doh3State().unavailableReason).To(Equal(doh3NoHTTPSReason))
+		})
+	})
 })

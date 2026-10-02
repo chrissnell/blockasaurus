@@ -87,3 +87,53 @@ func newUDPPacketConns(ctx context.Context, addresses config.ListenConfig) ([]ne
 
 	return pcs, nil
 }
+
+// Reasons the HTTP/3 listener cannot bind. Shared by the startup warning and
+// the web UI, so an operator reading the Settings page sees the same
+// explanation the log gave.
+const (
+	doh3NoHTTPSReason       = "ports.https is empty"
+	doh3ProxyProtocolReason = "ports.proxyProtocol includes 'https'; QUIC carries no PROXY " +
+		"protocol header, so client IPs would not match those seen over TCP"
+)
+
+// doh3Unavailable explains why the HTTP/3 listener cannot bind, or returns ""
+// when nothing stands in its way. It deliberately ignores http3.enable: the
+// answer describes the surrounding config, so the UI can warn that turning
+// DoH3 on would not achieve anything until that config changes.
+func doh3Unavailable(cfg *config.Config) string {
+	switch {
+	case len(cfg.Ports.HTTPS) == 0:
+		return doh3NoHTTPSReason
+	case cfg.Ports.ProxyProtocol.Has(config.ProxyProtocolTypeHttps):
+		return doh3ProxyProtocolReason
+	default:
+		return ""
+	}
+}
+
+// doh3State is the HTTP/3 listener state this process reports to the web UI.
+type doh3State struct {
+	// active: this process is serving DoH over HTTP/3 right now.
+	active bool
+	// unavailableReason: why no HTTP/3 listener could bind, regardless of
+	// http3.enable. Empty when nothing is in the way.
+	unavailableReason string
+}
+
+// doh3State observes the listener rather than re-deriving it from the config.
+// The whole promise of the DoH3 section in the UI is that it does not lie about
+// the transport, so `active` comes from the packet conns NewServer actually
+// opened; a second copy of createHTTPListeners' predicate would hold only until
+// that predicate grew a condition. The reason stays config-derived because it
+// describes the surrounding config, not an outcome.
+//
+// Fixed for the process lifetime: Server.Reconfigure rebuilds the resolver
+// chain and never rebinds listeners, so a later change to the stored setting
+// does not move either field.
+func (s *Server) doh3State() doh3State {
+	return doh3State{
+		active:            len(s.http3PacketConns) > 0,
+		unavailableReason: doh3Unavailable(s.cfg),
+	}
+}

@@ -280,7 +280,7 @@ func NewServer(ctx context.Context, cfg *config.Config, store *configstore.Confi
 		// UI-only router for admin ports
 		uiRouter := chi.NewRouter()
 		registerUIRoutes(uiRouter, cfg, openAPIImpl, server.configStore, server, server.broadcaster,
-			server.statsCollector, server.wsRevoker)
+			server.statsCollector, server.wsRevoker, server.doh3State())
 
 		// Create admin listeners
 		adminHTTP, adminHTTPS, err := createAdminListeners(ctx, cfg, tlsCfg)
@@ -303,7 +303,7 @@ func NewServer(ctx context.Context, cfg *config.Config, store *configstore.Confi
 		}
 	} else {
 		httpRouter := createHTTPRouter(cfg, openAPIImpl, server.configStore, server, server.broadcaster,
-			server.statsCollector, server.wsRevoker)
+			server.statsCollector, server.wsRevoker, server.doh3State())
 		server.registerDoHEndpoints(httpRouter, cfg)
 		mainRouter = httpRouter
 	}
@@ -428,13 +428,9 @@ func createHTTPListeners(
 	}
 
 	if cfg.HTTP3.IsEnabled() {
-		switch {
-		case len(cfg.Ports.HTTPS) == 0:
-			logger().Warn("http3.enable is true but ports.https is empty; HTTP/3 disabled")
-		case cfg.Ports.ProxyProtocol.Has(config.ProxyProtocolTypeHttps):
-			logger().Warn("http3.enable is true but ports.proxyProtocol includes 'https'; " +
-				"HTTP/3 cannot carry PROXY protocol headers and is disabled to keep the client IP consistent")
-		default:
+		if reason := doh3Unavailable(cfg); reason != "" {
+			logger().Warnf("http3.enable is true but %s; HTTP/3 disabled", reason)
+		} else {
 			http3PacketConns, err = newUDPPacketConns(ctx, cfg.Ports.HTTPS)
 			if err != nil {
 				closeAll(httpListeners)

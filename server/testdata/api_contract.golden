@@ -42,6 +42,8 @@ POST    /api/config/domain-entries                    [RequireAuth RequireCSRFHe
 DELETE  /api/config/domain-entries/{id}               [RequireAuth RequireCSRFHeader RequireAdminForMutations]
 GET     /api/config/domain-entries/{id}               [RequireAuth RequireCSRFHeader RequireAdminForMutations]
 PUT     /api/config/domain-entries/{id}               [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+GET     /api/config/http3-settings                    [RequireAuth RequireCSRFHeader RequireAdminForMutations]
+PUT     /api/config/http3-settings                    [RequireAuth RequireCSRFHeader RequireAdminForMutations]
 GET     /api/config/rebinding-settings                [RequireAuth RequireCSRFHeader RequireAdminForMutations]
 PUT     /api/config/rebinding-settings                [RequireAuth RequireCSRFHeader RequireAdminForMutations]
 GET     /api/config/upstream-groups                   [RequireAuth RequireCSRFHeader RequireAdminForMutations]

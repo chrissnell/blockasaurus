@@ -5,6 +5,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -421,6 +422,41 @@ func TestSameOriginFunc(t *testing.T) {
 			got := sameOriginFunc(r, tc.origin)
 			if got != tc.expected {
 				t.Fatalf("sameOriginFunc(host=%q, origin=%q): got %v, want %v", tc.host, tc.origin, got, tc.expected)
+			}
+		})
+	}
+}
+
+// TestEndpointInfoDoH3 pins the hasDoH3 key the UI reads to decide whether to
+// tell operators the DoH endpoint also answers over HTTP/3. Whether the
+// listener is up is Server.doh3State's answer (tested there, against the open
+// packet conns); what this guards is the wire name and that the value is not
+// dropped or inverted on the way out.
+func TestEndpointInfoDoH3(t *testing.T) {
+	t.Parallel()
+
+	for _, hasDoH3 := range []bool{true, false} {
+		t.Run(fmt.Sprintf("hasDoH3=%v", hasDoH3), func(t *testing.T) {
+			t.Parallel()
+
+			rec := httptest.NewRecorder()
+			handleEndpointInfo(&config.Config{}, hasDoH3)(
+				rec, httptest.NewRequest(http.MethodGet, "/api/endpoint-info", nil))
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+
+			var body struct {
+				HasDoH3 bool `json:"hasDoH3"`
+			}
+
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+
+			if body.HasDoH3 != hasDoH3 {
+				t.Errorf("hasDoH3 = %v, want %v", body.HasDoH3, hasDoH3)
 			}
 		})
 	}

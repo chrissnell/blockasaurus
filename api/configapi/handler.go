@@ -28,13 +28,28 @@ type Reconfigurer interface {
 	Reconfigure(ctx context.Context) error
 }
 
+// DoH3Runtime describes the HTTP/3 listener of the running process. The listener
+// binds once, in NewServer, and Reconfigure never rebinds it, so these are fixed
+// for the process lifetime. The handler reports them next to the stored setting
+// so the UI can tell "on" from "on after a restart".
+type DoH3Runtime struct {
+	// Active: this process is serving DoH over HTTP/3.
+	Active bool
+	// UnavailableReason: why the listener cannot bind at all in this process
+	// (no ports.https, PROXY protocol on https). Empty when nothing is in the
+	// way. Independent of the stored setting, so the UI can warn that enabling
+	// DoH3 would not achieve anything yet.
+	UnavailableReason string
+}
+
 type ConfigHandler struct {
 	store        *configstore.ConfigStore
 	reconfigurer Reconfigurer
+	doh3         DoH3Runtime
 }
 
-func NewConfigHandler(store *configstore.ConfigStore, reconfigurer Reconfigurer) *ConfigHandler {
-	return &ConfigHandler{store: store, reconfigurer: reconfigurer}
+func NewConfigHandler(store *configstore.ConfigStore, reconfigurer Reconfigurer, doh3 DoH3Runtime) *ConfigHandler {
+	return &ConfigHandler{store: store, reconfigurer: reconfigurer, doh3: doh3}
 }
 
 func RegisterEndpoints(router chi.Router, h *ConfigHandler) {
@@ -471,6 +486,39 @@ func (h *ConfigHandler) PutRebindingSettings(
 	return PutRebindingSettings200JSONResponse(rebindingSettingsToAPI(*rs)), nil
 }
 
+// --- HTTP/3 (DoH3) Settings ---
+
+func (h *ConfigHandler) GetHttp3Settings(
+	_ context.Context, _ GetHttp3SettingsRequestObject,
+) (GetHttp3SettingsResponseObject, error) {
+	hs, err := h.store.GetHTTP3Settings()
+	if err != nil {
+		return nil, err
+	}
+
+	return GetHttp3Settings200JSONResponse(h.http3SettingsToAPI(*hs)), nil
+}
+
+// PutHttp3Settings stores the toggle and deliberately does not reconfigure.
+// Server.Reconfigure rebuilds the resolver chain and cannot open or close a
+// listener, so calling it here would report success while changing nothing about
+// the transport. The response says so through restart_required instead.
+func (h *ConfigHandler) PutHttp3Settings(
+	_ context.Context, req PutHttp3SettingsRequestObject,
+) (PutHttp3SettingsResponseObject, error) {
+	if req.Body == nil {
+		return PutHttp3Settings400JSONResponse{BadRequestJSONResponse{Message: "request body is required"}}, nil
+	}
+
+	hs := &configstore.HTTP3Settings{Enabled: req.Body.Enabled}
+
+	if err := h.store.PutHTTP3Settings(hs); err != nil {
+		return nil, err
+	}
+
+	return PutHttp3Settings200JSONResponse(h.http3SettingsToAPI(*hs)), nil
+}
+
 // --- Upstream Groups ---
 
 func (h *ConfigHandler) ListUpstreamGroups(_ context.Context, _ ListUpstreamGroupsRequestObject) (ListUpstreamGroupsResponseObject, error) {
@@ -803,6 +851,25 @@ func rebindingSettingsToAPI(rs configstore.RebindingSettings) RebindingSettings 
 		Enabled:        rs.Enabled,
 		AllowedDomains: domains,
 	}
+}
+
+// http3SettingsToAPI joins the stored setting to the listener state of the running
+// process. restart_required is only true when a restart would actually close the
+// gap: when the listener is blocked for a structural reason, restarting changes
+// nothing and promising otherwise would send the operator to bounce the process
+// for no reason.
+func (h *ConfigHandler) http3SettingsToAPI(hs configstore.HTTP3Settings) HTTP3Settings {
+	out := HTTP3Settings{
+		Enabled:         hs.Enabled,
+		Active:          h.doh3.Active,
+		RestartRequired: hs.Enabled != h.doh3.Active && h.doh3.UnavailableReason == "",
+	}
+
+	if reason := h.doh3.UnavailableReason; reason != "" {
+		out.UnavailableReason = &reason
+	}
+
+	return out
 }
 
 // --- Validation ---

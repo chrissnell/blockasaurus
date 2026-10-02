@@ -6,6 +6,7 @@ package configstore
 import (
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/0xERR0R/blocky/config"
 	. "github.com/onsi/ginkgo/v2"
@@ -345,6 +346,104 @@ var _ = Describe("ConfigStore", func() {
 			got, err := store.BuildRebindingConfig(config.RebindingProtection{})
 			Expect(err).Should(Succeed())
 			Expect(got.NormalizedAllowedDomains()).Should(Equal([]string{"nas.example.com"}))
+		})
+	})
+
+	Describe("HTTP3Settings", func() {
+		It("should return defaults on first access", func() {
+			hs, err := store.GetHTTP3Settings()
+			Expect(err).Should(Succeed())
+			Expect(hs.Enabled).Should(BeFalse())
+		})
+
+		It("should round-trip the toggle", func() {
+			Expect(store.PutHTTP3Settings(&HTTP3Settings{Enabled: true})).Should(Succeed())
+
+			got, err := store.GetHTTP3Settings()
+			Expect(err).Should(Succeed())
+			Expect(got.Enabled).Should(BeTrue())
+		})
+
+		It("should persist disabling, not skip the zero value", func() {
+			Expect(store.PutHTTP3Settings(&HTTP3Settings{Enabled: true})).Should(Succeed())
+
+			// gorm's Save skips zero-valued struct fields, which would leave DoH3
+			// stuck on after a UI toggle-off
+			Expect(store.PutHTTP3Settings(&HTTP3Settings{Enabled: false})).Should(Succeed())
+
+			got, err := store.GetHTTP3Settings()
+			Expect(err).Should(Succeed())
+			Expect(got.Enabled).Should(BeFalse())
+		})
+
+		It("should not create a row as a side effect of reading", func() {
+			_, err := store.GetHTTP3Settings()
+			Expect(err).Should(Succeed())
+
+			// a read that created a disabled row would make the YAML seed a no-op
+			// and silently turn DoH3 off for an upgrading operator
+			var count int64
+			Expect(store.db.Model(&HTTP3Settings{}).Count(&count).Error).Should(Succeed())
+			Expect(count).Should(BeZero())
+		})
+
+		It("should write through even if the row was never seeded", func() {
+			Expect(store.PutHTTP3Settings(&HTTP3Settings{Enabled: true})).Should(Succeed())
+
+			got, err := store.GetHTTP3Settings()
+			Expect(err).Should(Succeed())
+			Expect(got.Enabled).Should(BeTrue())
+		})
+
+		// gorm does not append updated_at to a hand-written OnConflict, so
+		// without it in the column list the timestamp freezes at the first write
+		// and the column is quietly useless.
+		It("should advance updated_at on a later write", func() {
+			Expect(store.PutHTTP3Settings(&HTTP3Settings{Enabled: true})).Should(Succeed())
+
+			first, err := store.GetHTTP3Settings()
+			Expect(err).Should(Succeed())
+
+			time.Sleep(time.Millisecond * 10)
+			Expect(store.PutHTTP3Settings(&HTTP3Settings{Enabled: false})).Should(Succeed())
+
+			second, err := store.GetHTTP3Settings()
+			Expect(err).Should(Succeed())
+			Expect(second.UpdatedAt).Should(BeTemporally(">", first.UpdatedAt))
+		})
+	})
+
+	Describe("BuildHTTP3Config", func() {
+		It("should seed the singleton from YAML on first run", func() {
+			got, err := store.BuildHTTP3Config(config.HTTP3{Enable: true})
+			Expect(err).Should(Succeed())
+			Expect(got.Enable).Should(BeTrue())
+
+			// the seed must land in the DB, or the Settings page would show DoH3
+			// off while the listener was bound
+			hs, err := store.GetHTTP3Settings()
+			Expect(err).Should(Succeed())
+			Expect(hs.Enabled).Should(BeTrue())
+		})
+
+		It("should not clobber an explicit setting when re-seeded", func() {
+			base := config.HTTP3{Enable: false}
+			_, err := store.BuildHTTP3Config(base)
+			Expect(err).Should(Succeed())
+
+			Expect(store.PutHTTP3Settings(&HTTP3Settings{Enabled: true})).Should(Succeed())
+
+			got, err := store.BuildHTTP3Config(base)
+			Expect(err).Should(Succeed())
+			Expect(got.Enable).Should(BeTrue())
+		})
+
+		It("should let DB state win once seeded", func() {
+			Expect(store.PutHTTP3Settings(&HTTP3Settings{Enabled: false})).Should(Succeed())
+
+			got, err := store.BuildHTTP3Config(config.HTTP3{Enable: true})
+			Expect(err).Should(Succeed())
+			Expect(got.Enable).Should(BeFalse())
 		})
 	})
 
