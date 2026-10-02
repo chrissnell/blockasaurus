@@ -48,8 +48,8 @@ spec:
             - -c
             - chown {{ $owner }} {{ .Values.queryLogVolume.mountPath | quote }} && chmod 0750 {{ .Values.queryLogVolume.mountPath | quote }}
           securityContext:
-            # Root only to chown, and only on this one mount. Everything else is
-            # dropped, including the ability to regain privileges.
+            # Root only to fix up this one mount. Everything else is dropped,
+            # including the ability to regain privileges.
             runAsUser: 0
             runAsGroup: 0
             runAsNonRoot: false
@@ -57,7 +57,16 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               add:
+                # CHOWN for the chown. FOWNER for the chmod, which is not
+                # optional: the kubelet creates a DirectoryOrCreate hostPath as
+                # root:root, the chown hands it to UID 100, and from then on
+                # chmod on a directory UID 0 does not own needs FOWNER. Without
+                # it the first run chowns, the chmod fails "Operation not
+                # permitted", and the init container crashloops forever -- so
+                # the pod never starts and the rollout silently never
+                # progresses.
                 - CHOWN
+                - FOWNER
               drop:
                 - ALL
           resources:
