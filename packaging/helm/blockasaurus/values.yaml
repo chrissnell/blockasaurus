@@ -227,6 +227,24 @@ queryLogVolume:
     # contents are left in place. It needs its own image because the application
     # image is FROM scratch and has no shell or chown.
     #
+    # It runs as root with two capabilities, both load-bearing:
+    #
+    #   CHOWN   the chown itself.
+    #   FOWNER  the chmod. Once the chown has handed the directory to UID 100,
+    #           UID 0 no longer owns it, and chmod on a file you do not own
+    #           needs FOWNER. Without it the chmod fails "Operation not
+    #           permitted" on every run and the init container crashloops.
+    #
+    # The 0750 is not cosmetic: SQLite creates the database file 0644, so at the
+    # kubelet's default 0755 any UID on the node could read every client IP and
+    # every domain the network resolved. The directory mode is the only lever --
+    # SQLite does not expose the file mode.
+    #
+    # The chown is fatal and the chmod is not. The resolver does not need this
+    # directory at all: when the query log target is unusable the writer falls
+    # back to the console writer and DNS keeps serving. A hardening step must
+    # not be able to stop the only resolver on the network from starting.
+    #
     # Not used when type is emptyDir: the kubelet applies fsGroup there.
     initImage:
       repository: busybox

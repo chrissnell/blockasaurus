@@ -46,10 +46,19 @@ spec:
           command:
             - sh
             - -c
-            - chown {{ $owner }} {{ .Values.queryLogVolume.mountPath | quote }} && chmod 0750 {{ .Values.queryLogVolume.mountPath | quote }}
+            # The chown is required: UID 100 cannot write a root-owned dir.
+            # The chmod only tightens the kubelet's 0755, and the resolver does
+            # not depend on it, so it must never gate startup -- the query log
+            # writer already falls back to the console writer when its target is
+            # unusable and DNS keeps serving. See values.yaml.
+            - |
+              set -e
+              chown {{ $owner }} {{ .Values.queryLogVolume.mountPath | quote }}
+              chmod 0750 {{ .Values.queryLogVolume.mountPath | quote }} ||
+                echo "warning: could not tighten mode on {{ .Values.queryLogVolume.mountPath }}; leaving kubelet default"
           securityContext:
-            # Root only to chown, and only on this one mount. Everything else is
-            # dropped, including the ability to regain privileges.
+            # Root only to fix up this one mount. Everything else is dropped,
+            # including the ability to regain privileges.
             runAsUser: 0
             runAsGroup: 0
             runAsNonRoot: false
@@ -57,7 +66,10 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               add:
+                # CHOWN for the chown; FOWNER because the chmod targets a
+                # directory UID 0 no longer owns once the chown has run.
                 - CHOWN
+                - FOWNER
               drop:
                 - ALL
           resources:
