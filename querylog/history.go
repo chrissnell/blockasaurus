@@ -23,6 +23,13 @@ import (
 // so the UI can tell the two apart.
 var ErrHistoryUnsupportedTarget = errors.New("query log history requires queryLog.type: sqlite")
 
+// ErrHistoryUnsupportedPlatform is returned on the GOOS/GOARCH targets where the
+// pure-Go SQLite driver is not compiled in. Separate from
+// ErrHistoryUnsupportedTarget because the answer is different: the configuration
+// is fine, the build cannot serve it. Reaching it needs queryLog.type: sqlite on
+// such a platform, where the writer has already fallen back to console.
+var ErrHistoryUnsupportedPlatform = errors.New("query log history is not supported on this platform")
+
 const (
 	// HistoryDefaultLimit is the page size used when the caller does not ask for one.
 	HistoryDefaultLimit = 100
@@ -238,6 +245,22 @@ func applyHistoryFilters(tx *gorm.DB, q HistoryQuery) (*gorm.DB, error) {
 	// to be formatted the same way: as a time.Time in the writer's location, which
 	// is the local one (entry start times come from time.Now()). The retention
 	// cleanup compares the same way.
+	//
+	// That text carries the offset that was in force at the instant written, e.g.
+	// "2026-10-02 03:07:47.123456789+00:00". Converting the bound to local makes Go
+	// pick the same offset for the same instant, so the comparison is sound -- with
+	// two known limits, both narrow and both inherited from how the writer stores
+	// the column:
+	//
+	//   - Within the repeated hour of a DST fall-back in a positive-offset zone,
+	//     lexicographic order inverts (+01:00 sorts below +02:00 while being the
+	//     later instant). Ordering and bound inclusion are slightly wrong for that
+	//     hour; pagination stays self-consistent.
+	//   - If the process timezone changes between writes, ordering breaks across
+	//     the boundary permanently.
+	//
+	// Deployments run UTC, where neither applies. Normalising with strftime() would
+	// fix both and cost the request_ts index, which is the wrong trade here.
 	if !q.From.IsZero() {
 		tx = tx.Where("request_ts >= ?", q.From.Local())
 	}
@@ -247,7 +270,15 @@ func applyHistoryFilters(tx *gorm.DB, q HistoryQuery) (*gorm.DB, error) {
 	}
 
 	if q.BlockedOnly {
-		tx = tx.Where("response_type = ?", BlockedResponseType)
+		// The leading unary + is a SQLite no-op on the value that makes the term
+		// ineligible as an index constraint. Without it the planner prefers the
+		// low-cardinality response_type index -- it has no ANALYZE data, so it
+		// assumes 1/10 selectivity -- abandons the request_ts index, and then needs
+		// a temp B-tree to sort every matching row in the window. That is both
+		// slower (47ms vs 6ms at 200k rows) and fatal to the keyset design, since
+		// each page re-sorts from scratch. Filtering response_type during the
+		// request_ts scan is what we want: the ordering comes for free.
+		tx = tx.Where("+response_type = ?", BlockedResponseType)
 	}
 
 	if pattern := likePattern(q.Client); pattern != "" {
@@ -267,9 +298,17 @@ func applyHistoryFilters(tx *gorm.DB, q HistoryQuery) (*gorm.DB, error) {
 			return nil, err
 		}
 
-		// Compared against the raw stored text, not a re-formatted time, so the
-		// predicate stays on the request_ts index.
-		tx = tx.Where("request_ts < ? OR (request_ts = ? AND rowid < ?)", ts, ts, rowID)
+		// Logically `request_ts < ts OR (request_ts = ts AND rowid < rowID)`, but
+		// written as a conjunction on purpose. gorm emits every ? as its own bind
+		// parameter, so in the disjunctive form SQLite cannot prove the two
+		// request_ts placeholders hold the same value, cannot derive an upper bound
+		// for the index range, and falls back to scanning the whole time window --
+		// measured at 294ms per page against 200k rows, flat in page depth, versus
+		// 1ms for this form. The leading `request_ts <= ?` is the bound it needs.
+		//
+		// Compared against the raw stored text rather than a re-formatted time, so
+		// the comparison is exact and still an index term.
+		tx = tx.Where("request_ts <= ? AND (request_ts < ? OR rowid < ?)", ts, ts, rowID)
 	}
 
 	return tx, nil

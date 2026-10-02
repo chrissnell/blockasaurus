@@ -126,18 +126,39 @@ var _ = Describe("HistoryReader", func() {
 			Expect(indexed).Should(ContainElements("request_ts", "client_ip", "client_name", "question_name"))
 		})
 
-		It("serves a time-bounded page from the request_ts index", func() {
-			writeEntries([]*LogEntry{entry(0, "192.168.1.10", "laptop", "example.com", "RESOLVED")})
-			openReader()
+		// Every one of these is a cost assertion, not a style one. SQLite silently
+		// degrades a page to a scan of the whole time window when a predicate stops
+		// being an index term, and a temp B-tree for ORDER BY means each page
+		// re-sorts the full match set -- which defeats keyset paging entirely. Both
+		// are invisible in the results and only show up in the plan.
+		DescribeTable("plans every page off the request_ts index, with no sort",
+			func(q HistoryQuery) {
+				writeEntries([]*LogEntry{entry(0, "192.168.1.10", "laptop", "example.com", "RESOLVED")})
+				openReader()
 
-			// gorm's dry run gives us the exact SQL the query path builds, so the
-			// plan is checked against the real statement rather than a hand copy.
-			plan := explainHistoryQuery(reader, HistoryQuery{
-				From: base.Add(-time.Minute),
-				To:   base.Add(time.Hour),
-			})
-			Expect(plan).Should(ContainSubstring("idx_log_entries_request_ts"))
-		})
+				plan := explainHistoryQuery(reader, q)
+
+				Expect(plan).Should(ContainSubstring("idx_log_entries_request_ts"))
+				Expect(plan).ShouldNot(ContainSubstring("TEMP B-TREE"))
+			},
+			Entry("time-bounded", HistoryQuery{
+				From: time.Now().Add(-25 * time.Hour),
+				To:   time.Now(),
+			}),
+			// The keyset predicate has to stay an index bound. Written
+			// disjunctively, gorm's separate bind parameters stop SQLite deriving an
+			// upper bound and every page scans the window instead.
+			Entry("continuing from a cursor", HistoryQuery{
+				From:   time.Now().Add(-25 * time.Hour),
+				Cursor: encodeHistoryCursor("2026-10-02 12:00:00+00:00", 42),
+			}),
+			// response_type has its own index and looks cheap to the planner, so
+			// without the unary + it wins and drags in a sort.
+			Entry("blocked only", HistoryQuery{
+				From:        time.Now().Add(-25 * time.Hour),
+				BlockedOnly: true,
+			}),
+		)
 	})
 
 	Describe("filtering", func() {
@@ -292,6 +313,12 @@ var _ = Describe("HistoryReader", func() {
 
 // explainHistoryQuery runs EXPLAIN QUERY PLAN over the statement the query path
 // actually builds for q.
+//
+// The placeholders are left as placeholders and the values bound, which is the
+// whole point: gorm's Explain() inlines them as literals, and SQLite plans the
+// literal form differently -- it can equate two literals it cannot equate two
+// bind parameters. Explaining the inlined SQL reports the plan of a statement
+// production never executes, and reports the fast one.
 func explainHistoryQuery(r *HistoryReader, q HistoryQuery) string {
 	stmt := r.db.Session(&gorm.Session{DryRun: true}).Table("log_entries").Select(historySelect)
 
@@ -300,11 +327,9 @@ func explainHistoryQuery(r *HistoryReader, q HistoryQuery) string {
 
 	stmt = stmt.Order("request_ts DESC").Order("rowid DESC").Limit(HistoryDefaultLimit).Find(&[]historyRow{})
 
-	sql := r.db.Explain(stmt.Statement.SQL.String(), stmt.Statement.Vars...)
-
 	// EXPLAIN QUERY PLAN returns four columns and cannot be wrapped in a
 	// sub-select, so the rows are read directly rather than scanned into a slice.
-	rows, err := r.db.Raw("EXPLAIN QUERY PLAN " + sql).Rows()
+	rows, err := r.db.Raw("EXPLAIN QUERY PLAN "+stmt.Statement.SQL.String(), stmt.Statement.Vars...).Rows()
 	Expect(err).Should(Succeed())
 
 	defer rows.Close()

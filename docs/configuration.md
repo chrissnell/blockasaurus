@@ -1251,9 +1251,15 @@ writer. WAL means those reads also never block on a flush.
 
 Behind the tab is `GET /api/config/query-log/history`, which is part of the
 authenticated config API. Results come back newest first and are paged with an
-opaque `cursor` rather than an offset, so paging stays cheap on a table with a
-full retention window in it. Any other `queryLog.type` answers `503` with the
+opaque `cursor` rather than an offset, so the cost of a page is the size of the
+page and not how deep into the results it is — the last page of a 30-day search
+costs the same as the first. Any other `queryLog.type` answers `503` with the
 reason, which the tab shows instead of an empty table.
+
+One thing to know about the filters: the time window is served by an index, and
+the client and domain filters are substring matches, which no index can seek.
+Narrowing the window is therefore what makes a search fast; narrowing the domain
+does not. The default window is 24 hours for that reason.
 
 #### dnstap query log
 

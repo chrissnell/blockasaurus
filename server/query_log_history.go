@@ -19,16 +19,17 @@ import (
 // A failure here is never fatal: the query log itself keeps writing and the live
 // log keeps streaming, so the only consequence is that history cannot be
 // searched. The reason travels to the UI so the tab can say why it is empty.
-// Only the "wrong target type" reason is passed through verbatim; an open
-// failure is logged in full and reported generically, since its message carries
-// the database path.
+// Only the two "this can never work as configured" reasons are passed through
+// verbatim -- neither message contains a path. An open failure is logged in full
+// and reported generically, since its message does carry the database path.
 func newQueryLogHistorySource(cfg config.QueryLog) (configapi.QueryLogHistorySource, io.Closer) {
 	reader, err := querylog.NewHistoryReader(cfg)
 	if err == nil {
 		return configapi.QueryLogHistorySource{Reader: reader}, reader
 	}
 
-	if errors.Is(err, querylog.ErrHistoryUnsupportedTarget) {
+	if errors.Is(err, querylog.ErrHistoryUnsupportedTarget) ||
+		errors.Is(err, querylog.ErrHistoryUnsupportedPlatform) {
 		return configapi.QueryLogHistorySource{UnavailableReason: err.Error()}, nil
 	}
 

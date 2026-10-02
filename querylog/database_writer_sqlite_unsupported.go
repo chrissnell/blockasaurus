@@ -27,8 +27,10 @@ func newSQLiteDialector(_ string) (gorm.Dialector, error) {
 }
 
 // newSQLiteReadOnlyDialector is the read-side stub for the platforms without a
-// pure-Go SQLite driver. See newSQLiteDialector above.
+// pure-Go SQLite driver. See newSQLiteDialector above. It wraps
+// ErrHistoryUnsupportedPlatform so callers can report "this build cannot search
+// the query log" rather than the generic open failure -- the message carries no
+// path, so it is safe to surface verbatim.
 func newSQLiteReadOnlyDialector(_ string) (gorm.Dialector, error) {
-	return nil, fmt.Errorf("sqlite query log is not supported on this platform (%s/%s); "+
-		"query log history is unavailable", runtime.GOOS, runtime.GOARCH)
+	return nil, fmt.Errorf("%w (%s/%s)", ErrHistoryUnsupportedPlatform, runtime.GOOS, runtime.GOARCH)
 }

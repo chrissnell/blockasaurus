@@ -169,22 +169,22 @@
   // Guards against an out-of-order response overwriting a newer one: a slow
   // request for a wide window can land after the narrow one that superseded it.
   let historyRequestSeq = 0
+  // The query parameters the current result set was fetched with, including its
+  // resolved `from`. "Load more" reuses these rather than rebuilding them, so a
+  // filter edited mid-pagination cannot apply a cursor to a different query --
+  // and so the window cannot shift under the cursor and skip rows.
+  let historyPageParams = null
 
-  // The search the controls currently describe. `from` is pinned here so the
-  // window reported next to the results is the window that produced them, not
-  // the one that would be produced by asking again now.
-  const historyRequest = $derived.by(() => {
-    const from = rangeStart(historyRange)
-
-    return {
-      from,
-      params: historyParams({
-        client: appliedHistoryClient,
-        domain: appliedHistoryDomain,
-        blockedOnly: historyBlockedOnly,
-        from,
-      }),
-    }
+  // The filters the controls describe. Derived so the effect below re-runs on a
+  // filter change and on nothing else. The time window is deliberately NOT in
+  // here: `rangeStart` reads the clock, which is not a tracked dependency, so a
+  // memoised derived would pin "Last hour" to whenever it last recomputed and a
+  // tab left open would keep searching a window that had slid into the past.
+  const historyFilters = $derived({
+    client: appliedHistoryClient,
+    domain: appliedHistoryDomain,
+    blockedOnly: historyBlockedOnly,
+    range: historyRange,
   })
 
   $effect(() => {
@@ -204,12 +204,15 @@
   $effect(() => {
     if (currentTab !== 'history') return
 
-    runHistorySearch(historyRequest)
+    runHistorySearch(historyFilters)
   })
 
   function applyHistoryFailure(err) {
     historyRows = []
     historyCursor = null
+    // Drop the window too: leaving the superseded one on screen next to an error
+    // claims a range the failed query never covered.
+    historyWindowStart = null
 
     if (err.status === 503) {
       historyUnavailable = err.message
@@ -218,20 +221,28 @@
     }
   }
 
-  async function runHistorySearch(request) {
+  async function runHistorySearch(filters) {
     const seq = ++historyRequestSeq
+    // Resolved now, not when `historyFilters` last recomputed, so the window is
+    // always relative to this search.
+    const from = rangeStart(filters.range)
+    const params = historyParams({ ...filters, from })
 
     historyLoading = true
+    // A superseded "Load more" never reaches its own reset (the seq guard
+    // discards it), so clear the flag here or the button stays disabled forever.
+    historyLoadingMore = false
     historyError = ''
     historyUnavailable = ''
 
     try {
-      const page = await queryLogHistory.search(request.params)
+      const page = await queryLogHistory.search(params)
       if (seq !== historyRequestSeq) return
 
       historyRows = toHistoryRows(page.entries)
       historyCursor = page.next_cursor || null
-      historyWindowStart = request.from
+      historyPageParams = params
+      historyWindowStart = from
       // Remount the viewer so a fresh result set starts at the top rather than
       // wherever the previous one was scrolled to. Not keyed on appended pages:
       // "Load more" should not throw away the reader's position.
@@ -246,15 +257,16 @@
   }
 
   async function loadMoreHistory() {
-    if (!historyCursor || historyLoading || historyLoadingMore) return
+    if (!historyCursor || !historyPageParams || historyLoading || historyLoadingMore) return
 
     const seq = historyRequestSeq
     const cursor = historyCursor
+    const params = { ...historyPageParams, cursor }
 
     historyLoadingMore = true
 
     try {
-      const page = await queryLogHistory.search({ ...historyRequest.params, cursor })
+      const page = await queryLogHistory.search(params)
       if (seq !== historyRequestSeq) return
 
       historyRows = historyRows.concat(toHistoryRows(page.entries))
@@ -264,7 +276,9 @@
 
       historyError = err.message === 'unauthorized' ? '' : err.message
     } finally {
-      if (seq === historyRequestSeq) historyLoadingMore = false
+      // Unconditional: a stale load-more still has to release the button, which
+      // a superseding search re-enables for the new result set.
+      historyLoadingMore = false
     }
   }
 
@@ -335,7 +349,7 @@
       {/key}
     </div>
   {:else}
-    <div class="controls">
+    <div class="controls history">
       <div class="search">
         <Input
           bind:value={historyDomain}
@@ -362,7 +376,7 @@
     </div>
 
     <p class="window">
-      {historyWindowLabel}
+      {historyWindowLabel} · newest first
       {#if !historyLoading && !historyUnavailable && !historyError}
         <span class="match-count">
           · {historyRows.length}{historyCursor ? '+' : ''} {historyRows.length === 1 ? 'query' : 'queries'}
@@ -454,8 +468,13 @@
     flex-wrap: wrap;
   }
   .search {
-    flex: 1 1 200px;
+    flex: 1 1 260px;
     max-width: 420px;
+  }
+  /* Two inputs plus a select share the history row, so they need a narrower
+     basis than the single field the live row carries. */
+  .controls.history .search {
+    flex: 1 1 180px;
   }
   /* Inputs carry a global margin-bottom for stacked form fields, which throws
      the toolbar row out of vertical alignment. */
