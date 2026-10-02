@@ -1,3 +1,4 @@
+{{- include "blockasaurus.validateQueryLogVolume" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -30,6 +31,44 @@ spec:
       {{- with .Values.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if and .Values.queryLogVolume.enabled (eq .Values.queryLogVolume.type "hostPath") }}
+      {{- $owner := include "blockasaurus.queryLogOwner" . }}
+      initContainers:
+        # The kubelet creates a DirectoryOrCreate hostPath as root:root 0755 and
+        # does not apply fsGroup to hostPath volumes, so without this the
+        # non-root main container cannot write the database. Idempotent: an
+        # existing directory keeps its contents, which is what makes the query
+        # log survive a pod restart.
+        - name: querylog-dir
+          image: "{{ .Values.queryLogVolume.hostPath.initImage.repository }}:{{ .Values.queryLogVolume.hostPath.initImage.tag }}"
+          imagePullPolicy: {{ .Values.queryLogVolume.hostPath.initImage.pullPolicy }}
+          command:
+            - sh
+            - -c
+            - chown {{ $owner }} {{ .Values.queryLogVolume.mountPath | quote }} && chmod 0750 {{ .Values.queryLogVolume.mountPath | quote }}
+          securityContext:
+            # Root only to chown, and only on this one mount. Everything else is
+            # dropped, including the ability to regain privileges.
+            runAsUser: 0
+            runAsGroup: 0
+            runAsNonRoot: false
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              add:
+                - CHOWN
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 32Mi
+          volumeMounts:
+            - name: querylog
+              mountPath: {{ .Values.queryLogVolume.mountPath }}
       {{- end }}
       containers:
         - name: blockasaurus
@@ -97,6 +136,10 @@ spec:
             - name: data
               mountPath: /data
             {{- end }}
+            {{- if .Values.queryLogVolume.enabled }}
+            - name: querylog
+              mountPath: {{ .Values.queryLogVolume.mountPath }}
+            {{- end }}
             {{- if .Values.tls.enabled }}
             - name: tls-certs
               mountPath: {{ .Values.tls.mountPath }}
@@ -112,6 +155,17 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: {{ include "blockasaurus.fullname" . }}
+        {{- end }}
+        {{- if .Values.queryLogVolume.enabled }}
+        - name: querylog
+          {{- if eq .Values.queryLogVolume.type "hostPath" }}
+          hostPath:
+            path: {{ .Values.queryLogVolume.hostPath.path }}
+            # Created on first start, so there is nothing to provision by hand.
+            type: DirectoryOrCreate
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
         {{- end }}
         {{- if .Values.tls.enabled }}
         - name: tls-certs

@@ -20,6 +20,14 @@ config:
   # group containing 1.1.1.1 and 1.0.0.1.
   # Persistent config store for the web UI
   databasePath: /data/blocky.db
+  # Query log. The sqlite target is what the web UI's Logs -> History tab
+  # searches; any other type leaves that tab reporting it is unavailable.
+  # The target lives on the node-local queryLogVolume below, not on the config
+  # PVC -- see the comment there for why.
+  queryLog:
+    type: sqlite
+    target: /querylog/querylog.db
+    logRetentionDays: 30
   # Optional on-disk cache for downloaded blocklists. Left unset, downloads are
   # stateless: nothing is written to disk and every refresh pulls each source in
   # full. Point cachePath at a writable directory on the persistence volume below
@@ -174,6 +182,56 @@ persistence:
   storageClass: ""
   accessMode: ReadWriteOnce
   size: 256Mi
+
+# Volume for the SQLite query log (config.queryLog below).
+#
+# Node-local by default, and deliberately not on the config PVC. The two have
+# nothing in common: the config database is small, precious and rarely written,
+# while the query log is append-heavy, bulky (~18 MB/day at 46k queries/day) and
+# entirely disposable. Keeping it off shared/network storage means a slow or
+# flaky backing store cannot push back on the write path, and means the config
+# volume does not have to be sized for a retention window.
+#
+# Losing the query log when the pod moves to another node is the accepted
+# trade-off: it is history, not state -- nothing in DNS resolution depends on it,
+# and the writer recreates the database on first use.
+queryLogVolume:
+  enabled: true
+
+  # Where the volume is mounted. Point config.queryLog.target at a file inside
+  # this directory; the chart refuses to render if it does not (see
+  # templates/_helpers.tpl).
+  mountPath: /querylog
+
+  # hostPath  a directory on the node, created if it does not exist. Survives
+  #           pod restarts and node reboots; gone when the pod lands on a
+  #           different node. REQUIRES a namespace that permits hostPath --
+  #           Pod Security "baseline" and "restricted" both forbid it, so the
+  #           namespace needs pod-security.kubernetes.io/enforce: privileged.
+  # emptyDir  node-local scratch managed by the kubelet. Needs no PodSecurity
+  #           exemption and no init container, but is recreated empty on every
+  #           pod restart, not just on a node change.
+  type: hostPath
+
+  hostPath:
+    # Must sit under a writable path on the node. On Talos, /var/lib is writable
+    # and persists across reboots, while /var/mnt is read-only unless a disk is
+    # mounted there -- a DirectoryOrCreate hostPath under /var/mnt fails to
+    # mount with EROFS.
+    path: /var/lib/blockasaurus-querylog
+
+    # The kubelet creates a DirectoryOrCreate hostPath as root:root 0755, and
+    # fsGroup is NOT applied to hostPath volumes, so a container running as a
+    # non-root user cannot write to it. This init container fixes the ownership
+    # once per pod start; it is idempotent, so an existing directory and its
+    # contents are left in place. It needs its own image because the application
+    # image is FROM scratch and has no shell or chown.
+    #
+    # Not used when type is emptyDir: the kubelet applies fsGroup there.
+    initImage:
+      repository: busybox
+      tag: stable-musl
+      pullPolicy: IfNotPresent
 
 # DNS service — exposed via LoadBalancer (MetalLB)
 service:
