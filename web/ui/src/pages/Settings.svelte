@@ -19,6 +19,7 @@
   let blockTTL = $state(DEFAULT_BLOCK_TTL)
   let loading = $state(true)
   let saving = $state(false)
+  let blockLoadFailed = $state(false)
 
   let h3Enabled = $state(false)
   let h3Active = $state(false)
@@ -56,9 +57,10 @@
   // A section whose read failed is excluded outright. Its fields show defaults
   // we never confirmed, so "changed" there means changed from a guess, and
   // saving it would write that guess over whatever is really in effect.
+  const blockSavable = $derived(blockChanged && !blockLoadFailed)
   const rebindSavable = $derived(rebindChanged && !rebindLoadFailed)
   const h3Savable = $derived(h3Changed && !h3LoadFailed)
-  const dirty = $derived(blockChanged || rebindSavable || h3Savable)
+  const dirty = $derived(blockSavable || rebindSavable || h3Savable)
 
   // The API also accepts a comma-separated list of block IP addresses, which no
   // named option can represent. Keep a stored value like that selectable so
@@ -74,16 +76,23 @@
 
   async function load() {
     loading = true
+    // Same no-silent-fallback rule the other two sections carry. Block type in
+    // particular can be a comma-separated IP list no default could stand in for,
+    // so a failed read that let Save proceed would quietly replace it with
+    // ZEROIP the next time anyone touched the TTL.
     try {
       const data = await blockSettings.get()
       blockType = data.block_type || DEFAULT_BLOCK_TYPE
       blockTTL = data.block_ttl || DEFAULT_BLOCK_TTL
       saved.blockType = blockType
       saved.blockTTL = blockTTL
-    } catch { /* use defaults */ }
-    // No silent fallback here, unlike block settings: defaulting to
-    // "off, empty allowlist" would render a security control as disabled when we
-    // simply failed to read it, and the next Save would make that true.
+      blockLoadFailed = false
+    } catch {
+      blockLoadFailed = true
+    }
+    // Defaulting to "off, empty allowlist" would render a security control as
+    // disabled when we simply failed to read it, and the next Save would make
+    // that true.
     try {
       const data = await rebindingSettings.get()
       rebindEnabled = data.enabled ?? false
@@ -146,9 +155,9 @@
   }
 
   // One save for the page. Only sections that actually changed are sent, and
-  // never a section whose read failed -- see `rebindSavable`. The controls in
-  // such a section are disabled too, but that is the courtesy; this is the
-  // guarantee.
+  // never a section whose read failed -- see the `*Savable` deriveds. The
+  // controls in such a section are disabled too, but that is the courtesy; this
+  // is the guarantee.
   async function save() {
     saving = true
 
@@ -159,7 +168,7 @@
     // so too, via restart_required.
     let needsApply = false
 
-    if (blockChanged) {
+    if (blockSavable) {
       try {
         await blockSettings.update({ block_type: blockType, block_ttl: blockTTL })
         saved.blockType = blockType
@@ -213,14 +222,33 @@
     <div class:loading-state={loading}>
       <section class="section">
         <h2 class="section-title">Response Behavior</h2>
-        <div class="form-layout">
+
+        {#if blockLoadFailed}
+          <p class="load-error" role="alert">
+            Could not load the current blocking settings, so this section is not
+            showing what is actually in effect. Reload the page before changing
+            anything.
+          </p>
+        {/if}
+
+        <div class="form-layout" class:loading-state={blockLoadFailed}>
           <div class="form-field">
             <Label for="block-type">Block Type</Label>
-            <Select id="block-type" bind:value={blockType} options={blockTypeOptions} />
+            <Select
+              id="block-type"
+              bind:value={blockType}
+              options={blockTypeOptions}
+              disabled={blockLoadFailed}
+            />
           </div>
           <div class="form-field">
             <Label for="block-ttl">Block TTL</Label>
-            <Input id="block-ttl" bind:value={blockTTL} placeholder="1m, 30s, 1h" />
+            <Input
+              id="block-ttl"
+              bind:value={blockTTL}
+              disabled={blockLoadFailed}
+              placeholder="1m, 30s, 1h"
+            />
           </div>
         </div>
       </section>

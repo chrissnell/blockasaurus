@@ -184,7 +184,7 @@ export function matchSuggestions(options, query, max) {
   const prefix = []
   const substring = []
 
-  for (const option of options) {
+  for (const option of options || []) {
     if (!needle) {
       prefix.push(option)
     } else {

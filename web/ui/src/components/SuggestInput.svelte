@@ -57,6 +57,16 @@
     open = true
   }
 
+  // Typing re-pulls only when there is nothing to show. Focusing the box before
+  // any traffic has arrived would otherwise leave it empty for the whole focus,
+  // with nothing the reader could do about it. A snapshot that found something
+  // still stays frozen, so the open list does not reorder mid-word.
+  function onInput() {
+    if (!open || options.length === 0) openList()
+
+    activeValue = null
+  }
+
   function close() {
     open = false
     activeValue = null
@@ -140,7 +150,7 @@
     spellcheck="false"
     autocapitalize="off"
     onfocus={openList}
-    oninput={() => { if (!open) openList(); activeValue = null }}
+    oninput={onInput}
     onkeydown={onKeydown}
   />
 
