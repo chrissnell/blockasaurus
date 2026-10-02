@@ -88,3 +88,80 @@ export function toHistoryRow(entry) {
 export function toHistoryRows(entries) {
   return (entries || []).map(toHistoryRow)
 }
+
+// --- Filter autocomplete ---
+//
+// Candidates for the History tab's two filter boxes. Built from rows the page
+// already holds -- the live ring buffer and the pages fetched into the tab --
+// so typing costs no request, and every suggestion is a value the search will
+// actually match. The flip side is coverage: a client that has been quiet for
+// the whole session and is not in the loaded page will not be offered, so the
+// boxes stay free-text and a suggestion is only ever a shortcut.
+
+// Ranked lists are capped so a full ring buffer cannot hand the filter boxes
+// more candidates than a reader would ever scroll.
+const MAX_SUGGESTIONS = 200
+
+// client_names arrives as the resolver's "; "-joined list. Each name is a
+// filter on its own, so they are offered separately rather than as one string
+// that would match nothing.
+function splitNames(names) {
+  return (names || '').split(';').map((n) => n.trim()).filter(Boolean)
+}
+
+function tally(map, value, hint) {
+  const key = (value || '').trim()
+  if (!key) return
+
+  const existing = map.get(key)
+  if (!existing) {
+    map.set(key, { count: 1, hint: hint || '' })
+
+    return
+  }
+
+  existing.count += 1
+  // First non-empty hint wins; a later row carrying none must not blank it.
+  if (!existing.hint && hint) existing.hint = hint
+}
+
+// Most-seen first, ties broken alphabetically so the order is stable between
+// renders rather than dependent on insertion.
+function ranked(map) {
+  return [...map.entries()]
+    .sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]))
+    .slice(0, MAX_SUGGESTIONS)
+    .map(([value, meta]) => ({ value, hint: meta.hint }))
+}
+
+// Both the IP and each resolved name are offered as separate candidates: the
+// server matches the client filter against either column, so whichever one the
+// reader recognises is a valid filter by itself. Each carries the other as its
+// hint, so picking one is an informed choice.
+export function clientSuggestions(...rowLists) {
+  const map = new Map()
+
+  for (const rows of rowLists) {
+    for (const row of rows || []) {
+      tally(map, row.client_ip, row.client_names)
+
+      for (const name of splitNames(row.client_names)) {
+        tally(map, name, row.client_ip)
+      }
+    }
+  }
+
+  return ranked(map)
+}
+
+export function domainSuggestions(...rowLists) {
+  const map = new Map()
+
+  for (const rows of rowLists) {
+    for (const row of rows || []) {
+      tally(map, row.question_name)
+    }
+  }
+
+  return ranked(map)
+}

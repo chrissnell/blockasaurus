@@ -8,6 +8,8 @@ import {
   DEFAULT_RANGE,
   HISTORY_PAGE_SIZE,
   RANGE_OPTIONS,
+  clientSuggestions,
+  domainSuggestions,
   historyParams,
   rangeLabel,
   rangeStart,
@@ -105,4 +107,48 @@ test('toHistoryRow leaves unblocked entries at info level', () => {
 test('toHistoryRows handles a missing list', () => {
   assert.deepEqual(toHistoryRows(undefined), [])
   assert.deepEqual(toHistoryRows([{ blocked: false }]), [toHistoryRow({ blocked: false })])
+})
+
+test('clientSuggestions offers the IP and each resolved name, cross-hinted', () => {
+  const rows = [
+    { client_ip: '192.168.1.5', client_names: 'laptop.lan; laptop' },
+    { client_ip: '192.168.1.6', client_names: '' },
+  ]
+
+  assert.deepEqual(clientSuggestions(rows), [
+    { value: '192.168.1.5', hint: 'laptop.lan; laptop' },
+    { value: '192.168.1.6', hint: '' },
+    { value: 'laptop', hint: '192.168.1.5' },
+    { value: 'laptop.lan', hint: '192.168.1.5' },
+  ])
+})
+
+test('clientSuggestions ranks the busiest clients first and dedupes across sources', () => {
+  const history = [{ client_ip: '10.0.0.2' }, { client_ip: '10.0.0.1' }, { client_ip: '10.0.0.1' }]
+  const live = [{ client_ip: '10.0.0.1' }]
+
+  assert.deepEqual(clientSuggestions(history, live).map((o) => o.value), ['10.0.0.1', '10.0.0.2'])
+})
+
+test('clientSuggestions keeps a hint a later row no longer carries', () => {
+  const rows = [
+    { client_ip: '10.0.0.1', client_names: 'nas' },
+    { client_ip: '10.0.0.1', client_names: '' },
+  ]
+
+  assert.equal(clientSuggestions(rows)[0].hint, 'nas')
+})
+
+test('clientSuggestions skips rows with nothing to offer', () => {
+  assert.deepEqual(clientSuggestions([{ client_ip: '  ', client_names: ' ; ' }], undefined), [])
+})
+
+test('domainSuggestions ranks by hit count', () => {
+  const rows = [
+    { question_name: 'b.example.com' },
+    { question_name: 'a.example.com' },
+    { question_name: 'a.example.com' },
+  ]
+
+  assert.deepEqual(domainSuggestions(rows).map((o) => o.value), ['a.example.com', 'b.example.com'])
 })

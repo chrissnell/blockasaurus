@@ -21,17 +21,36 @@
   let h3Active = $state(false)
   let h3RestartRequired = $state(false)
   let h3Unavailable = $state('')
-  let h3Saving = $state(false)
   let h3LoadFailed = $state(false)
-  let h3Dirty = $state(false)
 
   let rebindEnabled = $state(false)
   let allowedDomains = $state([])
   let domainInput = $state('')
   let domainError = $state('')
-  let rebindSaving = $state(false)
   let rebindLoadFailed = $state(false)
-  let rebindDirty = $state(false)
+
+  // What the server last confirmed. The page saves through one button, so what
+  // each section needs is not a hand-maintained dirty flag but an answer to
+  // "does this differ from what is stored" -- which is also what keeps an
+  // untouched section out of the save entirely.
+  let saved = $state({
+    blockType: 'ZEROIP',
+    blockTTL: '1m',
+    rebindEnabled: false,
+    allowedDomains: [],
+    h3Enabled: false,
+  })
+
+  const blockChanged = $derived(
+    blockType !== saved.blockType || blockTTL !== saved.blockTTL,
+  )
+  const rebindChanged = $derived(
+    rebindEnabled !== saved.rebindEnabled
+      || allowedDomains.length !== saved.allowedDomains.length
+      || allowedDomains.some((d, i) => d !== saved.allowedDomains[i]),
+  )
+  const h3Changed = $derived(h3Enabled !== saved.h3Enabled)
+  const dirty = $derived(blockChanged || rebindChanged || h3Changed)
 
   // The API also accepts a comma-separated list of block IP addresses, which no
   // named option can represent. Keep a stored value like that selectable so
@@ -48,6 +67,8 @@
       const data = await blockSettings.get()
       blockType = data.block_type || 'ZEROIP'
       blockTTL = data.block_ttl || '1m'
+      saved.blockType = blockType
+      saved.blockTTL = blockTTL
     } catch { /* use defaults */ }
     // No silent fallback here, unlike block settings: defaulting to
     // "off, empty allowlist" would render a security control as disabled when we
@@ -56,8 +77,9 @@
       const data = await rebindingSettings.get()
       rebindEnabled = data.enabled ?? false
       allowedDomains = data.allowed_domains ?? []
+      saved.rebindEnabled = rebindEnabled
+      saved.allowedDomains = [...allowedDomains]
       rebindLoadFailed = false
-      rebindDirty = false
     } catch {
       rebindLoadFailed = true
     }
@@ -78,22 +100,7 @@
     h3Active = data.active ?? false
     h3RestartRequired = data.restart_required ?? false
     h3Unavailable = data.unavailable_reason ?? ''
-    h3Dirty = false
-  }
-
-  // No markDirty() here, unlike every other save on this page: the header's
-  // Apply rebuilds the resolver chain and cannot open or close a listener, so
-  // sending the operator there would promise an effect it does not have. The
-  // server says so too, via restart_required.
-  async function saveHTTP3() {
-    h3Saving = true
-    try {
-      applyH3(await http3Settings.update({ enabled: h3Enabled }))
-      toast('DoH3 setting saved', 'success')
-    } catch (e) {
-      toast(e.message, 'danger')
-    }
-    h3Saving = false
+    saved.h3Enabled = h3Enabled
   }
 
   // Mirrors config.ValidateAllowedDomain on the server. Duplicated here only to
@@ -121,36 +128,66 @@
     allowedDomains = [...allowedDomains, domain]
     domainInput = ''
     domainError = ''
-    rebindDirty = true
   }
 
   function removeDomain(index) {
     allowedDomains = allowedDomains.filter((_, i) => i !== index)
-    rebindDirty = true
   }
 
-  async function saveRebinding() {
-    rebindSaving = true
-    try {
-      await rebindingSettings.update({ enabled: rebindEnabled, allowed_domains: allowedDomains })
-      markDirty()
-      rebindDirty = false
-      toast('Rebinding protection saved', 'success')
-    } catch (e) {
-      toast(e.message, 'danger')
-    }
-    rebindSaving = false
-  }
-
+  // One save for the page. Only sections that actually changed are sent, which
+  // is also what keeps a section whose read failed out of the request: its
+  // fields are frozen at the values we never managed to load.
   async function save() {
     saving = true
-    try {
-      await blockSettings.update({ block_type: blockType, block_ttl: blockTTL })
-      markDirty()
-      toast('Block settings saved', 'success')
-    } catch (e) {
-      toast(e.message, 'danger')
+
+    const failed = []
+    // DoH3 is deliberately excluded from this: the header's Apply rebuilds the
+    // resolver chain and cannot open or close a listener, so sending the
+    // operator there would promise an effect it does not have. The server says
+    // so too, via restart_required.
+    let needsApply = false
+
+    if (blockChanged) {
+      try {
+        await blockSettings.update({ block_type: blockType, block_ttl: blockTTL })
+        saved.blockType = blockType
+        saved.blockTTL = blockTTL
+        needsApply = true
+      } catch (e) {
+        failed.push(`response behavior: ${e.message}`)
+      }
     }
+
+    if (rebindChanged) {
+      try {
+        await rebindingSettings.update({
+          enabled: rebindEnabled,
+          allowed_domains: allowedDomains,
+        })
+        saved.rebindEnabled = rebindEnabled
+        saved.allowedDomains = [...allowedDomains]
+        needsApply = true
+      } catch (e) {
+        failed.push(`rebinding protection: ${e.message}`)
+      }
+    }
+
+    if (h3Changed) {
+      try {
+        applyH3(await http3Settings.update({ enabled: h3Enabled }))
+      } catch (e) {
+        failed.push(`DoH3: ${e.message}`)
+      }
+    }
+
+    if (needsApply) markDirty()
+
+    if (failed.length) {
+      toast(`Could not save ${failed.join('; ')}`, 'danger')
+    } else {
+      toast('Settings saved', 'success')
+    }
+
     saving = false
   }
 
@@ -160,161 +197,144 @@
 <div class="page">
   <h1 class="page-title">Settings</h1>
 
-  <div class:loading-state={loading}>
-    <Box title="Response Behavior">
-      <div class="form-layout">
-        <div class="form-field">
-          <Label for="block-type">Block Type</Label>
-          <Select id="block-type" bind:value={blockType} options={blockTypeOptions} />
-        </div>
-        <div class="form-field">
-          <Label for="block-ttl">Block TTL</Label>
-          <Input id="block-ttl" bind:value={blockTTL} placeholder="1m, 30s, 1h" />
-        </div>
-        <div class="form-actions">
-          <Button onclick={save} disabled={saving}>
-            {saving ? 'Saving...' : 'Save Settings'}
-          </Button>
-        </div>
-      </div>
-    </Box>
-
-    <Box title="DNS Rebinding Protection">
-      <p class="section-hint">
-        Drops answers from the upstream resolvers that map a name to a private,
-        loopback, link-local or unspecified address — the DNS rebinding attack, where
-        a hostile site resolves its own domain into your LAN. Answers from custom DNS,
-        the hosts file and conditional upstreams are never inspected.
-      </p>
-
-      {#if rebindLoadFailed}
-        <p class="load-error" role="alert">
-          Could not load the current rebinding settings, so this section is not
-          showing what is actually in effect. Reload the page before changing
-          anything.
-        </p>
-      {/if}
-
-      <div class="form-layout" class:loading-state={rebindLoadFailed}>
-        <Toggle
-          bind:checked={rebindEnabled}
-          onCheckedChange={() => (rebindDirty = true)}
-          label="Enable rebinding protection"
-        />
-
-        <div class="form-field">
-          <Label for="allowed-domain">Allowed Domains</Label>
-          <p class="section-hint">
-            Split-horizon names that legitimately resolve to a private address through
-            the upstreams. Each entry also matches its subdomains. Without an entry
-            here, such a name silently resolves to nothing for every client.
-          </p>
-          <div class="chip-list">
-            {#each allowedDomains as domain, i (i)}
-              <span class="chip">
-                {domain}
-                <button
-                  type="button"
-                  class="chip-remove"
-                  onclick={() => removeDomain(i)}
-                  aria-label={`Remove ${domain}`}
-                >&times;</button>
-              </span>
-            {:else}
-              <span class="empty-hint">no allowed domains</span>
-            {/each}
+  <Box>
+    <div class:loading-state={loading}>
+      <section class="section">
+        <h2 class="section-title">Response Behavior</h2>
+        <div class="form-layout">
+          <div class="form-field">
+            <Label for="block-type">Block Type</Label>
+            <Select id="block-type" bind:value={blockType} options={blockTypeOptions} />
           </div>
-          <div class="add-row">
-            <Input
-              id="allowed-domain"
-              bind:value={domainInput}
-              placeholder="nas.example.com"
-              oninput={() => (domainError = '')}
-              onkeydown={(e) => e.key === 'Enter' && addDomain()}
-            />
-            <Button onclick={addDomain}>Add</Button>
+          <div class="form-field">
+            <Label for="block-ttl">Block TTL</Label>
+            <Input id="block-ttl" bind:value={blockTTL} placeholder="1m, 30s, 1h" />
           </div>
-          {#if domainError}
-            <p class="field-error" role="alert">{domainError}</p>
-          {/if}
         </div>
+      </section>
 
-        <div class="form-actions">
-          {#if rebindDirty}
-            <span class="unsaved-hint">unsaved changes</span>
-          {/if}
-          <Button onclick={saveRebinding} disabled={rebindSaving || rebindLoadFailed}>
-            {rebindSaving ? 'Saving...' : 'Save Rebinding Settings'}
-          </Button>
-        </div>
-      </div>
-    </Box>
-
-    <Box title="DNS over HTTP/3 (DoH3)">
-      <p class="section-hint">
-        Answers the DoH endpoint over HTTP/3 (RFC 9114) on the UDP counterparts of
-        the HTTPS port, in addition to HTTPS over TCP. Clients that support it
-        switch transports on their own &mdash; the DoH URL does not change, so
-        there is nothing to reconfigure on the client side.
-      </p>
-
-      {#if h3LoadFailed}
-        <p class="load-error" role="alert">
-          Could not load the current DoH3 setting, so this section is not showing
-          what is actually in effect. Reload the page before changing anything.
+      <section class="section">
+        <h2 class="section-title">DNS Rebinding Protection</h2>
+        <p class="section-hint">
+          Drops answers from the upstream resolvers that map a name to a private,
+          loopback, link-local or unspecified address — the DNS rebinding attack, where
+          a hostile site resolves its own domain into your LAN. Answers from custom DNS,
+          the hosts file and conditional upstreams are never inspected.
         </p>
-      {/if}
 
-      <div class="form-layout" class:loading-state={h3LoadFailed}>
-        <Toggle
-          bind:checked={h3Enabled}
-          onCheckedChange={() => (h3Dirty = true)}
-          label="Serve DoH over HTTP/3"
-        />
-
-        <!-- Suppressed on a failed read: "not serving" is a claim about the
-             running process, and we would not have grounds for it. -->
-        {#if !h3LoadFailed}
-          <p class="status-line">
-            {h3Active
-              ? 'This server is currently serving DoH over HTTP/3.'
-              : 'This server is not currently serving DoH over HTTP/3.'}
+        {#if rebindLoadFailed}
+          <p class="load-error" role="alert">
+            Could not load the current rebinding settings, so this section is not
+            showing what is actually in effect. Reload the page before changing
+            anything.
           </p>
         {/if}
 
-        <!-- An HTTP-only deployment is permanently unavailable for HTTP/3 and
-             never asked for it, so the reason is only an error for someone who
-             actually wants DoH3 on. Styling it red either way would cry wolf on
-             the Settings page of a default install. -->
-        {#if h3Unavailable && h3Enabled}
-          <p class="field-error" role="alert">
-            DoH3 is on, but HTTP/3 cannot start in this process: {h3Unavailable}.
-            A restart will not change that &mdash; fix it in the YAML config first.
-          </p>
-        {:else if h3Unavailable}
-          <p class="restart-hint">
-            HTTP/3 is not available on this server: {h3Unavailable}. Turning this
-            on will not change that until the YAML config does.
-          </p>
-        {:else if h3RestartRequired && !h3Dirty}
-          <p class="restart-hint" role="status">
-            Saved, but not yet in effect. Unlike everything else on this page,
-            this one needs a restart of blockasaurus &mdash; <b>Apply</b> rebuilds
-            the resolver chain and cannot open or close a listener.
+        <div class="form-layout" class:loading-state={rebindLoadFailed}>
+          <Toggle bind:checked={rebindEnabled} label="Enable rebinding protection" />
+
+          <div class="form-field">
+            <Label for="allowed-domain">Allowed Domains</Label>
+            <p class="section-hint">
+              Split-horizon names that legitimately resolve to a private address through
+              the upstreams. Each entry also matches its subdomains. Without an entry
+              here, such a name silently resolves to nothing for every client.
+            </p>
+            <div class="chip-list">
+              {#each allowedDomains as domain, i (i)}
+                <span class="chip">
+                  {domain}
+                  <button
+                    type="button"
+                    class="chip-remove"
+                    onclick={() => removeDomain(i)}
+                    aria-label={`Remove ${domain}`}
+                  >&times;</button>
+                </span>
+              {:else}
+                <span class="empty-hint">no allowed domains</span>
+              {/each}
+            </div>
+            <div class="add-row">
+              <Input
+                id="allowed-domain"
+                bind:value={domainInput}
+                placeholder="nas.example.com"
+                oninput={() => (domainError = '')}
+                onkeydown={(e) => e.key === 'Enter' && addDomain()}
+              />
+              <Button onclick={addDomain}>Add</Button>
+            </div>
+            {#if domainError}
+              <p class="field-error" role="alert">{domainError}</p>
+            {/if}
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2 class="section-title">DNS over HTTP/3 (DoH3)</h2>
+        <p class="section-hint">
+          Answers the DoH endpoint over HTTP/3 (RFC 9114) on the UDP counterparts of
+          the HTTPS port, in addition to HTTPS over TCP. Clients that support it
+          switch transports on their own &mdash; the DoH URL does not change, so
+          there is nothing to reconfigure on the client side.
+        </p>
+
+        {#if h3LoadFailed}
+          <p class="load-error" role="alert">
+            Could not load the current DoH3 setting, so this section is not showing
+            what is actually in effect. Reload the page before changing anything.
           </p>
         {/if}
 
-        <div class="form-actions">
-          {#if h3Dirty}
-            <span class="unsaved-hint">unsaved changes</span>
+        <div class="form-layout" class:loading-state={h3LoadFailed}>
+          <Toggle bind:checked={h3Enabled} label="Serve DoH over HTTP/3" />
+
+          <!-- Suppressed on a failed read: "not serving" is a claim about the
+               running process, and we would not have grounds for it. -->
+          {#if !h3LoadFailed}
+            <p class="status-line">
+              {h3Active
+                ? 'This server is currently serving DoH over HTTP/3.'
+                : 'This server is not currently serving DoH over HTTP/3.'}
+            </p>
           {/if}
-          <Button onclick={saveHTTP3} disabled={h3Saving || h3LoadFailed}>
-            {h3Saving ? 'Saving...' : 'Save DoH3 Setting'}
-          </Button>
+
+          <!-- An HTTP-only deployment is permanently unavailable for HTTP/3 and
+               never asked for it, so the reason is only an error for someone who
+               actually wants DoH3 on. Styling it red either way would cry wolf on
+               the Settings page of a default install. -->
+          {#if h3Unavailable && h3Enabled}
+            <p class="field-error" role="alert">
+              DoH3 is on, but HTTP/3 cannot start in this process: {h3Unavailable}.
+              A restart will not change that &mdash; fix it in the YAML config first.
+            </p>
+          {:else if h3Unavailable}
+            <p class="restart-hint">
+              HTTP/3 is not available on this server: {h3Unavailable}. Turning this
+              on will not change that until the YAML config does.
+            </p>
+          {:else if h3RestartRequired && !h3Changed}
+            <p class="restart-hint" role="status">
+              Saved, but not yet in effect. Unlike everything else on this page,
+              this one needs a restart of blockasaurus &mdash; <b>Apply</b> rebuilds
+              the resolver chain and cannot open or close a listener.
+            </p>
+          {/if}
         </div>
+      </section>
+
+      <div class="form-actions">
+        {#if dirty}
+          <span class="unsaved-hint">unsaved changes</span>
+        {/if}
+        <Button onclick={save} disabled={saving || !dirty}>
+          {saving ? 'Saving...' : 'Save Settings'}
+        </Button>
       </div>
-    </Box>
-  </div>
+    </div>
+  </Box>
 </div>
 
 <Toaster />
@@ -330,6 +350,21 @@
     opacity: 0.5;
     pointer-events: none;
   }
+  .section + .section {
+    margin-top: var(--space-6);
+    padding-top: var(--space-6);
+    border-top: 1px dotted var(--color-border);
+  }
+  /* Matches chonky's .box-title, which is what each of these sections used to
+     have of its own before they moved into one box. */
+  .section-title {
+    font-size: var(--text-xs);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--color-text-muted);
+    margin-bottom: var(--space-4);
+  }
   .form-layout {
     display: flex;
     flex-direction: column;
@@ -340,10 +375,18 @@
     flex-direction: column;
     gap: var(--space-2);
   }
+  /* The layout spaces its own rows; the inputs' stacked-form margin only adds
+     an uneven second gap on top of that. */
+  .form-layout :global(input) {
+    margin-bottom: 0;
+  }
   .form-actions {
     display: flex;
     justify-content: flex-end;
-    padding-top: var(--space-2);
+    align-items: center;
+    margin-top: var(--space-6);
+    padding-top: var(--space-4);
+    border-top: 1px dotted var(--color-border);
   }
   .section-hint {
     color: var(--color-text-muted);
@@ -373,6 +416,7 @@
     border: none;
     color: var(--color-text-dim);
     cursor: pointer;
+    font-family: inherit;
     font-size: 1rem;
     line-height: 1;
     padding: 0 0.1rem;
@@ -387,7 +431,12 @@
     gap: var(--space-2);
     align-items: center;
   }
-  .add-row :global(input) { flex: 1; }
+  /* The flex item is Input's wrapper, not the <input> inside it: sizing the
+     inner element leaves the wrapper to shrink-wrap and the field ends up
+     narrower than the row. The wrapper also carries the input's stacked-form
+     margin-bottom, which is what pushed the field off the Add button's centre. */
+  .add-row :global(.input-wrapper) { flex: 1; }
+  .add-row :global(input) { margin-bottom: 0; }
   .field-error {
     color: var(--color-danger);
     font-size: var(--text-sm);
@@ -414,6 +463,5 @@
     color: var(--color-text-muted);
     font-size: var(--text-sm);
     margin-right: var(--space-3);
-    align-self: center;
   }
 </style>
