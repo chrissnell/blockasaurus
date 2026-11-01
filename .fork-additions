@@ -19,6 +19,8 @@ Dockerfile.goreleaser
 VERSION
 api/configapi/configapi_suite_test.go
 api/configapi/handler.go
+api/configapi/handler_querylog.go
+api/configapi/handler_querylog_test.go
 api/configapi/handler_test.go
 api/configapi/integration_test.go
 api/configapi/server.cfg.yaml
@@ -128,10 +130,13 @@ pkg/statscollector/collector.go
 pkg/statscollector/collector_test.go
 pkg/winservice/service_other.go
 pkg/winservice/service_windows.go
+querylog/history.go
+querylog/history_test.go
 scripts/smoke-release-image.sh
 server/api_contract_test.go
 server/api_spec_contract_test.go
 server/chain_wiring_test.go
+server/query_log_history.go
 server/server_auth.go
 server/server_auth_test.go
 server/server_debug.go
@@ -162,9 +167,14 @@ web/ui/src/components/BarChart.svelte
 web/ui/src/components/CopyButton.svelte
 web/ui/src/components/DoughnutChart.svelte
 web/ui/src/components/Shell.svelte
+web/ui/src/components/SuggestInput.svelte
 web/ui/src/lib/api.js
 web/ui/src/lib/auth.svelte.js
 web/ui/src/lib/dirty.svelte.js
+web/ui/src/lib/logentries.js
+web/ui/src/lib/logentries.test.js
+web/ui/src/lib/loghistory.js
+web/ui/src/lib/loghistory.test.js
 web/ui/src/lib/theme.svelte.js
 web/ui/src/lib/ws.js
 web/ui/src/main.js

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"io"
 	"os"
 
@@ -72,6 +73,28 @@ var _ = Describe("root command", func() {
 
 			Expect(initConfig()).Should(Succeed())
 			Expect(configPath).Should(Equal(tmpFile.Path))
+		})
+
+		// Upstream's companion specs for this block cover apiHost/apiPort, apiURL
+		// and printOkOrError, all of which belong to the API-driven subcommands we
+		// replaced with the web UI. The syslog one is kept: it covers
+		// commandLogConfig, which this fork does have.
+		It("should keep command output in the terminal when the server logs to syslog", func() {
+			keepGlobals()
+
+			tmpDir = NewTmpFolder("RootCommand")
+			syslogConfig := tmpDir.CreateStringFile("config_with_syslog",
+				"log:",
+				"  target: syslog",
+				"  syslog:",
+				"    network: udp",
+				"    address: 127.0.0.1:1",
+			)
+
+			configPath = syslogConfig.Path
+
+			Expect(initConfig()).Should(Succeed())
+			Expect(fmt.Sprintf("%T", log.Log().Out)).ShouldNot(ContainSubstring("syslog"))
 		})
 	})
 

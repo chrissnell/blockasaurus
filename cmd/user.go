@@ -15,6 +15,7 @@ import (
 	"github.com/0xERR0R/blocky/auth"
 	"github.com/0xERR0R/blocky/config"
 	"github.com/0xERR0R/blocky/configstore"
+	"github.com/0xERR0R/blocky/log"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -43,8 +44,17 @@ func termReadPassword(prompt string) (string, error) {
 // openStore opens the configstore using the database path from the loaded
 // config file. Each subcommand opens/closes its own store — these are
 // short-lived CLI invocations, not long-running processes.
+//
+// Via loadConfig rather than config.LoadConfig: that is what resolves
+// BLOCKY_CONFIG_FILE and replays what loading the config logged. It used to
+// come from the root command's PreRunE, which upstream removed in #2294 so
+// that `serve` stops loading its config twice.
 func openStore() (*configstore.ConfigStore, error) {
-	cfg, err := config.LoadConfig(configPath, false)
+	cfg, err := loadConfig(false, func(cfg *config.Config) {
+		logCfg := commandLogConfig(cfg)
+
+		log.Configure(&logCfg)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}

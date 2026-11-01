@@ -6,6 +6,9 @@ import (
 	"strconv"
 
 	"github.com/0xERR0R/blocky/helpertest"
+	"github.com/0xERR0R/blocky/log"
+	"github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus/hooks/test"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -86,5 +89,33 @@ var _ = Describe("Healthcheck derives the port from the config (#2218)", func() 
 
 			return c.Execute()
 		}, "2s").Should(Succeed())
+	})
+
+	It("keeps working and logs why when the config is invalid", func() {
+		keepGlobals()
+		hook := test.NewLocal(log.Log())
+
+		ip := "127.0.0.1"
+		p := helpertest.NextFreePort()
+		port := strconv.Itoa(p)
+		hostPort := helpertest.HostPort(ip, p)
+
+		startMockServer(hostPort)
+
+		// No `upstreams:` block: this fork rejects one outright, which would make
+		// the config invalid for a different reason than the one under test.
+		writeConfig("rateLimit:\n  enable: true\n")
+
+		Eventually(func() error {
+			c := NewHealthcheckCommand()
+			c.SetArgs([]string{"-p", port, "-b", ip})
+
+			return c.Execute()
+		}, "2s").Should(Succeed())
+
+		Expect(hook.AllEntries()).Should(ContainElement(SatisfyAll(
+			HaveField("Level", logrus.WarnLevel),
+			HaveField("Message", ContainSubstring("rate must be > 0 when enabled")),
+		)))
 	})
 })

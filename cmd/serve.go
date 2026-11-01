@@ -40,12 +40,11 @@ const shutdownTimeout = 10 * time.Second
 
 func newServeCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:               "serve",
-		Args:              cobra.NoArgs,
-		Short:             "start blocky DNS server (default command)",
-		RunE:              startServer,
-		PersistentPreRunE: initConfigPreRun,
-		SilenceUsage:      true,
+		Use:          "serve",
+		Args:         cobra.NoArgs,
+		Short:        "start blocky DNS server (default command)",
+		RunE:         startServer,
+		SilenceUsage: true,
 	}
 }
 
@@ -85,6 +84,19 @@ func warnMissingPrivilegedPortCapability(ports config.Ports) {
 	}
 }
 
+// loadServerConfig loads the config, sets up logging from it and logs the banner
+func loadServerConfig() (*config.Config, error) {
+	cfg, err := loadConfig(isConfigMandatory, func(cfg *config.Config) {
+		log.Configure(&cfg.Log)
+		printBanner()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("unable to load configuration: %w", err)
+	}
+
+	return cfg, nil
+}
+
 func startServer(_ *cobra.Command, _ []string) error {
 	if winservice.IsService() {
 		return winservice.Run(runServer)
@@ -102,14 +114,10 @@ func runServer(ctx context.Context) error {
 		}
 	}
 
-	printBanner()
-
-	cfg, err := config.LoadConfig(configPath, isConfigMandatory)
+	cfg, err := loadServerConfig()
 	if err != nil {
-		return fmt.Errorf("unable to load configuration: %w", err)
+		return err
 	}
-
-	log.Configure(&cfg.Log)
 
 	warnMissingPrivilegedPortCapability(cfg.Ports)
 
@@ -203,10 +211,21 @@ func runInteractive() error {
 	defer cancel()
 
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(signals)
+
+	// Bounded by the call, not by the process: the watcher used to block on
+	// <-signals forever, so a runServer that returned on its own left a
+	// consumer behind that would swallow the next signal sent to the (package
+	// level) channel.
+	done := make(chan struct{})
+	defer close(done)
 
 	go func() {
-		<-signals
-		cancel()
+		select {
+		case <-signals:
+			cancel()
+		case <-done:
+		}
 	}()
 
 	return runServer(ctx)
