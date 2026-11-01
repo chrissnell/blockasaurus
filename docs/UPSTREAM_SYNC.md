@@ -10,12 +10,12 @@ specs failing from a cause that predates the sync (§3.4b) — and GRA-649 close
 now covers every section the config-store overlay owns, and `e2e/failing-baseline.txt` is empty.
 `VERSION` is deliberately still `0.34.38` — see §10.
 
-Last measured: 2026-10-01, against upstream `main` @ `3b7faa8` (2026-09-28). §1's table is the
+Last measured: 2026-11-01, against upstream `main` @ `501edc0` (2026-10-30). §1's table is the
 2026-09-23 pre-merge measurement and is kept as the record of what the work was; **the merge base
-for the *next* sync is `3b7faa8`**, not `2bb9b70` and not `d459311`.
+for the *next* sync is `501edc0`**, not `3b7faa8` and not `2bb9b70`.
 
-The 2026-10-01 sync (§8a) merged the only two commits upstream had produced since `2bb9b70` — both
-dependency bumps.
+The 2026-11-01 sync (§8a) is the first since the big one with substantive upstream source behind
+it: 37 commits, 97 files, 8 conflicted paths.
 
 ## 1. Measured divergence
 
@@ -439,7 +439,7 @@ sentence gets regenerated without being read.
 
 ### `make check-fork-additions` — file survival
 
-Verifies every path in `.fork-additions` (the 153 files present here and absent
+Verifies every path in `.fork-additions` (the 180 files present here and absent
 upstream) still exists and is non-empty — `MISSING` for a deleted file, `EMPTY`
 for a truncated one. This is what catches a delete/modify conflict resolved
 toward upstream. The manifest lists itself, both contract tests and both
@@ -959,14 +959,19 @@ data instead (§4b). The rest of `createQueryResolver` is position-for-position 
 
 Keep this current — it is what makes the *next* sync cheap.
 
-`.fork-additions` is the machine-checked half of this register: 170 paths, every one of them a file
-that exists here and not in upstream `3b7faa8`, verified present and non-empty by
+`.fork-additions` is the machine-checked half of this register: 180 paths, every one of them a file
+that exists here and not in upstream `501edc0`, verified present and non-empty by
 `make check-fork-additions` on every CI run. This section is the human-readable half — the same set
 grouped by *why* it exists, plus the part a file list cannot express: the upstream files we hold
 patches in. When they disagree, `.fork-additions` is right; `make check-fork-additions-sync`
 regenerates it against a fetched `upstream/main`.
 
-**Manifest count: 170 as of 2026-10-01**, and the chain is 152 → 160 → 166 → 169 → 170. The 2026-09 sync took
+**Manifest count: 180 as of 2026-11-01**, and the chain is 152 → 160 → 166 → 169 → 170 → 180. The
+2026-11-01 sync added the last ten, none of them its own work: the query-log history feature
+(`api/configapi/handler_querylog.go` + test, `querylog/history.go` + test,
+`server/query_log_history.go`, `web/ui/src/components/SuggestInput.svelte`,
+`web/ui/src/lib/logentries.js` + test, `web/ui/src/lib/loghistory.js` + test) landed without
+touching the manifest, exactly as the three before it did — see §8a. The 2026-09 sync took
 it to 160 (below). Post-sync fork PRs took it to 166 without ever saying so here: `config/debug.go`
 (+test) and `server/server_debug.go` (+test) for the loopback diagnostics listener,
 `helpertest/port.go` for the test port allocator, and `scripts/smoke-release-image.sh` for the release
@@ -991,7 +996,7 @@ upstream file was dropped at any point.
 
 | Group | Paths | Files |
 | --- | --- | --- |
-| Svelte admin SPA | `web/ui/`, plus `web/ui.go` which embeds `web/ui/dist` | 34 |
+| Svelte admin SPA | `web/ui/`, plus `web/ui.go` which embeds `web/ui/dist` | 39 |
 | Handbook | `docs/handbook/` (HTML, CSS, JS, screenshots) | 29 |
 | Packaging | `packaging/` (helm chart, systemd, wix, scripts, config), `Dockerfile.goreleaser` | 21 |
 | Sessions and users | `auth/`, `auth/authmodels/`, `cmd/user.go` (+test) | 8 |
@@ -999,13 +1004,14 @@ upstream file was dropped at any point.
 | Config/stats/log HTTP surface | `api/configapi/`, `config/client_group_endpoints.go`, `server/server_auth.go`, `server/server_stats.go`, `server/server_endpoint_info.go`, `server/server_mobileconfig.go`, `server/server_version.go` | 14 |
 | Persisted statistics | `pkg/statscollector/` | 2 |
 | Live log streaming | `logstream/` | 7 |
+| Query log history | `querylog/history.go` (+test), `server/query_log_history.go`, `api/configapi/handler_querylog.go` (+test) — the History tab's read-only view of the persisted query log | 5 |
 | LAN/k8s address advertisement | `pkg/advertise/`, `pkg/arp/` | 7 |
 | Windows service wrapper | `pkg/winservice/` | 2 |
 | Branding assets | `assets/` | 2 |
 | Loopback diagnostics listener | `config/debug.go` (+test), `server/server_debug.go` (+test) — the `debug.enable`/`debug.port` pprof+expvar listener, loopback-gated by `requireLoopbackHost` | 4 |
 | Misc | `VERSION`, `util/slug.go` (+test), `docs/api/openapi-config.yaml`, `docs/client_group_endpoints.md` | 5 |
 
-145 files. The remaining 25 are the guardrails and evidence below.
+155 files. The remaining 25 are the guardrails and evidence below.
 
 **Guardrails and evidence (also fork-only, and the set most easily lost by accident).** These are
 listed separately because deleting one does not break a build — it silently removes a check or the
@@ -1061,14 +1067,18 @@ gates the registry, so it cannot see a stale metric name inside a *test assertio
 this list, grep the e2e suite too.
 
 **Deliberately deleted:** `cmd/blocking.go`, `cmd/cache.go`, `cmd/lists.go`, `cmd/query.go`
-(+ tests) — replaced by the web UI. Upstream CI workflows other than `release.yml`.
+(+ tests) — replaced by the web UI. `server/stats_client_names_test.go` — it exercises upstream's
+in-memory `stats` package, which §3.1 replaced with `pkg/statscollector`; it conflicted
+delete/modify on 2026-11-01 and was re-deleted. Upstream CI workflows other than `release.yml`.
+`trie/` — not our deletion: upstream removed it in `e2bd654` when blocklists moved to 64-bit
+hashes, and we held no patches there.
 
 **Design divergences:** upstream configuration lives in the SQLite config store, not YAML
 (`upstreams:` is rejected); admin UI runs on its own listeners (`adminPort`, `adminPortTLS`);
 statistics are persisted rather than in-memory; every Prometheus metric is named
-`blockasaurus_*`, so each upstream sync has to rename the metrics upstream added (this one brought
-`client_response_total`, `redis_cache_buffer_drops_total`, `dnstap_frames_dropped_total` and the
-three `rate_limit_*` metrics). `metrics/metrics_test.go` is the gate: it fails on any registered
+`blockasaurus_*`, so each upstream sync has to rename the metrics upstream added (the 2026-09 one
+brought `client_response_total`, `redis_cache_buffer_drops_total`, `dnstap_frames_dropped_total`
+and the three `rate_limit_*` metrics; 2026-10-01 and 2026-11-01 brought none). `metrics/metrics_test.go` is the gate: it fails on any registered
 metric missing from its expected list, in either direction.
 
 One consequence of the rebranding that bit in Phase 9: the e2e suite resolves its image name from
@@ -1088,7 +1098,7 @@ git merge upstream/main
 
 At that cadence each merge should be a handful of conflicts in the §7 patched-file list. After
 every sync, update §7, §8a and the "Last measured" line at the top. The merge base for the next one
-is `3b7faa8`.
+is `501edc0`.
 
 **Wired, not just intended.** A scheduled Multica autopilot titled "Blockasaurus upstream sync"
 (`1bf22366-3c1c-47c1-9b3e-50f0e97637fb`) fires `0 15 1 * *` UTC — the 1st of each month, i.e. every
@@ -1146,8 +1156,174 @@ number the *next* run needs, and it is the one most easily lost.
 
 | Date | Upstream head merged | Upstream commits taken | Conflicts | Outcome |
 | --- | --- | --- | --- | --- |
+| 2026-11-01 | `501edc0` (2026-10-30) | 37 (22 dependency bumps, 15 substantive) | 10 paths (7 content, 3 delete/modify) | merged as `7c46925`; `make test` green, DNS replay byte-identical |
 | 2026-10-01 | `3b7faa8` (2026-09-28) | 2, both dependency bumps | 1 (`go.mod`) | merged as `0f141b2`; `git diff 27daf20..0f141b2` is `go.mod` + `go.sum` and nothing else |
 | 2026-09-23 | `2bb9b70` (2026-09-21) | 220 (113 dependency bumps) | 41 paths | the week of work this whole document describes; merge `9e12f21` |
+
+### 2026-11-01
+
+37 commits since `3b7faa8`, and unlike the previous cycle most of them are source: 22 dependabot
+bumps and 15 substantive changes over 97 files, +6,580 / −1,789. Not a no-op, so the full procedure
+ran.
+
+**What upstream actually brought.** Four groups, because they are what the conflicts and the
+verification are about:
+
+- **blocklist storage rewritten.** `e2bd654` stores exact and wildcard entries as 64-bit hashes and
+  `1900670` compacts the wildcard caches and serialises group refreshes. Between them they
+  **delete `trie/` outright** (5 files) and add `cache/stringcache/{hash,hash_set,hashed_entries,wildcard_cache}.go`.
+  We held no patches in `trie/`, so it is simply gone here too — nothing of ours was in it.
+  `78def9f` also taught the hosts parser bracketed IPv6 literals and IDN mapping.
+- **DNSSEC.** `ce5e45e`, `1f30776`, `ef95d59` — walking past names inside their parent zone,
+  checking the wildcard proof against the expanded name, and multiple DNSKEYs. `resolver/dnssec/chain.go`
+  is rewritten (760 changed lines) and merged cleanly; we hold only the metric prefix there.
+- **logging.** `ca450f8` adds syslog with per-entry severity (`log/syslog.go`, `log/buffer.go`) and
+  `ac36198` moves config-load warnings and the banner behind the config's own log settings. That
+  second one is what conflicted in `cmd/root.go` and `cmd/serve.go`.
+- **resolver correctness.** `784ffc2` stops forwarding RFC 6598 reverse queries, `501edc0`/`3031717`
+  fix arpa-name parsing, `a7f9671` stops custom DNS failing queries for types it cannot answer,
+  `b159b7a` bounds the DoH response body, `3bba120` recovers an optional Redis connection that
+  failed at startup.
+
+**Ten conflicted paths, all inside the §7 register.** Three delete/modify, re-deleted:
+`.github/workflows/codeql-analysis.yml`, `development-docker.yml` (upstream-only CI) and
+`server/stats_client_names_test.go` — that last one tests upstream's in-memory stats subsystem,
+which `fdea61b` dropped in the 2026-09 sync, and it still imports the `stats` package we do not
+have. Add it to the "deliberately deleted" list; it is the first delete/modify conflict this fork
+has hit outside `.github/` and `cmd/`.
+
+`.github/workflows/release.yml` kept ours (upstream's delta there is one `docker/login-action` pin,
+and our pipeline is a rewrite). `go.mod` resolved as the union of both require sets at upstream's
+versions, `go.sum` regenerated — including `go 1.26.2` → `1.26.9`.
+
+The three real ones:
+
+- **`cmd/root.go`.** Upstream split `initConfig` into `resolveConfigPath` + `loadConfig` +
+  `setListenAddresses` and removed `PreRunE: initConfigPreRun` from the root command, so `serve`
+  stops loading its config twice. Adopted whole, minus the `apiHost`/`apiPort` half of
+  `setListenAddresses` — those globals fed the CLI subcommands the web UI replaced. **Removing the
+  root `PreRunE` has a consequence that is easy to miss**: it is what used to resolve
+  `BLOCKY_CONFIG_FILE` for every subcommand, and `cmd/user.go`'s `openStore` called
+  `config.LoadConfig(configPath, …)` directly. It now goes through `loadConfig`, so `blockasaurus
+  user …` still honours the env var. `initConfigPreRun` itself is now dead and removed.
+- **`cmd/serve.go`.** Took upstream's `loadServerConfig()` and called it from our `runServer(ctx)`
+  rather than from upstream's `startServer`, keeping the winservice / `runInteractive` shape. The
+  visible effect is the one upstream wanted: the banner is logged after `log.Configure`, not before.
+- **`server/server.go`.** The hard one, and the same seam as last time. Upstream's `3bba120` keeps
+  an optional Redis client whose startup `Ping` failed (`createRedisClient`, `SkipInitialLoad`,
+  `redisCancel`, a `redisClosers` list closed by `Stop`); we had already reshaped the same function
+  so the cache decorator is built **per chain** (`decoratorFor(chainCtx)`) rather than once at
+  startup, because `Reconfigure` builds a new chain. Both survive: `SkipInitialLoad` and the
+  `BackgroundConnect` bridge option carried over verbatim, and the one place they disagreed —
+  upstream registers each Redis cache on the server's closer list so `Stop` flushes and waits for
+  its workers — resolved toward the chain. A server-lifetime closer list would grow by one entry per
+  reload; instead the cache is closed when its own `chainCtx` ends, which keeps the wait without the
+  accumulation.
+
+**Upstream specs that needed adapting, and the pattern they all share.** Six of the new ones assume
+upstream's config model, i.e. an `upstreams:` block in YAML — which this fork rejects outright, so
+the fixture fails for a reason unrelated to the spec. Dropping the block is the whole fix in
+`cmd/serve_syslog_test.go`, `cmd/validate_test.go`, `cmd/root_test.go` and `cmd/issue_2218_test.go`.
+Worth saying plainly because **it will recur every sync**: any upstream spec that writes a config
+file is a candidate.
+
+Four more needed something specific:
+
+- `server/redis_recovery_test.go` — `NewServer` takes our config-store parameter, and the chain is
+  reached through `activeChain.Load().chain`, not a `queryResolver` field.
+- `cmd/serve_syslog_test.go` — asserts the banner reached syslog by matching upstream's `_/_/` ASCII
+  art, which the rebranded banner does not contain; now a `bannerMarker` const. Its serve-runs-once
+  table also needs `databasePath` (mandatory here) and a pinned `ports.dns`, or the DNS listeners
+  race the default privileged `:53` and the spec fails on the wrong bind. Its "HTTP listen address"
+  entry is dropped: there is no `ports.http` parse to fail now that `setListenAddresses` only reads
+  the DNS one.
+- `cmd/cmd_suite_test.go` — kept upstream's `keepGlobals()` (three new specs use it) without the
+  `apiHost`/`apiPort` it saves; dropped `withContext`, which nothing here calls.
+- `config/config_test.go` — upstream's new `rebindingProtection` table entry expects
+  `allowedDomains[0] must not be empty`; this fork's `ValidateAllowedDomains` quotes the offending
+  value, so the substring does too.
+
+**One bug fixed in passing, found by the new specs rather than by the merge.** `runInteractive`
+spawned `go func() { <-signals; cancel() }()` and never stopped it, so a `runServer` that returned
+on its own left a consumer parked on the package-level channel. Harmless in a real process, which
+calls it once; fatal to a test suite, which now runs the root command several times — the stale
+consumer ate the `SIGINT` `cmd/serve_test.go` sends and that spec timed out. The watcher is now
+bounded by the call.
+
+**Metric renames: none needed.** Upstream added no Prometheus metric this cycle
+(`grep` over the whole diff for `CounterOpts`/`GaugeOpts`/`Name:` finds nothing), so the §7
+rename step is vacuous. `metrics/metrics_test.go` gates it either way and is green; no `blocky_*`
+metric name exists anywhere in the tree, e2e included.
+
+**Generated artifacts: no diff.** `go tool mockery` + `go generate ./...` produced an empty diff
+after the merge, so `api/*.gen.go`, `docs/config.schema.json` and every `go-enum` output were
+already correct — including the ones upstream changed, which arrived as ordinary clean merges.
+
+**Verification.**
+
+| Gate | Result |
+| --- | --- |
+| `make test` | 28 suites, green |
+| `TestAPIContract` / `TestAPISpecContract` | pass; both goldens **byte-identical** to pre-merge |
+| `make check-fork-additions` | 180/180 present |
+| `make check-fork-additions-sync` | in sync with `upstream/main` |
+| `make lint` | 154 findings, **row-for-row identical to the pre-merge tree** (below) |
+| `web/ui` build + `npm test` | build clean, 36/36 specs |
+| `go run ./tools/dnsreplay` before vs after | **no diff**, 29/29 probes answered |
+| `make e2e-test` | not run here — no container runtime; CI's e2e job is the gate |
+
+**The §2 line-level audit, re-run.** 24 files were touched by both sides. For each, every line our
+fork added between `3b7faa8` and the pre-merge tip was checked for presence in the merged file.
+Five lines are absent, and all five are the restructures described above: the bare `return err` in
+the old `initConfig`, the bare `<-signals` in `runInteractive`, and the three lines of the old cache
+decorator body. Nothing else of ours moved.
+
+**Behavioral replay.** Captured per §8 with the pre-merge binary still running, both instances
+seeded with identical config-store contents and restarted once, `-block-ip` left at its default
+because the fixture's `blockType` is `zeroIp`. `before.txt` and `after.txt` are **identical** —
+every blocked, allowlisted, custom-DNS, conditional-forward, fqdnOnly, EDNS0 and DNSSEC probe
+answers the same, with the same TTLs.
+
+That is a true result and a narrow one: the matrix does not reach the reverse-lookup or SUDN paths
+two of this cycle's fixes are on. Those were probed directly against both binaries, and they are the
+one measured delta of the sync:
+
+| Probe | pre | post | Cause |
+| --- | --- | --- | --- |
+| `1.0.64.100.in-addr.arpa PTR` (100.64.0.0/10) | SERVFAIL | NXDOMAIN | `784ffc2` — RFC 6598 reverse queries are no longer forwarded |
+| `1.0.64.100.IN-ADDR.ARPA PTR` | SERVFAIL | NXDOMAIN | same, and `501edc0` — the uppercase form parses now |
+| `1.1.168.192.in-addr.arpa PTR` (RFC 1918) | NXDOMAIN | NXDOMAIN | already SUDN-blocked |
+| `1.1.1.1.in-addr.arpa PTR` | NOERROR, 1 answer | NOERROR, 1 answer | not shared space, still forwarded |
+| 31-label `ip6.arpa` with a 2-char label | NXDOMAIN | NXDOMAIN | `3031717`; rejected before and after, for different reasons |
+
+Also compared unauthenticated HTTP on both: `/metrics` 200, `/ui/` 200, `/api/auth/session` 401,
+`/api/version` 401, `/docs/openapi.yaml` 401, `/debug/vars` 404 — identical on both sides. The
+`/docs/openapi.yaml` 401 is pre-existing fork behavior (`RequireAuth` on the admin router), not a
+merge effect; the 2026-09 replay recorded it as 200 before GRA-647 moved the routes.
+
+**`.fork-additions`: 170 → 180, and none of the ten is from this merge.** All ten predate it —
+`api/configapi/handler_querylog.go` (+test), `querylog/history.go` (+test),
+`server/query_log_history.go`, `web/ui/src/components/SuggestInput.svelte`,
+`web/ui/src/lib/logentries.js` (+test) and `loghistory.js` (+test), i.e. the query-log history
+feature, added by a PR that did not touch the manifest. This is the **third consecutive sync** to
+find the manifest stale for exactly that reason, which is worth reading as a process result rather
+than an accident: `make check-fork-additions-sync` is the only thing that catches it, and it only
+runs when someone remembers to fetch upstream. Candidate for a CI job of its own.
+
+Note what the drift did *not* include: five `trie/*` paths showed up in the stale-manifest diff
+before the merge, purely because upstream had already deleted `trie/` at `upstream/main`. They
+correctly disappeared once the merge applied that deletion here. A `check-fork-additions-sync` run
+taken *before* a merge reports the post-merge world, not the current one — do not apply its diff
+blindly at that point.
+
+**Lint: 154, and the delta is not ours.** §9's table said 155. The post-merge tree reports 154;
+the **pre-merge tree, linted with the same pinned `v2.12.2`, reports the same 154 with the same
+rows**, so the merge introduced nothing and §9's number was already stale. Two rows moved relative
+to the table: `nilerr` 19 → 20 (`api/configapi/handler.go` grew another strict-handler branch —
+byte-identical to pre-merge here) and `canonicalheader` 2 → 0 (`auth/middleware_test.go` also
+byte-identical; the finding simply stopped firing). §9 is updated to 154. Two findings the merge
+*did* create were fixed rather than recorded: `addCloser is unused` after the Redis resolution
+stopped calling it, and `initConfigPreRun is unused` after upstream removed its only caller.
 
 ### 2026-10-01
 
@@ -1240,12 +1416,12 @@ runtime, and the store field is a `uint32` — so `ttl: 4294967296` wrapped to 0
 `modernize` inlined `configstore.BoolPtr` into `new(v)` at every call site, which left the helper
 dead; it was removed.
 
-### Left, and why — 155 findings
+### Left, and why — 154 findings
 
 | Linter | N | Disposition |
 | --- | --- | --- |
 | `staticcheck` | 21 | All SA1019: `nhooyr.io/websocket` is deprecated in favour of `github.com/coder/websocket`. **Not** a drop-in version bump — the fork's latest tag is `v1.8.15` and we are on `nhooyr.io/websocket v1.8.17`, so migrating moves *backwards* in version. Four files: `logstream/handler.go`, `logstream/handler_test.go`, `auth/wsrevoke.go`, `server/server_endpoints.go`. Worth its own change with the websocket paths actually exercised; not a verification-phase edit. |
-| `nilerr` | 19 | 18 are `api/configapi/handler.go` and structural: oapi-codegen's strict-handler pattern returns a typed `404`/`400` response value *and* a nil error, which is exactly what `nilerr` flags. The remaining one is `configstore/store.go:292`. |
+| `nilerr` | 20 | 19 are `api/configapi/handler.go` and structural: oapi-codegen's strict-handler pattern returns a typed `404`/`400` response value *and* a nil error, which is exactly what `nilerr` flags. The remaining one is `configstore/store.go:292`. |
 | `lll` | 29 | 13 in `api/configapi/handler.go`, the rest scattered. Generated-shaped handler signatures; wrapping them buys nothing. |
 | `funlen` / `gocognit` / `nestif` | 22 | `NewServer`, `runServer`, `Reconfigure`, `registerUIRoutes` and the configstore CRUD bodies. Splitting these is a refactor, not a lint fix, and `server.go` is the single worst file to churn between syncs. |
 | `goconst` | 19 | Mostly `"default"`, `"A"`, `"admin"` repeated across the configstore and API layers. A shared constant would be an improvement; it is a fork-wide rename, not sync work. |
@@ -1256,11 +1432,11 @@ dead; it was removed.
 | `contextcheck` | 4 | Deliberate: shutdown and reconfigure paths intentionally build a fresh context so a cancelled request context cannot abort them. |
 | `gochecknoglobals` | 3 | `trustedProxyNets`, `mobileconfigNamespace`, `mobileconfigTmpl` — package-level constants in all but name. |
 | `unparam` | 2 | Test helpers (`seedUser`, `login`) whose extra parameter documents intent. |
+| `canonicalheader` | 0 | Was 2, on `auth/middleware_test.go`'s `X-Test-Session-ID`. The file is byte-identical and the pin unchanged, but the finding no longer fires — confirmed on the 2026-11-01 pre-merge tree too, so it is the linter run, not the tree. Row kept at zero so the next cycle notices if it comes back. |
 | `dupl` | 2 | `configstore/store.go:186-217` vs `configstore/upstreams.go:40-71`. Real duplication, worth folding, out of scope here. |
 | `containedctx` | 1 | `logstream/broadcaster.go` stores the subscriber's context so a dropped websocket unsubscribes. |
 | `forcetypeassert` | 1 | `server_auth.go:141` — the `sync.Map` is written at exactly one site, always with `*loginBucket`. A checked assertion adds an unreachable branch. |
 | `nilnil` | 1 | `configstore/stats.go:109`. |
-| `canonicalheader` | 2 | `auth/middleware_test.go` sets `X-Test-Session-ID`, which is not a canonical header name. Test-only, and the point of the header is that it is not a real one. |
 
 Reproduce with `make lint`. If the count moves without this table moving, something changed.
 (The table read 154 until 2026-09-28, when Phase 7 re-ran the pin and found the two
@@ -1272,6 +1448,15 @@ fourth linter, `modernize`, had appeared with no row at all. All of it from fork
 after the sync, none of it in a file shared with upstream. **A stable total is not evidence of a stable
 baseline; compare the rows.** The `modernize` one (`strings.Split` → `strings.SplitSeq` in
 `tools/e2ebaseline/main.go`) was fixed rather than given a row, which is where 155 comes from.
+
+Re-run on 2026-11-01 (§8a), and this time **against both trees**: the post-merge tree reports 154,
+and the pre-merge tree reports the same 154 with the same rows, which is what proves the merge
+introduced nothing. The table was stale by one before the sync started — `nilerr` had gone 19 → 20
+and `canonicalheader` 2 → 0, both in files the merge never touched. Linting the pre-merge tip is
+cheap (`git worktree add`, copy a built `web/ui/dist` in so the `go:embed` type-checks, run the
+pin) and it is the only way to tell "the merge did this" from "this was already true"; do it before
+writing a lint number down. Two findings the merge genuinely did create — `addCloser is unused` and
+`initConfigPreRun is unused` — were fixed in the sync rather than given rows.
 
 ## 10. Release hold — `VERSION` stays at 0.34.38
 

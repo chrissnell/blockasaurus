@@ -210,7 +210,7 @@ func NewServer(ctx context.Context, cfg *config.Config, store *configstore.Confi
 
 	addRedisCloser := func(c io.Closer) { redisClosers = append([]io.Closer{c}, redisClosers...) }
 
-	redisResult, err := createRedisCacheDecorator(redisCtx, redisConn, cfg.Redis.Required, redisConnected, addRedisCloser)
+	redisResult, err := createRedisCacheDecorator(redisCtx, redisConn, cfg.Redis.Required, redisConnected)
 	if err != nil {
 		return nil, err
 	}
@@ -675,7 +675,7 @@ type redisBridgeResult struct {
 }
 
 func createRedisCacheDecorator(
-	ctx context.Context, redisConn *goredis.Client, required, connected bool, addCloser func(io.Closer),
+	ctx context.Context, redisConn *goredis.Client, required, connected bool,
 ) (*redisBridgeResult, error) {
 	if redisConn == nil {
 		return &redisBridgeResult{

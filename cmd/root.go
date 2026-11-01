@@ -51,10 +51,6 @@ Complete documentation is available at https://github.com/0xERR0R/blocky`,
 	return c
 }
 
-func initConfigPreRun(cmd *cobra.Command, args []string) error {
-	return initConfig()
-}
-
 func initConfig() error {
 	_, err := loadConfig(false, func(cfg *config.Config) {
 		logCfg := commandLogConfig(cfg)
